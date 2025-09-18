@@ -23,7 +23,11 @@ export class WebSocketService {
   constructor(server: HTTPServer) {
     this.io = new SocketIOServer(server, {
       cors: {
-        origin: "*"
+        origin: [
+          "https://mariposa-scalping.vercel.app",
+          "http://localhost:3000"  // for local development
+        ],
+        credentials: true
       }
     });
 
