@@ -329,7 +329,9 @@ export class MarketDataCacheService {
     // Prevent memory leaks by limiting cache size
     if (this.localCache.size > 1000) {
       const firstKey = this.localCache.keys().next().value;
-      this.localCache.delete(firstKey);
+      if (firstKey) {
+        this.localCache.delete(firstKey);
+      }
     }
 
     this.localCache.set(key, {

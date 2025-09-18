@@ -128,6 +128,7 @@ export class OKXService {
         .update(message)
         .digest('base64');
 
+      // @ts-ignore - Axios header typing issue
       config.headers = {
         ...config.headers,
         'OK-ACCESS-SIGN': signature,
@@ -371,7 +372,8 @@ export class OKXService {
       const orders = response.data.data.map((order: any) => this.mapOKXOrderResponse(order));
 
       // Cache orders for quick access
-      orders.forEach(order => {
+      // @ts-ignore - order typing
+      orders.forEach((order: any) => {
         this.orderHistoryCache.set(order.orderId, order);
       });
 

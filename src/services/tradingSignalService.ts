@@ -365,7 +365,7 @@ export class TradingSignalService {
         data: { execution, trade, order }
       });
 
-      console.log(`Trade executed successfully: ${order.id}`);
+      console.log(`Trade executed successfully: ${(order as any).id || order.orderId}`);
 
     } catch (error) {
       execution.status = 'failed';

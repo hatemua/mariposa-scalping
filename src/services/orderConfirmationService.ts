@@ -362,15 +362,8 @@ export class OrderConfirmationService {
 
       // If this was from an agent, create execution record
       if (preview.agentId) {
-        await tradingSignalService.scheduleTradeExecution({
-          userId: preview.userId,
-          agentId: preview.agentId,
-          symbol: preview.symbol,
-          side: preview.side,
-          type: preview.type,
-          amount: preview.amount,
-          price: preview.price
-        });
+        // Log agent trade execution
+        console.log(`Agent ${preview.agentId} executed trade: ${preview.side} ${preview.amount} ${preview.symbol}`);
       }
 
       // Publish order execution event

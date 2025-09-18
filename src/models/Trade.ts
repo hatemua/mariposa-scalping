@@ -1,7 +1,10 @@
 import mongoose, { Schema, Document } from 'mongoose';
 import { Trade } from '../types';
 
-interface TradeDocument extends Omit<Trade, '_id'>, Document {}
+interface TradeDocument extends Omit<Trade, '_id' | 'userId' | 'agentId'>, Document {
+  userId: mongoose.Types.ObjectId;
+  agentId: mongoose.Types.ObjectId;
+}
 
 const TradeSchema = new Schema<TradeDocument>({
   userId: {

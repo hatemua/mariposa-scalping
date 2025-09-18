@@ -235,7 +235,7 @@ export class PerformanceMetricsService {
         .sort((a, b) => (b.performance?.totalPnL || 0) - (a.performance?.totalPnL || 0))
         .slice(0, 10)
         .map(agent => ({
-          agentId: agent._id.toString(),
+          agentId: (agent._id as any).toString(),
           name: agent.name,
           symbol: agent.symbol,
           pnl: agent.performance?.totalPnL || 0,
@@ -354,10 +354,10 @@ export class PerformanceMetricsService {
       const leaderboardData = agents
         .filter(agent => agent.performance)
         .map(agent => ({
-          agentId: agent._id.toString(),
+          agentId: (agent._id as any).toString(),
           name: agent.name,
           symbol: agent.symbol,
-          userEmail: agent.userId?.email || 'Unknown',
+          userEmail: (agent.userId as any)?.email || 'Unknown',
           totalPnL: agent.performance!.totalPnL,
           winRate: agent.performance!.winRate,
           totalTrades: agent.performance!.totalTrades,

@@ -28,7 +28,7 @@ export class AgendaService {
 
   private defineJobs(): void {
     // Market Analysis Job - Enhanced with Redis caching
-    this.agenda.define('analyze-market', async (job) => {
+    this.agenda.define('analyze-market', async (job: any) => {
       const { agentId, symbol } = job.attrs.data as JobData['payload'];
 
       try {
@@ -79,7 +79,7 @@ export class AgendaService {
     });
 
     // Trade Execution Job
-    this.agenda.define('execute-trade', async (job) => {
+    this.agenda.define('execute-trade', async (job: any) => {
       const {
         userId,
         agentId,
@@ -110,10 +110,10 @@ export class AgendaService {
           type,
           quantity: amount,
           price: price || order.price,
-          filledPrice: order.average,
-          filledQuantity: order.filled,
+          filledPrice: (order as any).average || order.avgFillPrice,
+          filledQuantity: (order as any).filled || (order as any).fillQty,
           status: order.status === 'closed' ? 'filled' : 'pending',
-          okxOrderId: order.id,
+          okxOrderId: (order as any).id || order.orderId,
           fees: order.fee?.cost
         });
 
@@ -123,7 +123,7 @@ export class AgendaService {
           await this.updateAgentPerformance(agentId, trade);
         }
 
-        console.log(`Trade executed successfully: ${order.id}`);
+        console.log(`Trade executed successfully: ${(order as any).id || order.orderId}`);
       } catch (error) {
         console.error(`Error executing trade for agent ${agentId}:`, error);
 
@@ -143,7 +143,7 @@ export class AgendaService {
     });
 
     // Monitor Open Positions Job
-    this.agenda.define('monitor-positions', async (job) => {
+    this.agenda.define('monitor-positions', async (job: any) => {
       const { userId, agentId } = job.attrs.data as JobData['payload'];
 
       try {
@@ -161,15 +161,15 @@ export class AgendaService {
               trade.symbol
             );
 
-            if (orderStatus.status === 'closed') {
+            if (orderStatus && orderStatus.status === 'closed') {
               trade.status = 'filled';
-              trade.filledPrice = orderStatus.average;
-              trade.filledQuantity = orderStatus.filled;
+              trade.filledPrice = (orderStatus as any).average || orderStatus.avgFillPrice;
+              trade.filledQuantity = (orderStatus as any).filled || (orderStatus as any).fillQty;
               trade.fees = orderStatus.fee?.cost;
 
               await trade.save();
               await this.updateAgentPerformance(agentId, trade);
-            } else if (orderStatus.status === 'canceled') {
+            } else if (orderStatus && orderStatus.status === 'canceled') {
               trade.status = 'cancelled';
               await trade.save();
             }
@@ -181,7 +181,7 @@ export class AgendaService {
     });
 
     // Agent Performance Update Job
-    this.agenda.define('update-performance', async (job) => {
+    this.agenda.define('update-performance', async (job: any) => {
       const { agentId } = job.attrs.data as JobData['payload'];
 
       try {
@@ -306,7 +306,7 @@ export class AgendaService {
         }).sort({ createdAt: -1 });
 
         if (buyTrade) {
-          const pnl = (trade.filledPrice - buyTrade.filledPrice) * trade.filledQuantity;
+          const pnl = ((trade.filledPrice || 0) - (buyTrade.filledPrice || 0)) * (trade.filledQuantity || 0);
           trade.pnl = pnl;
           await trade.save();
         }
@@ -418,7 +418,7 @@ export class AgendaService {
 
   private defineRedisJobs(): void {
     // Process Trading Signal Queue Job
-    this.agenda.define('process-signal-queue', async (job) => {
+    this.agenda.define('process-signal-queue', async (job: any) => {
       try {
         await tradingSignalService.processSignalQueue();
         await this.updateJobMetrics('process-signal-queue', 'success');
@@ -429,7 +429,7 @@ export class AgendaService {
     });
 
     // Process Trade Execution Queue Job
-    this.agenda.define('process-execution-queue', async (job) => {
+    this.agenda.define('process-execution-queue', async (job: any) => {
       try {
         await tradingSignalService.processExecutionQueue();
         await this.updateJobMetrics('process-execution-queue', 'success');
@@ -440,7 +440,7 @@ export class AgendaService {
     });
 
     // Update Performance Metrics Job
-    this.agenda.define('update-performance-metrics', async (job) => {
+    this.agenda.define('update-performance-metrics', async (job: any) => {
       try {
         await performanceMetricsService.cacheSystemMetrics();
         await performanceMetricsService.updateLeaderboard();
@@ -452,7 +452,7 @@ export class AgendaService {
     });
 
     // Cache Warm-up Job
-    this.agenda.define('warm-cache', async (job) => {
+    this.agenda.define('warm-cache', async (job: any) => {
       try {
         const { symbols } = job.attrs.data as { symbols: string[] };
         await marketDataCacheService.warmCache(symbols || ['BTCUSDT', 'ETHUSDT', 'BNBUSDT']);
@@ -464,7 +464,7 @@ export class AgendaService {
     });
 
     // Order Status Tracking Job
-    this.agenda.define('track-order-status', async (job) => {
+    this.agenda.define('track-order-status', async (job: any) => {
       try {
         const { orderId } = job.attrs.data as { orderId: string };
         await orderTrackingService.checkOrderStatus(orderId);
@@ -476,7 +476,7 @@ export class AgendaService {
     });
 
     // Cleanup Jobs
-    this.agenda.define('cleanup-old-data', async (job) => {
+    this.agenda.define('cleanup-old-data', async (job: any) => {
       try {
         await Promise.all([
           tradingSignalService.cleanupOldSignals(),
@@ -492,7 +492,7 @@ export class AgendaService {
     });
 
     // System Health Check Job
-    this.agenda.define('system-health-check', async (job) => {
+    this.agenda.define('system-health-check', async (job: any) => {
       try {
         await this.performSystemHealthCheck();
         await this.updateJobMetrics('system-health-check', 'success');
@@ -508,7 +508,7 @@ export class AgendaService {
       timestamp: new Date(),
       redis: await redisService.checkRateLimit('health-check', 1, 60),
       database: await this.checkDatabaseHealth(),
-      binance: binanceService.connected,
+      binance: (binanceService as any).connected || false,
       queues: await tradingSignalService.getQueueStats()
     };
 
@@ -632,7 +632,7 @@ export class AgendaService {
       return await redisService.get('system:health') || { status: 'unknown' };
     } catch (error) {
       console.error('Error getting system health status:', error);
-      return { status: 'error', error: error.message };
+      return { status: 'error', error: (error as Error).message };
     }
   }
 }

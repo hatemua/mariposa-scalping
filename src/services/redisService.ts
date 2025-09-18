@@ -45,21 +45,24 @@ export class RedisService {
     }
   }
 
-  async set(key: string, value: any, options: CacheOptions = {}): Promise<boolean> {
+  async set(key: string, value: any, options: CacheOptions | number = {}): Promise<boolean> {
     try {
       const client = redis.getClient();
       const serialized = JSON.stringify(value);
 
-      if (options.ttl) {
-        if (options.nx) {
-          const result = await client.set(key, serialized, 'EX', options.ttl, 'NX');
+      // Handle legacy number TTL or new CacheOptions
+      const opts = typeof options === 'number' ? { ttl: options } : options;
+
+      if (opts.ttl) {
+        if (opts.nx) {
+          const result = await client.set(key, serialized, 'EX', opts.ttl, 'NX');
           return result === 'OK';
         } else {
-          await client.setex(key, options.ttl, serialized);
+          await client.setex(key, opts.ttl, serialized);
           return true;
         }
       } else {
-        if (options.nx) {
+        if (opts.nx) {
           const result = await client.set(key, serialized, 'NX');
           return result === 'OK';
         } else {
@@ -420,6 +423,90 @@ export class RedisService {
     } catch (error) {
       console.error(`Get keys by pattern error:`, error);
       return [];
+    }
+  }
+
+  // ===============================
+  // MISSING REDIS METHODS
+  // ===============================
+
+  async keys(pattern: string): Promise<string[]> {
+    try {
+      const client = redis.getClient();
+      return await client.keys(pattern);
+    } catch (error) {
+      console.error(`Redis KEYS error:`, error);
+      return [];
+    }
+  }
+
+  async del(key: string): Promise<number> {
+    try {
+      const client = redis.getClient();
+      return await client.del(key);
+    } catch (error) {
+      console.error(`Redis DEL error:`, error);
+      return 0;
+    }
+  }
+
+  async sadd(key: string, ...members: string[]): Promise<number> {
+    try {
+      const client = redis.getClient();
+      return await client.sadd(key, ...members);
+    } catch (error) {
+      console.error(`Redis SADD error:`, error);
+      return 0;
+    }
+  }
+
+  async srem(key: string, ...members: string[]): Promise<number> {
+    try {
+      const client = redis.getClient();
+      return await client.srem(key, ...members);
+    } catch (error) {
+      console.error(`Redis SREM error:`, error);
+      return 0;
+    }
+  }
+
+  async smembers(key: string): Promise<string[]> {
+    try {
+      const client = redis.getClient();
+      return await client.smembers(key);
+    } catch (error) {
+      console.error(`Redis SMEMBERS error:`, error);
+      return [];
+    }
+  }
+
+  async zadd(key: string, score: number, member: string): Promise<number> {
+    try {
+      const client = redis.getClient();
+      return await client.zadd(key, score, member);
+    } catch (error) {
+      console.error(`Redis ZADD error:`, error);
+      return 0;
+    }
+  }
+
+  async zrevrange(key: string, start: number, stop: number): Promise<string[]> {
+    try {
+      const client = redis.getClient();
+      return await client.zrevrange(key, start, stop);
+    } catch (error) {
+      console.error(`Redis ZREVRANGE error:`, error);
+      return [];
+    }
+  }
+
+  async zremrangebyrank(key: string, start: number, stop: number): Promise<number> {
+    try {
+      const client = redis.getClient();
+      return await client.zremrangebyrank(key, start, stop);
+    } catch (error) {
+      console.error(`Redis ZREMRANGEBYRANK error:`, error);
+      return 0;
     }
   }
 }

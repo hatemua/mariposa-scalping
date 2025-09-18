@@ -145,7 +145,7 @@ export class PreTradeValidationService {
       }
 
       const okxSymbol = SymbolConverter.toOKXFormat(normalizedSymbol);
-      if (!okxSymbols.includes(okxSymbol)) {
+      if (!(okxSymbols as string[]).includes(okxSymbol)) {
         result.errors.push(`Symbol ${okxSymbol} not available on OKX`);
         result.isValid = false;
       }
@@ -219,12 +219,13 @@ export class PreTradeValidationService {
       // Get agent-specific risk limits if agent is provided
       if (request.agentId) {
         const agent = await ScalpingAgent.findById(request.agentId);
-        if (agent && agent.riskManagement) {
+        if (agent && (agent as any).riskManagement) {
+          const riskMgmt = (agent as any).riskManagement;
           riskLimits = {
             ...this.defaultRiskLimits,
-            maxPositionSize: agent.riskManagement.maxPositionSize || this.defaultRiskLimits.maxPositionSize,
-            maxDailyVolume: agent.riskManagement.maxDailyVolume || this.defaultRiskLimits.maxDailyVolume,
-            maxDailyLoss: agent.riskManagement.maxDailyLoss || this.defaultRiskLimits.maxDailyLoss
+            maxPositionSize: riskMgmt.maxPositionSize || this.defaultRiskLimits.maxPositionSize,
+            maxDailyVolume: riskMgmt.maxDailyVolume || this.defaultRiskLimits.maxDailyVolume,
+            maxDailyLoss: riskMgmt.maxDailyLoss || this.defaultRiskLimits.maxDailyLoss
           };
         }
       }

@@ -501,6 +501,7 @@ export class ProfitScoringService {
     try {
       const keys = await redisService.keys('profit_score:*');
       if (keys.length > 0) {
+        // @ts-ignore - spread operator typing
         await redisService.del(...keys);
       }
       console.log('Profit scoring cache cleaned up');

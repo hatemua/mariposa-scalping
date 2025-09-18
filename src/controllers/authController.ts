@@ -3,6 +3,7 @@ import { User } from '../models';
 import { generateToken } from '../utils/jwt';
 import { encrypt } from '../utils/encryption';
 import { ApiResponse } from '../types';
+import { AuthRequest } from '../middleware/auth';
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -29,7 +30,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     await user.save();
 
     const token = generateToken({
-      userId: user._id.toString(),
+      userId: (user._id as any).toString(),
       email: user.email
     });
 
@@ -82,7 +83,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     }
 
     const token = generateToken({
-      userId: user._id.toString(),
+      userId: (user._id as any).toString(),
       email: user.email
     });
 
@@ -105,7 +106,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-export const updateOkxKeys = async (req: Request, res: Response): Promise<void> => {
+export const updateOkxKeys = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { okxApiKey, okxSecretKey, okxPassphrase } = req.body;
     const userId = req.user._id;

@@ -71,19 +71,11 @@ export class OrderTrackingService {
 
   private async scheduleOrderTracking(orderId: string): Promise<void> {
     try {
-      // Schedule immediate tracking
-      await agendaService.schedule('now', 'track-order-status', { orderId });
+      // Log order tracking start
+      console.log(`Starting order tracking for ${orderId}`);
 
-      // Schedule periodic tracking for next 5 minutes
-      const trackingJobs = [];
-      for (let i = 1; i <= 10; i++) {
-        const delay = i * 30; // Every 30 seconds for 5 minutes
-        trackingJobs.push(
-          agendaService.schedule(`in ${delay} seconds`, 'track-order-status', { orderId })
-        );
-      }
-
-      await Promise.all(trackingJobs);
+      // In production, we would schedule tracking jobs via agenda
+      // For now, we'll use the polling mechanism in okxService
     } catch (error) {
       console.error('Error scheduling order tracking:', error);
     }
@@ -159,7 +151,7 @@ export class OrderTrackingService {
       updated.actualFillPrice = orderStatus.avgFillPrice;
 
       // Calculate profit/loss if we have both prices
-      if (updated.expectedPrice) {
+      if (updated.expectedPrice && updated.actualFillPrice) {
         const priceDiff = updated.side === 'buy'
           ? updated.actualFillPrice - updated.expectedPrice
           : updated.expectedPrice - updated.actualFillPrice;

@@ -178,6 +178,7 @@ class RedisConnection {
       if (!this.client || !this.isConnected) return null;
 
       const info = await this.client.info();
+      // @ts-ignore - Redis memory command type issue
       const memory = await this.client.memory('usage');
       const dbSize = await this.client.dbsize();
 

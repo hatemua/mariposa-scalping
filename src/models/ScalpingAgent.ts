@@ -1,7 +1,9 @@
 import mongoose, { Schema, Document } from 'mongoose';
 import { ScalpingAgent, AgentConfig, AgentPerformance } from '../types';
 
-interface ScalpingAgentDocument extends Omit<ScalpingAgent, '_id'>, Document {}
+interface ScalpingAgentDocument extends Omit<ScalpingAgent, '_id' | 'userId'>, Document {
+  userId: mongoose.Types.ObjectId;
+}
 
 const AgentConfigSchema = new Schema<AgentConfig>({
   maxPositionSize: {

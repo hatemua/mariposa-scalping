@@ -322,11 +322,11 @@ export class AIAnalysisService {
     const recentCandles = klineData.slice(-20);
 
     // Calculate key metrics for profit potential assessment
-    const currentPrice = parseFloat(marketData.price);
-    const volume24h = parseFloat(marketData.volume);
-    const change24h = parseFloat(marketData.change24h);
-    const high24h = parseFloat(marketData.high24h);
-    const low24h = parseFloat(marketData.low24h);
+    const currentPrice = typeof marketData.price === 'number' ? marketData.price : parseFloat(marketData.price);
+    const volume24h = typeof marketData.volume === 'number' ? marketData.volume : parseFloat(marketData.volume);
+    const change24h = typeof marketData.change24h === 'number' ? marketData.change24h : parseFloat(marketData.change24h);
+    const high24h = typeof marketData.high24h === 'number' ? marketData.high24h : parseFloat(marketData.high24h);
+    const low24h = typeof marketData.low24h === 'number' ? marketData.low24h : parseFloat(marketData.low24h);
 
     // Calculate volatility (range as percentage of current price)
     const volatility = ((high24h - low24h) / currentPrice) * 100;

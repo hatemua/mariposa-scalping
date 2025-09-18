@@ -4,6 +4,7 @@ import { config } from '../config/environment';
 import { redis } from '../config/redis';
 import { redisService } from '../services/redisService';
 import { ApiResponse } from '../types';
+import { AuthRequest } from './auth';
 
 // Create Redis-based rate limiter
 let rateLimiter: RateLimiterRedis;
@@ -34,7 +35,7 @@ export const rateLimitMiddleware = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const identifier = req.ip;
+    const identifier = req.ip || 'unknown';
 
     // Use Redis rate limiter if available, otherwise use Redis service directly
     if (rateLimiter) {
@@ -55,7 +56,7 @@ export const rateLimitMiddleware = async (
       const rateCheck = await redisService.checkRateLimit(
         identifier,
         config.RATE_LIMIT_MAX_REQUESTS,
-        config.RATE_LIMIT_WINDOW_MS / 1000
+        Math.floor(config.RATE_LIMIT_WINDOW_MS / 1000)
       );
 
       if (rateCheck.allowed) {
@@ -90,13 +91,11 @@ export const createCustomRateLimiter = (options: {
     points: options.points,
     duration: options.duration,
     blockDuration: options.duration,
-    skipSuccessfulRequests: options.skipSuccessfulRequests || false,
-    skipFailedRequests: options.skipFailedRequests || false,
   }) : null;
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const identifier = options.keyGenerator ? options.keyGenerator(req) : req.ip;
+      const identifier = options.keyGenerator ? options.keyGenerator(req) : (req.ip || 'unknown');
 
       if (customRateLimiter) {
         try {
@@ -156,8 +155,9 @@ export const tradingRateLimiter = createCustomRateLimiter({
   points: 20, // 20 trades
   duration: 60, // Per minute
   keyGenerator: (req) => {
-    const userId = req.user?._id?.toString();
-    return userId ? `trading:${userId}` : `trading:${req.ip}`;
+    const authReq = req as AuthRequest;
+    const userId = authReq.user?._id?.toString();
+    return userId ? `trading:${userId}` : `trading:${req.ip || 'unknown'}`;
   }
 });
 
@@ -173,8 +173,9 @@ export const createUserRateLimiter = (points: number, duration: number) => {
     points,
     duration,
     keyGenerator: (req) => {
-      const userId = req.user?._id?.toString();
-      return userId ? `user:${userId}` : `ip:${req.ip}`;
+      const authReq = req as AuthRequest;
+      const userId = authReq.user?._id?.toString();
+      return userId ? `user:${userId}` : `ip:${req.ip || 'unknown'}`;
     }
   });
 };
