@@ -31,6 +31,41 @@ const UserSchema = new Schema<UserDocument>({
     type: String,
     default: null,
   },
+  // OTP and email verification fields
+  otpCode: {
+    type: String,
+    default: null,
+  },
+  otpExpiry: {
+    type: Date,
+    default: null,
+  },
+  otpAttempts: {
+    type: Number,
+    default: 0,
+  },
+  isEmailVerified: {
+    type: Boolean,
+    default: false,
+  },
+  lastOtpRequest: {
+    type: Date,
+    default: null,
+  },
+  // Password reset fields
+  resetPasswordToken: {
+    type: String,
+    default: null,
+  },
+  resetPasswordExpiry: {
+    type: Date,
+    default: null,
+  },
+  // 2FA settings
+  twoFactorEnabled: {
+    type: Boolean,
+    default: false,
+  },
 }, {
   timestamps: true,
 });

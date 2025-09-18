@@ -2,7 +2,7 @@ import axios from 'axios';
 import { ApiResponse } from '@/types';
 
 const api = axios.create({
-  baseURL: process.env.BACKEND_URL || 'http://localhost:3001/api',
+  baseURL: process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001/api',
   timeout: 10000,
 });
 
@@ -42,6 +42,32 @@ export const authApi = {
     okxPassphrase: string;
   }): Promise<ApiResponse> => {
     const response = await api.put('/auth/okx-keys', keys);
+    return response.data;
+  },
+
+  // OTP endpoints
+  sendOTP: async (userId: string, purpose: 'registration' | 'login' | '2fa' | 'password-reset' = 'registration'): Promise<ApiResponse> => {
+    const response = await api.post('/auth/send-otp', { userId, purpose });
+    return response.data;
+  },
+
+  verifyOTP: async (userId: string, otpCode: string, purpose: 'registration' | 'login' | '2fa' | 'password-reset' = 'registration'): Promise<ApiResponse> => {
+    const response = await api.post('/auth/verify-otp', { userId, otpCode, purpose });
+    return response.data;
+  },
+
+  resendOTP: async (userId: string, purpose: 'registration' | 'login' | '2fa' | 'password-reset' = 'registration'): Promise<ApiResponse> => {
+    const response = await api.post('/auth/resend-otp', { userId, purpose });
+    return response.data;
+  },
+
+  getOTPStatus: async (userId: string): Promise<ApiResponse> => {
+    const response = await api.get(`/auth/otp-status/${userId}`);
+    return response.data;
+  },
+
+  testEmail: async (email: string): Promise<ApiResponse> => {
+    const response = await api.post('/auth/test-email', { email });
     return response.data;
   },
 };

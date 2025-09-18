@@ -4,11 +4,17 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { authApi } from '@/lib/api';
 import { toast } from 'react-hot-toast';
+import OTPVerification from '@/components/OTPVerification';
+import RegistrationSuccess from '@/components/RegistrationSuccess';
+
+type AuthStep = 'form' | 'otp' | 'success';
 
 export default function Login() {
   const router = useRouter();
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [authStep, setAuthStep] = useState<AuthStep>('form');
+  const [userId, setUserId] = useState('');
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -30,26 +36,102 @@ export default function Login() {
         ? await authApi.login(formData.email, formData.password)
         : await authApi.register(formData.email, formData.password);
 
-      if (response.success && response.data?.token) {
-        localStorage.setItem('token', response.data.token);
-        toast.success(isLogin ? 'Logged in successfully' : 'Account created successfully');
-        router.push('/dashboard');
+      if (response.success) {
+        if (isLogin) {
+          // Login successful
+          if (response.data?.token) {
+            localStorage.setItem('token', response.data.token);
+            toast.success('Logged in successfully');
+            router.push('/dashboard');
+          }
+        } else {
+          // Registration successful - needs email verification
+          if (response.requiresEmailVerification && response.data?.userId) {
+            setUserId(response.data.userId);
+            setAuthStep('otp');
+            toast.success('Account created! Please verify your email.');
+          } else if (response.data?.token) {
+            // Email already verified
+            localStorage.setItem('token', response.data.token);
+            toast.success('Account created successfully');
+            router.push('/dashboard');
+          }
+        }
       } else {
-        toast.error(response.error || 'Authentication failed');
+        if (response.requiresEmailVerification && response.userId) {
+          // Login failed due to unverified email
+          setUserId(response.userId);
+          setAuthStep('otp');
+          toast.error(response.error || 'Please verify your email to login');
+        } else {
+          toast.error(response.error || 'Authentication failed');
+        }
       }
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Authentication failed');
+      const errorData = error.response?.data;
+      if (errorData?.requiresEmailVerification && errorData?.userId) {
+        setUserId(errorData.userId);
+        setAuthStep('otp');
+        toast.error(errorData.error || 'Please verify your email to continue');
+      } else {
+        toast.error(errorData?.error || 'Authentication failed');
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  const handleOTPSuccess = (data?: any) => {
+    if (data?.token) {
+      localStorage.setItem('token', data.token);
+      setAuthStep('success');
+    } else {
+      setAuthStep('success');
+    }
+  };
+
+  const handleBackToForm = () => {
+    setAuthStep('form');
+    setUserId('');
+  };
+
+  const handleContinueToDashboard = () => {
+    router.push('/dashboard');
+  };
+
+  // Render different steps based on auth flow
+  if (authStep === 'otp') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center px-4">
+        <OTPVerification
+          userId={userId}
+          email={formData.email}
+          purpose="registration"
+          onSuccess={handleOTPSuccess}
+          onBack={handleBackToForm}
+        />
+      </div>
+    );
+  }
+
+  if (authStep === 'success') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center px-4">
+        <RegistrationSuccess
+          email={formData.email}
+          onContinue={handleContinueToDashboard}
+        />
+      </div>
+    );
+  }
+
+  // Default form step
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center px-4">
       <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-2xl shadow-xl">
         <div className="text-center">
           <h1 className="text-3xl font-bold text-gray-900">
-            Mariposa Bot
+            🦋 Mariposa Bot
           </h1>
           <p className="mt-2 text-gray-600">
             {isLogin ? 'Sign in to your account' : 'Create your account'}
@@ -120,7 +202,8 @@ export default function Login() {
         <div className="text-center">
           <button
             onClick={() => setIsLogin(!isLogin)}
-            className="text-primary-600 hover:text-primary-500"
+            disabled={loading}
+            className="text-primary-600 hover:text-primary-500 disabled:opacity-50"
           >
             {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
           </button>

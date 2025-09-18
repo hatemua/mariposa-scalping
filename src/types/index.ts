@@ -5,6 +5,17 @@ export interface User {
   okxApiKey?: string;
   okxSecretKey?: string;
   okxPassphrase?: string;
+  // OTP and email verification fields
+  otpCode?: string;
+  otpExpiry?: Date;
+  otpAttempts?: number;
+  isEmailVerified?: boolean;
+  lastOtpRequest?: Date;
+  // Password reset fields
+  resetPasswordToken?: string;
+  resetPasswordExpiry?: Date;
+  // 2FA settings
+  twoFactorEnabled?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

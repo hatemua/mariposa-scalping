@@ -38,8 +38,9 @@ export default function Dashboard() {
       if (agentsResponse.success) {
         setAgents(agentsResponse.data);
 
-        const symbols = [...new Set(agentsResponse.data.map((a: Agent) => a.symbol))];
-        const marketPromises = symbols.map(symbol =>
+        const uniqueSymbols = new Set(agentsResponse.data.map((a: Agent) => a.symbol));
+        const symbols = Array.from(uniqueSymbols) as string[];
+        const marketPromises = symbols.map((symbol: string) =>
           marketApi.getMarketData(symbol).catch(() => null)
         );
 

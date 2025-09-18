@@ -19,7 +19,12 @@ interface Config {
   NODE_ENV: string;
   RATE_LIMIT_WINDOW_MS: number;
   RATE_LIMIT_MAX_REQUESTS: number;
-  WS_PORT: number;
+  FRONTEND_URL?: string;
+  EMAIL_HOST: string;
+  EMAIL_PORT: number;
+  EMAIL_SECURE: boolean;
+  EMAIL_USER: string;
+  EMAIL_PASS: string;
 }
 
 const requiredEnvVars = [
@@ -27,7 +32,10 @@ const requiredEnvVars = [
   'REDIS_URL',
   'JWT_SECRET',
   'ENCRYPTION_KEY',
-  'TOGETHER_AI_API_KEY'
+  'TOGETHER_AI_API_KEY',
+  'EMAIL_HOST',
+  'EMAIL_USER',
+  'EMAIL_PASS'
 ];
 
 const validateEnvironment = (): void => {
@@ -56,5 +64,10 @@ export const config: Config = {
   NODE_ENV: process.env.NODE_ENV || 'development',
   RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '15000', 10),
   RATE_LIMIT_MAX_REQUESTS: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
-  WS_PORT: parseInt(process.env.WS_PORT || '3002', 10)
+  FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:3000',
+  EMAIL_HOST: process.env.EMAIL_HOST!,
+  EMAIL_PORT: parseInt(process.env.EMAIL_PORT || '465', 10),
+  EMAIL_SECURE: process.env.EMAIL_SECURE === 'true',
+  EMAIL_USER: process.env.EMAIL_USER!,
+  EMAIL_PASS: process.env.EMAIL_PASS!
 };

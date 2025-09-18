@@ -2,6 +2,7 @@ export interface User {
   id: string;
   email: string;
   hasOkxKeys: boolean;
+  isEmailVerified?: boolean;
 }
 
 export interface Agent {
@@ -89,6 +90,30 @@ export interface ApiResponse<T = any> {
   data?: T;
   error?: string;
   message?: string;
+  requiresEmailVerification?: boolean;
+  userId?: string;
+}
+
+// OTP-related interfaces
+export interface OTPResult {
+  success: boolean;
+  message: string;
+  canResend?: boolean;
+  nextResendTime?: Date;
+}
+
+export interface OTPStatus {
+  hasActiveOTP: boolean;
+  expiresAt?: Date;
+  attemptsRemaining?: number;
+  canResend: boolean;
+  nextResendTime?: Date;
+}
+
+export interface OTPVerificationData {
+  userId: string;
+  otpCode: string;
+  purpose?: 'registration' | 'login' | '2fa' | 'password-reset';
 }
 
 export interface WebSocketMessage {
