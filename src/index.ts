@@ -15,7 +15,7 @@ const server = createServer(app);
 
 app.use(helmet());
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' ? false : ['http://localhost:3000'],
+  origin: true,  // Allow all origins
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
