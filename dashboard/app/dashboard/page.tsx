@@ -87,6 +87,31 @@ export default function Dashboard() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
           <p className="text-gray-600">Monitor your scalping agents and performance</p>
+
+          {/* Navigation Links */}
+          <div className="flex flex-wrap gap-4 mt-6">
+            <a
+              href="/dashboard/market"
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <TrendingUp className="h-4 w-4" />
+              Market Data
+            </a>
+            <a
+              href="/dashboard/recommendations"
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+            >
+              <Activity className="h-4 w-4" />
+              AI Recommendations
+            </a>
+            <a
+              href="/dashboard/agents/create"
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
+              <Bot className="h-4 w-4" />
+              Create Agent
+            </a>
+          </div>
         </div>
 
         {/* Stats Cards */}
@@ -200,7 +225,7 @@ export default function Dashboard() {
 
                 <div className="mt-4 pt-4 border-t border-gray-100">
                   <button
-                    onClick={() => window.location.href = `/agents/${agent._id}`}
+                    onClick={() => window.location.href = `/dashboard/agents/${agent._id}`}
                     className="w-full bg-primary-600 text-white py-2 px-4 rounded-lg hover:bg-primary-700 transition-colors"
                   >
                     View Details
@@ -217,7 +242,7 @@ export default function Dashboard() {
             <h3 className="text-lg font-medium text-gray-900 mb-2">No Agents Created</h3>
             <p className="text-gray-600 mb-6">Create your first scalping agent to get started</p>
             <button
-              onClick={() => window.location.href = '/agents/create'}
+              onClick={() => window.location.href = '/dashboard/agents/create'}
               className="bg-primary-600 text-white px-6 py-2 rounded-lg hover:bg-primary-700 transition-colors"
             >
               Create Agent

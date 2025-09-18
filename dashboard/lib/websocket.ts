@@ -12,7 +12,7 @@ class WebSocketClient {
       return;
     }
 
-    this.socket = io(process.env.WS_URL || 'http://localhost:3001', {
+    this.socket = io(process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3001', {
       auth: { token },
       autoConnect: true,
     });
@@ -62,33 +62,39 @@ class WebSocketClient {
 
   disconnect(): void {
     if (this.socket) {
+      this.clearAllSubscriptions();
       this.socket.disconnect();
       this.socket = null;
     }
     this.listeners.clear();
+    this.activeSubscriptions.clear();
   }
 
   subscribeToMarket(symbols: string[]): void {
     if (this.socket?.connected) {
       this.socket.emit('subscribe-market', { symbols });
+      symbols.forEach(symbol => this.activeSubscriptions.add(`market:${symbol}`));
     }
   }
 
   unsubscribeFromMarket(symbols: string[]): void {
     if (this.socket?.connected) {
       this.socket.emit('unsubscribe-market', { symbols });
+      symbols.forEach(symbol => this.activeSubscriptions.delete(`market:${symbol}`));
     }
   }
 
   subscribeToAgent(agentId: string): void {
     if (this.socket?.connected) {
       this.socket.emit('subscribe-agent', { agentId });
+      this.activeSubscriptions.add(`agent:${agentId}`);
     }
   }
 
   unsubscribeFromAgent(agentId: string): void {
     if (this.socket?.connected) {
       this.socket.emit('unsubscribe-agent', { agentId });
+      this.activeSubscriptions.delete(`agent:${agentId}`);
     }
   }
 
@@ -129,6 +135,68 @@ class WebSocketClient {
 
   get connected(): boolean {
     return this.socket?.connected ?? false;
+  }
+
+  ping(): void {
+    if (this.socket?.connected) {
+      this.socket.emit('ping', (response: string) => {
+        console.log('Ping response:', response);
+      });
+    }
+  }
+
+  getSessionInfo(): Promise<any> {
+    return new Promise((resolve, reject) => {
+      if (this.socket?.connected) {
+        this.socket.emit('get-session-info', (data: any) => {
+          resolve(data);
+        });
+      } else {
+        reject(new Error('WebSocket not connected'));
+      }
+    });
+  }
+
+  // Enhanced subscription management
+  private activeSubscriptions = new Set<string>();
+
+  subscribeToSymbols(symbols: string[]): void {
+    if (this.socket?.connected) {
+      // Remove old market subscriptions
+      const oldMarketSubs = Array.from(this.activeSubscriptions).filter(sub => sub.startsWith('market:'));
+      if (oldMarketSubs.length > 0) {
+        const oldSymbols = oldMarketSubs.map(sub => sub.replace('market:', ''));
+        this.unsubscribeFromMarket(oldSymbols);
+      }
+
+      // Add new subscriptions
+      this.subscribeToMarket(symbols);
+      symbols.forEach(symbol => this.activeSubscriptions.add(`market:${symbol}`));
+    }
+  }
+
+  getActiveSubscriptions(): string[] {
+    return Array.from(this.activeSubscriptions);
+  }
+
+  clearAllSubscriptions(): void {
+    const marketSymbols = Array.from(this.activeSubscriptions)
+      .filter(sub => sub.startsWith('market:'))
+      .map(sub => sub.replace('market:', ''));
+
+    const agentIds = Array.from(this.activeSubscriptions)
+      .filter(sub => sub.startsWith('agent:'))
+      .map(sub => sub.replace('agent:', ''));
+
+    if (marketSymbols.length > 0) {
+      this.unsubscribeFromMarket(marketSymbols);
+    }
+
+    if (agentIds.length > 0) {
+      agentIds.forEach(agentId => this.unsubscribeFromAgent(agentId));
+    }
+
+    this.activeSubscriptions.clear();
   }
 }
 
