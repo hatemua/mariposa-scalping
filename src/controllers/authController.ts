@@ -7,119 +7,56 @@ import { AuthRequest } from '../middleware/auth';
 import { otpService } from '../services/otpService';
 import { emailService } from '../services/emailService';
 
-export const register = async (req: Request, res: Response): Promise<void> => {
+export const requestOTP = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, password } = req.body;
+    const { email } = req.body;
 
-    if (!email || !password) {
+    if (!email) {
       res.status(400).json({
         success: false,
-        error: 'Email and password are required'
+        error: 'Email is required'
       } as ApiResponse);
       return;
     }
 
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      res.status(400).json({
-        success: false,
-        error: 'User already exists'
-      } as ApiResponse);
-      return;
+    // Find or create user with email only
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      // Create new user with email only (passwordless)
+      user = new User({ email, isEmailVerified: false });
+      await user.save();
     }
 
-    const user = new User({ email, password });
-    await user.save();
-
-    // Send email verification OTP
-    const otpResult = await otpService.sendOTP((user._id as any).toString(), 'registration');
+    // Send OTP for login/registration
+    const otpResult = await otpService.sendOTP((user._id as any).toString(), 'login');
 
     if (!otpResult.success) {
-      // If OTP sending fails, still allow registration but notify user
-      console.error('Failed to send verification email:', otpResult.message);
-    }
-
-    res.status(201).json({
-      success: true,
-      data: {
-        userId: user._id,
-        email: user.email,
-        message: 'Account created successfully. Please check your email for verification code.',
-        requiresEmailVerification: true
-      }
-    } as ApiResponse);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Server error'
-    } as ApiResponse);
-  }
-};
-
-export const login = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      res.status(400).json({
+      res.status(500).json({
         success: false,
-        error: 'Email and password are required'
+        error: otpResult.message || 'Failed to send verification code'
       } as ApiResponse);
       return;
     }
-
-    const user = await User.findOne({ email });
-    if (!user) {
-      res.status(401).json({
-        success: false,
-        error: 'Invalid credentials'
-      } as ApiResponse);
-      return;
-    }
-
-    const isValidPassword = await user.comparePassword(password);
-    if (!isValidPassword) {
-      res.status(401).json({
-        success: false,
-        error: 'Invalid credentials'
-      } as ApiResponse);
-      return;
-    }
-
-    // Check if email is verified
-    if (!user.isEmailVerified) {
-      res.status(403).json({
-        success: false,
-        error: 'Email not verified. Please verify your email before logging in.',
-        requiresEmailVerification: true,
-        userId: user._id
-      } as ApiResponse);
-      return;
-    }
-
-    const token = generateToken({
-      userId: (user._id as any).toString(),
-      email: user.email
-    });
 
     res.json({
       success: true,
       data: {
-        token,
-        user: {
-          id: user._id,
-          email: user.email,
-          hasOkxKeys: !!(user.okxApiKey && user.okxSecretKey && user.okxPassphrase)
-        }
+        userId: user._id,
+        message: otpResult.message,
+        nextResendTime: otpResult.nextResendTime
       }
     } as ApiResponse);
   } catch (error) {
+    console.error('Request OTP error:', error);
     res.status(500).json({
       success: false,
       error: 'Server error'
     } as ApiResponse);
   }
 };
+
+// Removed traditional login - replaced with OTP-only authentication
 
 export const updateOkxKeys = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -200,7 +137,7 @@ export const sendOTP = async (req: Request, res: Response): Promise<void> => {
 
 export const verifyOTP = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { userId, otpCode, purpose = 'registration' } = req.body;
+    const { userId, otpCode } = req.body;
 
     if (!userId || !otpCode) {
       res.status(400).json({
@@ -210,47 +147,43 @@ export const verifyOTP = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const result = await otpService.verifyOTP(userId, otpCode, purpose);
+    const result = await otpService.verifyOTP(userId, otpCode, 'login');
 
     if (result.success) {
-      // For registration verification, generate token after verification
-      if (purpose === 'registration') {
-        const user = await User.findById(userId);
-        if (user) {
-          const token = generateToken({
-            userId: (user._id as any).toString(),
-            email: user.email
-          });
+      const user = await User.findById(userId);
+      if (user) {
+        // Update user as verified and generate token
+        await User.findByIdAndUpdate(userId, { isEmailVerified: true });
 
-          res.json({
-            success: true,
-            message: result.message,
-            data: {
-              token,
-              user: {
-                id: user._id,
-                email: user.email,
-                isEmailVerified: user.isEmailVerified
-              }
+        const token = generateToken({
+          userId: (user._id as any).toString(),
+          email: user.email
+        });
+
+        res.json({
+          success: true,
+          message: result.message,
+          data: {
+            token,
+            user: {
+              id: user._id,
+              email: user.email,
+              isEmailVerified: true,
+              hasOkxKeys: !!(user.okxApiKey && user.okxSecretKey && user.okxPassphrase)
             }
-          } as ApiResponse);
-          return;
-        }
+          }
+        } as ApiResponse);
+        return;
       }
-
-      res.json({
-        success: true,
-        message: result.message
-      } as ApiResponse);
-    } else {
-      res.status(400).json({
-        success: false,
-        error: result.message,
-        data: {
-          canResend: result.canResend
-        }
-      } as ApiResponse);
     }
+
+    res.status(400).json({
+      success: false,
+      error: result.message,
+      data: {
+        canResend: result.canResend
+      }
+    } as ApiResponse);
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -261,7 +194,7 @@ export const verifyOTP = async (req: Request, res: Response): Promise<void> => {
 
 export const resendOTP = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { userId, purpose = 'registration' } = req.body;
+    const { userId } = req.body;
 
     if (!userId) {
       res.status(400).json({
@@ -271,7 +204,7 @@ export const resendOTP = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    const result = await otpService.sendOTP(userId, purpose);
+    const result = await otpService.sendOTP(userId, 'login');
 
     if (result.success) {
       res.json({

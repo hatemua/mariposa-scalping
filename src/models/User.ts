@@ -1,10 +1,7 @@
 import mongoose, { Schema, Document } from 'mongoose';
-import bcrypt from 'bcryptjs';
 import { User } from '../types';
 
-interface UserDocument extends Omit<User, '_id'>, Document {
-  comparePassword(candidatePassword: string): Promise<boolean>;
-}
+interface UserDocument extends Omit<User, '_id'>, Document {}
 
 const UserSchema = new Schema<UserDocument>({
   email: {
@@ -13,11 +10,6 @@ const UserSchema = new Schema<UserDocument>({
     unique: true,
     lowercase: true,
     trim: true,
-  },
-  password: {
-    type: String,
-    required: true,
-    minlength: 6,
   },
   okxApiKey: {
     type: String,
@@ -52,39 +44,11 @@ const UserSchema = new Schema<UserDocument>({
     type: Date,
     default: null,
   },
-  // Password reset fields
-  resetPasswordToken: {
-    type: String,
-    default: null,
-  },
-  resetPasswordExpiry: {
-    type: Date,
-    default: null,
-  },
-  // 2FA settings
-  twoFactorEnabled: {
-    type: Boolean,
-    default: false,
-  },
 }, {
   timestamps: true,
 });
 
-UserSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) return next();
-
-  try {
-    const salt = await bcrypt.genSalt(12);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error as Error);
-  }
-});
-
-UserSchema.methods.comparePassword = async function(candidatePassword: string): Promise<boolean> {
-  return bcrypt.compare(candidatePassword, this.password);
-};
+// Removed password hashing middleware - OTP-only authentication
 
 UserSchema.index({ email: 1 });
 

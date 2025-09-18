@@ -26,38 +26,19 @@ api.interceptors.response.use(
 );
 
 export const authApi = {
-  login: async (email: string, password: string): Promise<ApiResponse> => {
-    const response = await api.post('/auth/login', { email, password });
+  // Passwordless OTP authentication
+  requestOTP: async (email: string): Promise<ApiResponse> => {
+    const response = await api.post('/auth/request-otp', { email });
     return response.data;
   },
 
-  register: async (email: string, password: string): Promise<ApiResponse> => {
-    const response = await api.post('/auth/register', { email, password });
+  verifyOTP: async (userId: string, otpCode: string): Promise<ApiResponse> => {
+    const response = await api.post('/auth/verify-otp', { userId, otpCode });
     return response.data;
   },
 
-  updateOkxKeys: async (keys: {
-    okxApiKey: string;
-    okxSecretKey: string;
-    okxPassphrase: string;
-  }): Promise<ApiResponse> => {
-    const response = await api.put('/auth/okx-keys', keys);
-    return response.data;
-  },
-
-  // OTP endpoints
-  sendOTP: async (userId: string, purpose: 'registration' | 'login' | '2fa' | 'password-reset' = 'registration'): Promise<ApiResponse> => {
-    const response = await api.post('/auth/send-otp', { userId, purpose });
-    return response.data;
-  },
-
-  verifyOTP: async (userId: string, otpCode: string, purpose: 'registration' | 'login' | '2fa' | 'password-reset' = 'registration'): Promise<ApiResponse> => {
-    const response = await api.post('/auth/verify-otp', { userId, otpCode, purpose });
-    return response.data;
-  },
-
-  resendOTP: async (userId: string, purpose: 'registration' | 'login' | '2fa' | 'password-reset' = 'registration'): Promise<ApiResponse> => {
-    const response = await api.post('/auth/resend-otp', { userId, purpose });
+  resendOTP: async (userId: string): Promise<ApiResponse> => {
+    const response = await api.post('/auth/resend-otp', { userId });
     return response.data;
   },
 
@@ -68,6 +49,15 @@ export const authApi = {
 
   testEmail: async (email: string): Promise<ApiResponse> => {
     const response = await api.post('/auth/test-email', { email });
+    return response.data;
+  },
+
+  updateOkxKeys: async (keys: {
+    okxApiKey: string;
+    okxSecretKey: string;
+    okxPassphrase: string;
+  }): Promise<ApiResponse> => {
+    const response = await api.put('/auth/okx-keys', keys);
     return response.data;
   },
 };
