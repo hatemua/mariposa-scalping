@@ -226,6 +226,73 @@ export const getDeepAnalysis = async (req: AuthRequest, res: Response): Promise<
   }
 };
 
+export const triggerBatchAnalysis = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { symbols = [] } = req.body;
+
+    if (!Array.isArray(symbols) || symbols.length === 0) {
+      // Use default priority symbols if none provided
+      const defaultSymbols = [
+        'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'TRXUSDT', 'ADAUSDT',
+        'MATICUSDT', 'LINKUSDT', 'UNIUSDT', 'AVAXUSDT', 'DOTUSDT', 'LTCUSDT',
+        'BNBUSDT', 'XRPUSDT', 'SHIBUSDT', 'ATOMUSDT', 'NEARUSDT', 'FTMUSDT'
+      ];
+
+      console.log('🚀 Starting batch analysis for default priority symbols:', defaultSymbols.length);
+
+      // Start batch analysis asynchronously
+      aiAnalysisService.triggerBatchAnalysisForSymbols(defaultSymbols).catch(error => {
+        console.error('❌ Batch analysis failed:', error);
+      });
+
+      res.json({
+        success: true,
+        message: `Batch analysis started for ${defaultSymbols.length} priority symbols`,
+        data: {
+          symbols: defaultSymbols,
+          status: 'processing'
+        }
+      } as ApiResponse);
+      return;
+    }
+
+    // Validate symbols
+    const validSymbols = symbols.filter((symbol: string) =>
+      SymbolConverter.isValidTradingPair(symbol)
+    ).map((symbol: string) => SymbolConverter.normalize(symbol));
+
+    if (validSymbols.length === 0) {
+      res.status(400).json({
+        success: false,
+        error: 'No valid trading symbols provided'
+      } as ApiResponse);
+      return;
+    }
+
+    console.log(`🚀 Starting batch analysis for ${validSymbols.length} symbols:`, validSymbols);
+
+    // Start batch analysis asynchronously
+    aiAnalysisService.triggerBatchAnalysisForSymbols(validSymbols).catch(error => {
+      console.error('❌ Batch analysis failed:', error);
+    });
+
+    res.json({
+      success: true,
+      message: `Batch analysis started for ${validSymbols.length} symbols`,
+      data: {
+        symbols: validSymbols,
+        status: 'processing'
+      }
+    } as ApiResponse);
+  } catch (error) {
+    console.error('Error triggering batch analysis:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to trigger batch analysis'
+    } as ApiResponse);
+  }
+};
+
 export const getAvailableSymbols = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     // Get symbols from both exchanges for comprehensive list

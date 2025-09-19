@@ -157,6 +157,11 @@ export const marketApi = {
     return response.data;
   },
 
+  triggerBatchAnalysis: async (symbols?: string[]): Promise<ApiResponse> => {
+    const response = await api.post('/market/analysis/batch', { symbols });
+    return response.data;
+  },
+
   getBalance: async (): Promise<ApiResponse> => {
     const response = await api.get('/market/balance');
     return response.data;

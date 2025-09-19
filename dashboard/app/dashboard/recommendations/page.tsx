@@ -81,6 +81,12 @@ export default function RecommendationsPage() {
 
         await loadAnalysesForSymbols(symbolsToLoad);
         await loadMarketDataForSymbols(symbolsToLoad);
+
+        // Trigger batch analysis in background to ensure fresh data
+        setTimeout(() => {
+          console.log('🔄 Starting background batch analysis...');
+          triggerBatchAnalysis();
+        }, 2000); // Wait 2 seconds after initial load
       } else {
         console.warn('⚠️ API response not successful, using fallback symbols');
         // Enhanced fallback with more tokens
@@ -92,6 +98,13 @@ export default function RecommendationsPage() {
         setPrioritySymbols(fallbackSymbols);
         await loadAnalysesForSymbols(fallbackSymbols);
         await loadMarketDataForSymbols(fallbackSymbols);
+
+        // Trigger batch analysis for fallback symbols too
+        setTimeout(() => {
+          console.log('🔄 Starting fallback batch analysis...');
+          triggerBatchAnalysis();
+        }, 2000);
+
         toast.error('Using fallback symbols - backend may be limited');
       }
     } catch (error: any) {
@@ -108,6 +121,12 @@ export default function RecommendationsPage() {
       // Still try to load data for fallback symbols
       await loadAnalysesForSymbols(fallbackSymbols);
       await loadMarketDataForSymbols(fallbackSymbols);
+
+      // Trigger batch analysis for error fallback too
+      setTimeout(() => {
+        console.log('🔄 Starting error fallback batch analysis...');
+        triggerBatchAnalysis();
+      }, 3000); // Wait 3 seconds for error case
 
       toast.error(`Failed to load symbols from backend: ${error.response?.status || 'Network error'}`);
     } finally {
@@ -206,6 +225,27 @@ export default function RecommendationsPage() {
       }
     } catch (error: any) {
       toast.error(`Failed to analyze ${symbol}`);
+    }
+  };
+
+  const triggerBatchAnalysis = async () => {
+    try {
+      console.log('🚀 Triggering batch analysis for all priority symbols');
+      const response = await marketApi.triggerBatchAnalysis();
+      if (response?.success) {
+        toast.success(`Batch analysis started for ${response.data?.symbols?.length || 'multiple'} symbols`);
+        // Reload data periodically to catch new analyses
+        setTimeout(() => {
+          if (prioritySymbols.length > 0) {
+            loadAnalysesForSymbols(prioritySymbols.slice(0, 15));
+          }
+        }, 5000); // Wait 5 seconds for first batch to process
+      } else {
+        toast.error('Failed to trigger batch analysis');
+      }
+    } catch (error: any) {
+      console.error('Error triggering batch analysis:', error);
+      toast.error(`Batch analysis error: ${error.response?.status || 'Network error'}`);
     }
   };
 
@@ -345,22 +385,52 @@ export default function RecommendationsPage() {
       .map(symbol => {
         const analysis = analyses[symbol];
         const market = marketData[symbol];
-        if (!analysis || !market) return null;
 
-        const profit = calculateProfitPotential(analysis, market);
-        const score = (analysis.confidence * 100) + (profit?.profitPct || 0);
+        // Show token if we have either analysis OR market data
+        if (!analysis && !market) return null;
+
+        // Create fallback analysis if missing
+        const effectiveAnalysis = analysis || {
+          symbol,
+          recommendation: 'HOLD' as const,
+          confidence: 0.3,
+          reasoning: 'Analysis pending - generating new analysis...',
+          timestamp: new Date(),
+          individualAnalyses: [],
+          isPending: true
+        };
+
+        // Calculate profit potential if we have both analysis and market data
+        const profit = (analysis && market) ? calculateProfitPotential(effectiveAnalysis, market) : null;
+
+        // Score calculation - prioritize tokens with full data
+        let score = 0;
+        if (analysis && market) {
+          score = (effectiveAnalysis.confidence * 100) + (profit?.profitPct || 0);
+        } else if (market) {
+          // Lower score for market-only data, but still show it
+          score = Math.abs(market.change24h) * 2; // Prioritize by volatility
+        } else {
+          score = 10; // Low score for analysis-only
+        }
 
         return {
           symbol,
-          analysis,
+          analysis: effectiveAnalysis,
           market,
           profit,
-          score
+          score,
+          isPending: !analysis || (effectiveAnalysis as any).isPending
         };
       })
       .filter(Boolean)
-      .sort((a, b) => (b?.score || 0) - (a?.score || 0))
-      .slice(0, 12);
+      .sort((a, b) => {
+        // Prioritize complete data, then by score
+        if (a?.isPending && !b?.isPending) return 1;
+        if (!a?.isPending && b?.isPending) return -1;
+        return (b?.score || 0) - (a?.score || 0);
+      })
+      .slice(0, 15); // Increased to 15 to show more tokens
 
     return recommendations;
   };
@@ -406,16 +476,25 @@ export default function RecommendationsPage() {
                   <span>Last updated: {lastUpdate.toLocaleTimeString()}</span>
                   <div className={`w-2 h-2 rounded-full ${autoUpdateEnabled ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></div>
                 </div>
-                <button
-                  onClick={() => setAutoUpdateEnabled(!autoUpdateEnabled)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                    autoUpdateEnabled
-                      ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  Auto-Update {autoUpdateEnabled ? 'ON' : 'OFF'}
-                </button>
+                <div className="flex items-center space-x-3">
+                  <button
+                    onClick={triggerBatchAnalysis}
+                    className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 transition-all flex items-center space-x-2"
+                  >
+                    <Zap className="h-4 w-4" />
+                    <span>Analyze All</span>
+                  </button>
+                  <button
+                    onClick={() => setAutoUpdateEnabled(!autoUpdateEnabled)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                      autoUpdateEnabled
+                        ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    Auto-Update {autoUpdateEnabled ? 'ON' : 'OFF'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -480,7 +559,7 @@ export default function RecommendationsPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-8">
           {topRecommendations.map((item) => {
             if (!item) return null;
-            const { symbol, analysis, market, profit } = item;
+            const { symbol, analysis, market, profit, isPending } = item;
             const confidencePct = analysis.confidence * 100;
 
             return (
@@ -500,21 +579,38 @@ export default function RecommendationsPage() {
                   {/* Header */}
                   <div className="flex items-start justify-between mb-6">
                     <div className="flex items-center space-x-3">
-                      <div className={`${getRecommendationGradient(analysis.recommendation, analysis.confidence)} p-3 rounded-2xl shadow-lg`}>
-                        {getRecommendationIcon(analysis.recommendation, 'h-6 w-6 text-white')}
+                      <div className={`${getRecommendationGradient(analysis.recommendation, analysis.confidence)} p-3 rounded-2xl shadow-lg ${isPending ? 'opacity-60' : ''}`}>
+                        {isPending ? (
+                          <div className="animate-spin">
+                            <Clock className="h-6 w-6 text-white" />
+                          </div>
+                        ) : (
+                          getRecommendationIcon(analysis.recommendation, 'h-6 w-6 text-white')
+                        )}
                       </div>
                       <div>
-                        <h3 className="text-xl font-bold text-gray-900">{symbol}</h3>
                         <div className="flex items-center space-x-2">
-                          <span className={`text-lg font-bold ${market.change24h >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {formatPrice(market.price)}
-                          </span>
-                          <span className={`text-sm px-2 py-1 rounded-lg font-medium ${
-                            market.change24h >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                          }`}>
-                            {formatChange(market.change24h)}
-                          </span>
+                          <h3 className="text-xl font-bold text-gray-900">{symbol}</h3>
+                          {isPending && (
+                            <span className="px-2 py-1 bg-yellow-100 text-yellow-700 text-xs rounded-full font-medium">
+                              Analysis Pending
+                            </span>
+                          )}
                         </div>
+                        {market ? (
+                          <div className="flex items-center space-x-2">
+                            <span className={`text-lg font-bold ${market.change24h >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {formatPrice(market.price)}
+                            </span>
+                            <span className={`text-sm px-2 py-1 rounded-lg font-medium ${
+                              market.change24h >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                            }`}>
+                              {formatChange(market.change24h)}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-500">Market data loading...</div>
+                        )}
                       </div>
                     </div>
                     <button
@@ -522,10 +618,20 @@ export default function RecommendationsPage() {
                         e.stopPropagation();
                         triggerAnalysisForSymbol(symbol);
                       }}
-                      className="p-2 rounded-xl bg-gray-100 hover:bg-gray-200 transition-colors"
-                      title="Refresh analysis"
+                      className={`p-2 rounded-xl transition-colors ${
+                        isPending
+                          ? 'bg-yellow-100 hover:bg-yellow-200 text-yellow-600'
+                          : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                      }`}
+                      title={isPending ? "Analysis in progress..." : "Refresh analysis"}
                     >
-                      <Brain className="h-4 w-4 text-gray-600" />
+                      {isPending ? (
+                        <div className="animate-spin">
+                          <Clock className="h-4 w-4" />
+                        </div>
+                      ) : (
+                        <Brain className="h-4 w-4" />
+                      )}
                     </button>
                   </div>
 

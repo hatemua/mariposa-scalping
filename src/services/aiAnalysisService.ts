@@ -1349,6 +1349,99 @@ export class AIAnalysisService {
   // BATCH ANALYSIS METHODS
   // ===============================
 
+  async triggerBatchAnalysisForSymbols(symbols: string[]): Promise<void> {
+    const normalizedSymbols = symbols.map(s => SymbolConverter.normalize(s));
+    console.log(`🔄 Starting batch analysis for ${normalizedSymbols.length} symbols`);
+
+    // Process symbols in smaller batches to avoid overwhelming the API
+    const batchSize = 2; // Process 2 symbols simultaneously to respect rate limits
+    const delayBetweenBatches = 3000; // 3 seconds between batches
+
+    for (let i = 0; i < normalizedSymbols.length; i += batchSize) {
+      const batch = normalizedSymbols.slice(i, i + batchSize);
+      console.log(`📊 Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(normalizedSymbols.length / batchSize)}:`, batch);
+
+      // Process batch symbols in parallel
+      const batchPromises = batch.map(async (symbol) => {
+        try {
+          // Check if we have recent analysis (within 5 minutes for batch processing)
+          const cachedAnalysis = await redisService.getCurrentAnalysis(symbol);
+          if (cachedAnalysis && this.isAnalysisRecent(cachedAnalysis, 300)) {
+            console.log(`✅ Using cached analysis for ${symbol}`);
+            return;
+          }
+
+          // Use symbol-specific rate limiting
+          const rateLimitKey = `batch_analysis:${symbol}`;
+          const rateCheck = await redisService.checkRateLimit(rateLimitKey, 1, 120); // 1 analysis per 2 minutes per symbol
+          if (!rateCheck.allowed) {
+            console.log(`⏳ Rate limited for ${symbol}, skipping for now`);
+            return;
+          }
+
+          console.log(`🚀 Generating fresh analysis for ${symbol}`);
+
+          // Get market data first
+          const [symbolInfo, klineData1m, klineData5m, klineData15m, klineData1h, orderBook] = await Promise.all([
+            binanceService.getSymbolInfo(symbol),
+            binanceService.getKlineData(symbol, '1m', 100),
+            binanceService.getKlineData(symbol, '5m', 100),
+            binanceService.getKlineData(symbol, '15m', 100),
+            binanceService.getKlineData(symbol, '1h', 100),
+            binanceService.getOrderBook(symbol, 50)
+          ]);
+
+          const marketData = {
+            symbol,
+            price: parseFloat(symbolInfo.lastPrice),
+            volume: parseFloat(symbolInfo.volume),
+            change24h: parseFloat(symbolInfo.priceChangePercent),
+            high24h: parseFloat(symbolInfo.highPrice),
+            low24h: parseFloat(symbolInfo.lowPrice),
+            timestamp: new Date()
+          };
+
+          // Generate comprehensive analysis
+          const analysis = await this.analyzeMarketData(marketData, klineData5m, orderBook);
+          console.log(`✅ Analysis completed for ${symbol}: ${analysis.recommendation} (${(analysis.confidence * 100).toFixed(1)}%)`);
+
+          // Publish real-time update for immediate UI refresh
+          await redisService.publish(`analysis:${symbol}`, {
+            type: 'analysis_update',
+            data: analysis
+          });
+
+        } catch (error) {
+          console.error(`❌ Error analyzing ${symbol}:`, error);
+
+          // Create a basic fallback analysis to ensure symbol appears
+          const fallbackAnalysis = {
+            symbol,
+            recommendation: 'HOLD' as const,
+            confidence: 0.3,
+            reasoning: 'Analysis temporarily unavailable - market data accessible',
+            timestamp: new Date(),
+            individualAnalyses: [],
+            analysisType: 'FALLBACK'
+          };
+
+          await redisService.cacheAnalysis(symbol, fallbackAnalysis);
+          console.log(`🔄 Created fallback analysis for ${symbol}`);
+        }
+      });
+
+      await Promise.all(batchPromises);
+
+      // Delay between batches to respect API limits
+      if (i + batchSize < normalizedSymbols.length) {
+        console.log(`⏸️ Waiting ${delayBetweenBatches / 1000}s before next batch...`);
+        await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
+      }
+    }
+
+    console.log(`🎉 Batch analysis completed for ${normalizedSymbols.length} symbols`);
+  }
+
   async batchAnalyzeSymbols(symbols: string[]): Promise<Record<string, ConsolidatedAnalysis>> {
     const normalizedSymbols = symbols.map(s => s.toUpperCase());
     const results: Record<string, ConsolidatedAnalysis> = {};

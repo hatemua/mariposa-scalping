@@ -5,7 +5,8 @@ import {
   triggerAnalysis,
   getBalance,
   getAvailableSymbols,
-  getDeepAnalysis
+  getDeepAnalysis,
+  triggerBatchAnalysis
 } from '../controllers/marketController';
 import { authenticate } from '../middleware/auth';
 
@@ -19,5 +20,6 @@ router.get('/:symbol', getMarketData);
 router.get('/:symbol/analysis', getAnalysis);
 router.get('/:symbol/deep-analysis', getDeepAnalysis);
 router.post('/analysis', triggerAnalysis);
+router.post('/analysis/batch', triggerBatchAnalysis);
 
 export default router;
