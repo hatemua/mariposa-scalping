@@ -7,6 +7,7 @@ import { Analysis, LLMAnalysis } from '@/types';
 import { toast } from 'react-hot-toast';
 import { Brain, TrendingUp, TrendingDown, Minus, RefreshCw, Target, Shield, Clock } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import ErrorBoundary from '@/components/ErrorBoundary';
 
 export default function RecommendationsPage() {
   const [symbols, setSymbols] = useState<string[]>([]);
@@ -40,11 +41,15 @@ export default function RecommendationsPage() {
   const loadSymbols = async () => {
     try {
       const response = await marketApi.getSymbols();
-      if (response.success) {
+      if (response?.success && Array.isArray(response.data)) {
         setSymbols(response.data);
+      } else {
+        setSymbols(['BTCUSDT', 'ETHUSDT', 'ADAUSDT']); // fallback symbols
       }
     } catch (error) {
-      toast.error('Failed to load symbols');
+      console.error('Error loading symbols:', error);
+      setSymbols(['BTCUSDT', 'ETHUSDT', 'ADAUSDT']); // fallback symbols
+      toast.error('Failed to load symbols, using defaults');
     }
   };
 
@@ -54,10 +59,14 @@ export default function RecommendationsPage() {
     try {
       setLoading(true);
       const response = await marketApi.getAnalysis(selectedSymbol, 10);
-      if (response.success) {
+      if (response?.success && Array.isArray(response.data)) {
         setAnalyses(response.data);
+      } else {
+        setAnalyses([]);
       }
     } catch (error) {
+      console.error('Error loading analyses:', error);
+      setAnalyses([]);
       toast.error('Failed to load analyses');
     } finally {
       setLoading(false);
@@ -87,9 +96,13 @@ export default function RecommendationsPage() {
   };
 
   const handleAnalysisUpdate = (data: any) => {
-    if (data.symbol === selectedSymbol) {
-      setAnalyses(prev => [data.analysis, ...prev.slice(0, 9)]);
-      toast.success(`New analysis available for ${data.symbol}`);
+    try {
+      if (data?.symbol === selectedSymbol && data?.analysis) {
+        setAnalyses(prev => [data.analysis, ...prev.slice(0, 9)]);
+        toast.success(`New analysis available for ${data.symbol}`);
+      }
+    } catch (error) {
+      console.error('Error handling analysis update:', error);
     }
   };
 
@@ -134,7 +147,8 @@ export default function RecommendationsPage() {
   }
 
   return (
-    <DashboardLayout>
+    <ErrorBoundary>
+      <DashboardLayout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">AI Recommendations</h1>
@@ -286,6 +300,7 @@ export default function RecommendationsPage() {
           </div>
         )}
       </div>
-    </DashboardLayout>
+      </DashboardLayout>
+    </ErrorBoundary>
   );
 }

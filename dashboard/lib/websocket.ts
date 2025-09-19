@@ -1,5 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 import { WebSocketMessage } from '@/types';
+import config from './config';
 
 class WebSocketClient {
   private socket: Socket | null = null;
@@ -12,10 +13,21 @@ class WebSocketClient {
       return;
     }
 
-    this.socket = io(process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3001', {
-      auth: { token },
-      autoConnect: true,
-    });
+    try {
+      const wsUrl = config.getWebSocketUrl();
+      console.log('Connecting to WebSocket:', wsUrl);
+
+      this.socket = io(wsUrl, {
+        auth: { token },
+        autoConnect: true,
+        timeout: 20000,
+        transports: ['websocket', 'polling'],
+        forceNew: true
+      });
+    } catch (error) {
+      console.error('Failed to create WebSocket connection:', error);
+      return;
+    }
 
     this.socket.on('connect', () => {
       console.log('WebSocket connected');
@@ -28,6 +40,19 @@ class WebSocketClient {
 
     this.socket.on('connect_error', (error) => {
       console.error('WebSocket connection error:', error);
+      this.reconnectAttempts++;
+
+      if (this.reconnectAttempts < this.maxReconnectAttempts) {
+        console.log(`Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+        setTimeout(() => {
+          if (this.socket && !this.socket.connected) {
+            this.socket.connect();
+          }
+        }, 1000 * this.reconnectAttempts);
+      } else {
+        console.error('Max reconnection attempts reached');
+        this.emit('connection-failed', error);
+      }
     });
 
     this.socket.on('market-update', (data: WebSocketMessage) => {

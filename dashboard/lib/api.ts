@@ -1,25 +1,46 @@
 import axios from 'axios';
 import { ApiResponse } from '@/types';
+import config from './config';
 
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001/api',
-  timeout: 10000,
+  baseURL: config.getBackendUrl(),
+  timeout: 15000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
 });
 
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+api.interceptors.request.use(
+  (config) => {
+    try {
+      const token = localStorage.getItem('token');
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+    } catch (error) {
+      console.error('Error accessing localStorage:', error);
+    }
+    return config;
+  },
+  (error) => {
+    console.error('Request interceptor error:', error);
+    return Promise.reject(error);
   }
-  return config;
-});
+);
 
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    console.error('API Error:', error.response?.data || error.message);
+
     if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
+      try {
+        localStorage.removeItem('token');
+        localStorage.removeItem('userEmail');
+        window.location.href = '/login';
+      } catch (e) {
+        console.error('Error clearing localStorage:', e);
+      }
     }
     return Promise.reject(error);
   }
