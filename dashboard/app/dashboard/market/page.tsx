@@ -7,6 +7,7 @@ import { MarketData } from '@/types';
 import { toast } from 'react-hot-toast';
 import { TrendingUp, TrendingDown, Activity, DollarSign, Volume2, RefreshCw } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import ErrorBoundary from '@/components/ErrorBoundary';
 
 export default function MarketPage() {
   const [symbols, setSymbols] = useState<string[]>([]);
@@ -16,23 +17,37 @@ export default function MarketPage() {
   const [subscriptionLoading, setSubscriptionLoading] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      wsClient.connect(token);
-      loadSymbols();
-      loadMarketData();
+    try {
+      const token = localStorage.getItem('token');
+      if (token) {
+        wsClient.connect(token);
+        loadSymbols();
+        loadMarketData();
+      }
+    } catch (error) {
+      console.error('Error accessing localStorage:', error);
     }
 
     // Set up WebSocket listeners
-    wsClient.on('market-update', handleMarketUpdate);
-    wsClient.on('live-data', handleLiveData);
-    wsClient.on('binance-status', handleBinanceStatus);
+    try {
+      wsClient.on('market-update', handleMarketUpdate);
+      wsClient.on('live-data', handleLiveData);
+      wsClient.on('binance-status', handleBinanceStatus);
+    } catch (error) {
+      console.error('Error setting up WebSocket listeners:', error);
+    }
 
     return () => {
-      wsClient.off('market-update', handleMarketUpdate);
-      wsClient.off('live-data', handleLiveData);
-      wsClient.off('binance-status', handleBinanceStatus);
-      wsClient.unsubscribeFromMarket(selectedSymbols);
+      try {
+        wsClient.off('market-update', handleMarketUpdate);
+        wsClient.off('live-data', handleLiveData);
+        wsClient.off('binance-status', handleBinanceStatus);
+        if (selectedSymbols && selectedSymbols.length > 0) {
+          wsClient.unsubscribeFromMarket(selectedSymbols);
+        }
+      } catch (error) {
+        console.error('Error cleaning up WebSocket listeners:', error);
+      }
     };
   }, []);
 
@@ -45,30 +60,44 @@ export default function MarketPage() {
   const loadSymbols = async () => {
     try {
       const response = await marketApi.getSymbols();
-      if (response.success) {
+      if (response?.success && Array.isArray(response.data)) {
         setSymbols(response.data);
+      } else {
+        setSymbols(['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'BNBUSDT', 'SOLUSDT']); // fallback symbols
       }
     } catch (error) {
-      toast.error('Failed to load symbols');
+      console.error('Error loading symbols:', error);
+      setSymbols(['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'BNBUSDT', 'SOLUSDT']); // fallback symbols
+      toast.error('Failed to load symbols, using defaults');
     }
   };
 
   const loadMarketData = async () => {
+    if (!selectedSymbols || selectedSymbols.length === 0) {
+      setLoading(false);
+      return;
+    }
+
     try {
       const promises = selectedSymbols.map(symbol =>
-        marketApi.getMarketData(symbol).catch(() => null)
+        marketApi.getMarketData(symbol).catch((error) => {
+          console.error(`Failed to load data for ${symbol}:`, error);
+          return null;
+        })
       );
       const responses = await Promise.all(promises);
 
       const newMarketData: Record<string, MarketData> = {};
       responses.forEach((response, index) => {
-        if (response?.success) {
+        if (response?.success && response.data && selectedSymbols[index]) {
           newMarketData[selectedSymbols[index]] = response.data;
         }
       });
 
       setMarketData(newMarketData);
     } catch (error) {
+      console.error('Error loading market data:', error);
+      setMarketData({});
       toast.error('Failed to load market data');
     } finally {
       setLoading(false);
@@ -76,13 +105,14 @@ export default function MarketPage() {
   };
 
   const subscribeToMarkets = async () => {
-    if (!wsClient.connected) return;
+    if (!wsClient.connected || !selectedSymbols || selectedSymbols.length === 0) return;
 
     setSubscriptionLoading(true);
     try {
       wsClient.subscribeToMarket(selectedSymbols);
       toast.success(`Subscribed to ${selectedSymbols.length} markets`);
     } catch (error) {
+      console.error('Error subscribing to markets:', error);
       toast.error('Failed to subscribe to market updates');
     } finally {
       setSubscriptionLoading(false);
@@ -90,56 +120,79 @@ export default function MarketPage() {
   };
 
   const handleMarketUpdate = (data: any) => {
-    if (data.type === 'ticker' && data.data) {
-      setMarketData(prev => ({
-        ...prev,
-        [data.data.symbol]: {
-          ...prev[data.data.symbol],
-          ...data.data,
-          timestamp: new Date().toISOString()
-        }
-      }));
+    try {
+      if (data?.type === 'ticker' && data?.data && data.data.symbol) {
+        setMarketData(prev => ({
+          ...prev,
+          [data.data.symbol]: {
+            ...prev[data.data.symbol],
+            ...data.data,
+            timestamp: new Date().toISOString()
+          }
+        }));
+      }
+    } catch (error) {
+      console.error('Error handling market update:', error);
     }
   };
 
   const handleLiveData = (data: any) => {
-    if (data.symbol && data.data) {
-      setMarketData(prev => ({
-        ...prev,
-        [data.symbol]: {
-          ...prev[data.symbol],
-          ...data.data,
-          timestamp: new Date().toISOString()
-        }
-      }));
+    try {
+      if (data?.symbol && data?.data) {
+        setMarketData(prev => ({
+          ...prev,
+          [data.symbol]: {
+            ...prev[data.symbol],
+            ...data.data,
+            timestamp: new Date().toISOString()
+          }
+        }));
+      }
+    } catch (error) {
+      console.error('Error handling live data:', error);
     }
   };
 
   const handleBinanceStatus = (data: any) => {
-    if (data.status === 'connected') {
-      toast.success('Binance connection established');
-    } else if (data.status === 'disconnected') {
-      toast.error('Binance connection lost');
-    } else if (data.status === 'error') {
-      toast.error(`Binance error: ${data.error}`);
+    try {
+      if (data?.status === 'connected') {
+        toast.success('Binance connection established');
+      } else if (data?.status === 'disconnected') {
+        toast.error('Binance connection lost');
+      } else if (data?.status === 'error') {
+        toast.error(`Binance error: ${data.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error handling Binance status:', error);
     }
   };
 
   const handleSymbolToggle = (symbol: string) => {
-    setSelectedSymbols(prev => {
-      const newSelected = prev.includes(symbol)
-        ? prev.filter(s => s !== symbol)
-        : [...prev, symbol];
+    if (!symbol) return;
 
-      // Update WebSocket subscriptions
-      if (prev.includes(symbol)) {
-        wsClient.unsubscribeFromMarket([symbol]);
-      } else {
-        wsClient.subscribeToMarket([symbol]);
-      }
+    try {
+      setSelectedSymbols(prev => {
+        const newSelected = prev.includes(symbol)
+          ? prev.filter(s => s !== symbol)
+          : [...prev, symbol];
 
-      return newSelected;
-    });
+        // Update WebSocket subscriptions
+        try {
+          if (prev.includes(symbol)) {
+            wsClient.unsubscribeFromMarket([symbol]);
+          } else {
+            wsClient.subscribeToMarket([symbol]);
+          }
+        } catch (wsError) {
+          console.error('WebSocket subscription error:', wsError);
+        }
+
+        return newSelected;
+      });
+    } catch (error) {
+      console.error('Error toggling symbol:', error);
+      toast.error('Failed to update symbol selection');
+    }
   };
 
   const refreshMarketData = () => {
@@ -160,7 +213,8 @@ export default function MarketPage() {
   }
 
   return (
-    <DashboardLayout>
+    <ErrorBoundary>
+      <DashboardLayout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">Market Data</h1>
@@ -344,6 +398,7 @@ export default function MarketPage() {
           </div>
         )}
       </div>
-    </DashboardLayout>
+      </DashboardLayout>
+    </ErrorBoundary>
   );
 }
