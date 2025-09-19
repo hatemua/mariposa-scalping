@@ -78,7 +78,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex">
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
@@ -89,8 +89,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       {/* Sidebar */}
       <div className={`fixed inset-y-0 left-0 z-50 w-72 transform ${
         sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-      } transition duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0`}>
-        <div className="flex h-full flex-col bg-white/80 backdrop-blur-xl border-r border-gray-200/50 shadow-xl">
+      } transition duration-300 ease-in-out lg:relative lg:translate-x-0 lg:flex lg:flex-shrink-0 lg:inset-y-auto`}>
+        <div className="flex h-screen lg:h-full flex-col bg-white/80 backdrop-blur-xl border-r border-gray-200/50 shadow-xl w-full">
           {/* Logo and Close Button */}
           <div className="flex h-16 items-center justify-between px-6 border-b border-gray-200/50">
             <div className="flex items-center space-x-2">
@@ -167,9 +167,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       </div>
 
       {/* Main Content */}
-      <div className="lg:pl-72">
+      <div className="flex-1 flex flex-col min-w-0">
         {/* Top Navigation */}
-        <div className="sticky top-0 z-40 flex h-16 items-center justify-between bg-white/80 backdrop-blur-xl border-b border-gray-200/50 px-4 shadow-sm lg:px-6">
+        <div className="flex h-16 items-center justify-between bg-white/80 backdrop-blur-xl border-b border-gray-200/50 px-4 shadow-sm lg:px-6 flex-shrink-0">
           <button
             onClick={() => setSidebarOpen(true)}
             className="lg:hidden p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100"
@@ -211,8 +211,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         </div>
 
         {/* Page Content */}
-        <main className="flex-1">
-          <div className="min-h-[calc(100vh-4rem)]">
+        <main className="flex-1 overflow-auto">
+          <div className="h-full">
             {children}
           </div>
         </main>
