@@ -6,6 +6,7 @@ import { wsClient } from '@/lib/websocket';
 import { MarketData } from '@/types';
 import { toast } from 'react-hot-toast';
 import { TrendingUp, TrendingDown, Activity, DollarSign, Volume2, RefreshCw } from 'lucide-react';
+import DashboardLayout from '@/components/layout/DashboardLayout';
 
 export default function MarketPage() {
   const [symbols, setSymbols] = useState<string[]>([]);
@@ -16,14 +17,11 @@ export default function MarketPage() {
 
   useEffect(() => {
     const token = localStorage.getItem('token');
-    if (!token) {
-      window.location.href = '/login';
-      return;
+    if (token) {
+      wsClient.connect(token);
+      loadSymbols();
+      loadMarketData();
     }
-
-    wsClient.connect(token);
-    loadSymbols();
-    loadMarketData();
 
     // Set up WebSocket listeners
     wsClient.on('market-update', handleMarketUpdate);
@@ -162,7 +160,7 @@ export default function MarketPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <DashboardLayout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">Market Data</h1>
@@ -346,6 +344,6 @@ export default function MarketPage() {
           </div>
         )}
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

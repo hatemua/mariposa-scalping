@@ -6,6 +6,7 @@ import { wsClient } from '@/lib/websocket';
 import { Agent, MarketData } from '@/types';
 import { toast } from 'react-hot-toast';
 import { Activity, TrendingUp, DollarSign, Bot } from 'lucide-react';
+import DashboardLayout from '@/components/layout/DashboardLayout';
 
 export default function Dashboard() {
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -15,13 +16,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     const token = localStorage.getItem('token');
-    if (!token) {
-      window.location.href = '/login';
-      return;
+    if (token) {
+      wsClient.connect(token);
+      loadDashboardData();
     }
-
-    wsClient.connect(token);
-    loadDashboardData();
 
     return () => {
       wsClient.disconnect();
@@ -82,7 +80,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <DashboardLayout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
@@ -116,10 +114,10 @@ export default function Dashboard() {
 
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <div className="bg-white/80 backdrop-blur-xl p-6 rounded-2xl shadow-lg border border-white/20 hover:shadow-xl transition-all duration-300 hover:transform hover:scale-105">
             <div className="flex items-center">
-              <div className="p-3 rounded-full bg-green-100">
-                <DollarSign className="h-6 w-6 text-green-600" />
+              <div className="p-3 rounded-2xl bg-gradient-to-r from-green-400 to-emerald-500 shadow-lg">
+                <DollarSign className="h-6 w-6 text-white" />
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Total P&L</p>
@@ -130,10 +128,10 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <div className="bg-white/80 backdrop-blur-xl p-6 rounded-2xl shadow-lg border border-white/20 hover:shadow-xl transition-all duration-300 hover:transform hover:scale-105">
             <div className="flex items-center">
-              <div className="p-3 rounded-full bg-blue-100">
-                <Activity className="h-6 w-6 text-blue-600" />
+              <div className="p-3 rounded-2xl bg-gradient-to-r from-blue-400 to-cyan-500 shadow-lg">
+                <Activity className="h-6 w-6 text-white" />
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Total Trades</p>
@@ -142,10 +140,10 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <div className="bg-white/80 backdrop-blur-xl p-6 rounded-2xl shadow-lg border border-white/20 hover:shadow-xl transition-all duration-300 hover:transform hover:scale-105">
             <div className="flex items-center">
-              <div className="p-3 rounded-full bg-purple-100">
-                <Bot className="h-6 w-6 text-purple-600" />
+              <div className="p-3 rounded-2xl bg-gradient-to-r from-purple-400 to-pink-500 shadow-lg">
+                <Bot className="h-6 w-6 text-white" />
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Active Agents</p>
@@ -154,10 +152,10 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <div className="bg-white/80 backdrop-blur-xl p-6 rounded-2xl shadow-lg border border-white/20 hover:shadow-xl transition-all duration-300 hover:transform hover:scale-105">
             <div className="flex items-center">
-              <div className="p-3 rounded-full bg-orange-100">
-                <TrendingUp className="h-6 w-6 text-orange-600" />
+              <div className="p-3 rounded-2xl bg-gradient-to-r from-orange-400 to-red-500 shadow-lg">
+                <TrendingUp className="h-6 w-6 text-white" />
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Avg Win Rate</p>
@@ -174,30 +172,30 @@ export default function Dashboard() {
             const pnl = agent.performance?.totalPnL || 0;
 
             return (
-              <div key={agent._id} className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+              <div key={agent._id} className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-lg border border-white/20 p-6 hover:shadow-xl transition-all duration-300 hover:transform hover:scale-105">
                 <div className="flex items-start justify-between mb-4">
                   <div>
                     <h3 className="text-lg font-semibold text-gray-900">{agent.name}</h3>
-                    <p className="text-gray-600">{agent.symbol}</p>
+                    <p className="text-gray-600 font-medium">{agent.symbol}</p>
                   </div>
-                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium shadow-sm ${
                     agent.isActive
-                      ? 'bg-green-100 text-green-800'
-                      : 'bg-gray-100 text-gray-800'
+                      ? 'bg-gradient-to-r from-green-400 to-emerald-500 text-white'
+                      : 'bg-gradient-to-r from-gray-400 to-gray-500 text-white'
                   }`}>
                     {agent.isActive ? 'Active' : 'Inactive'}
                   </span>
                 </div>
 
                 {market && (
-                  <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+                  <div className="mb-4 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl border border-blue-100">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Current Price</span>
-                      <span className="font-medium">${market.price.toFixed(4)}</span>
+                      <span className="text-sm font-medium text-gray-700">Current Price</span>
+                      <span className="font-bold text-gray-900">${market.price.toFixed(4)}</span>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">24h Change</span>
-                      <span className={`font-medium ${
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="text-sm font-medium text-gray-700">24h Change</span>
+                      <span className={`font-bold ${
                         market.change24h >= 0 ? 'text-green-600' : 'text-red-600'
                       }`}>
                         {market.change24h.toFixed(2)}%
@@ -223,10 +221,10 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                <div className="mt-4 pt-4 border-t border-gray-100">
+                <div className="mt-4 pt-4 border-t border-gray-200">
                   <button
                     onClick={() => window.location.href = `/dashboard/agents/${agent._id}`}
-                    className="w-full bg-primary-600 text-white py-2 px-4 rounded-lg hover:bg-primary-700 transition-colors"
+                    className="w-full bg-gradient-to-r from-blue-500 to-purple-600 text-white py-3 px-4 rounded-xl hover:from-blue-600 hover:to-purple-700 transition-all duration-300 font-medium shadow-lg hover:shadow-xl transform hover:scale-105"
                   >
                     View Details
                   </button>
@@ -237,19 +235,21 @@ export default function Dashboard() {
         </div>
 
         {agents.length === 0 && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
-            <Bot className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No Agents Created</h3>
-            <p className="text-gray-600 mb-6">Create your first scalping agent to get started</p>
+          <div className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-lg border border-white/20 p-12 text-center">
+            <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg">
+              <Bot className="h-8 w-8 text-white" />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">No Agents Created</h3>
+            <p className="text-gray-600 mb-8">Create your first scalping agent to get started</p>
             <button
               onClick={() => window.location.href = '/dashboard/agents/create'}
-              className="bg-primary-600 text-white px-6 py-2 rounded-lg hover:bg-primary-700 transition-colors"
+              className="bg-gradient-to-r from-blue-500 to-purple-600 text-white px-8 py-3 rounded-xl hover:from-blue-600 hover:to-purple-700 transition-all duration-300 font-medium shadow-lg hover:shadow-xl transform hover:scale-105"
             >
               Create Agent
             </button>
           </div>
         )}
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

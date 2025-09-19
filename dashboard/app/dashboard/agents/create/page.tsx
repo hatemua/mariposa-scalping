@@ -6,6 +6,7 @@ import { AgentConfig } from '@/types';
 import { toast } from 'react-hot-toast';
 import { Bot, DollarSign, Shield, Target, TrendingUp, Activity, ArrowLeft } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import DashboardLayout from '@/components/layout/DashboardLayout';
 
 export default function CreateAgentPage() {
   const router = useRouter();
@@ -29,12 +30,9 @@ export default function CreateAgentPage() {
 
   useEffect(() => {
     const token = localStorage.getItem('token');
-    if (!token) {
-      window.location.href = '/login';
-      return;
+    if (token) {
+      loadSymbols();
     }
-
-    loadSymbols();
   }, []);
 
   const loadSymbols = async () => {
@@ -153,7 +151,7 @@ export default function CreateAgentPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <DashboardLayout>
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
           <button
@@ -412,6 +410,6 @@ export default function CreateAgentPage() {
           </div>
         </form>
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

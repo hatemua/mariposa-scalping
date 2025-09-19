@@ -6,6 +6,7 @@ import { wsClient } from '@/lib/websocket';
 import { Analysis, LLMAnalysis } from '@/types';
 import { toast } from 'react-hot-toast';
 import { Brain, TrendingUp, TrendingDown, Minus, RefreshCw, Target, Shield, Clock } from 'lucide-react';
+import DashboardLayout from '@/components/layout/DashboardLayout';
 
 export default function RecommendationsPage() {
   const [symbols, setSymbols] = useState<string[]>([]);
@@ -16,14 +17,11 @@ export default function RecommendationsPage() {
 
   useEffect(() => {
     const token = localStorage.getItem('token');
-    if (!token) {
-      window.location.href = '/login';
-      return;
+    if (token) {
+      wsClient.connect(token);
+      loadSymbols();
+      loadAnalyses();
     }
-
-    wsClient.connect(token);
-    loadSymbols();
-    loadAnalyses();
 
     // Set up WebSocket listeners for real-time analysis updates
     wsClient.on('analysis-update', handleAnalysisUpdate);
@@ -136,7 +134,7 @@ export default function RecommendationsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <DashboardLayout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">AI Recommendations</h1>
@@ -288,6 +286,6 @@ export default function RecommendationsPage() {
           </div>
         )}
       </div>
-    </div>
+    </DashboardLayout>
   );
 }
