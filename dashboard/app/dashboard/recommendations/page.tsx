@@ -412,7 +412,7 @@ export default function RecommendationsPage() {
               </span>
             </div>
             <h3 className="font-semibold text-gray-900">High Profit</h3>
-            <p className="text-sm text-gray-600">Potential >3% gains</p>
+            <p className="text-sm text-gray-600">Potential &gt;3% gains</p>
           </div>
         </div>
 
