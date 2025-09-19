@@ -3,6 +3,7 @@ import { config } from '../config/environment';
 import { LLMAnalysis, ConsolidatedAnalysis, MarketData } from '../types';
 import { ConsolidatedAnalysis as AnalysisModel } from '../models';
 import { redisService } from './redisService';
+import { binanceService } from './binanceService';
 import { SymbolConverter } from '../utils/symbolConverter';
 
 interface TogetherAIResponse {

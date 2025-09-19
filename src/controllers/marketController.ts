@@ -327,8 +327,8 @@ export const getAvailableSymbols = async (req: AuthRequest, res: Response): Prom
 
     // Prioritize our selected symbols first, then add others
     const sortedSymbols = [
-      ...prioritySymbols.filter(s => binanceUsdtPairs.includes(s)),
-      ...binanceUsdtPairs.filter(s => !prioritySymbols.includes(s))
+      ...prioritySymbols.filter((s: string) => binanceUsdtPairs.includes(s)),
+      ...binanceUsdtPairs.filter((s: string) => !prioritySymbols.includes(s))
     ].slice(0, 100);
 
     // Get OKX USDT pairs and normalize them
