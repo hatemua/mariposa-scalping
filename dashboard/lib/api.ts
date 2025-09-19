@@ -147,6 +147,11 @@ export const marketApi = {
     return response.data;
   },
 
+  getDeepAnalysis: async (symbol: string): Promise<ApiResponse> => {
+    const response = await api.get(`/market/${symbol}/deep-analysis`);
+    return response.data;
+  },
+
   triggerAnalysis: async (symbol: string): Promise<ApiResponse> => {
     const response = await api.post('/market/analysis', { symbol });
     return response.data;

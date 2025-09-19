@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { marketApi } from '@/lib/api';
 import { wsClient } from '@/lib/websocket';
+import config from '@/lib/config';
 import { Analysis, LLMAnalysis, MarketData } from '@/types';
 import { toast } from 'react-hot-toast';
 import {
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import ErrorBoundary from '@/components/ErrorBoundary';
+import TokenDetailModal from '@/components/TokenDetailModal';
 
 export default function RecommendationsPage() {
   const [symbols, setSymbols] = useState<string[]>([]);
@@ -22,6 +24,8 @@ export default function RecommendationsPage() {
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(true);
+  const [selectedToken, setSelectedToken] = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -56,31 +60,56 @@ export default function RecommendationsPage() {
 
   const loadSymbolsAndInitialData = async () => {
     try {
+      console.log('🔍 Loading symbols from API:', config.getBackendUrl());
       const response = await marketApi.getSymbols();
+      console.log('📊 Symbols API response:', response);
+
       if (response?.success && response.data) {
-        const allSymbols = response.data.all || [];
-        const priority = response.data.priority || ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'TRXUSDT', 'ADAUSDT'];
+        const allSymbols = response.data.all || response.data || [];
+        const priority = response.data.priority || response.data.binance || response.data.all ||
+          ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'TRXUSDT', 'ADAUSDT', 'MATICUSDT', 'LINKUSDT'];
+
+        console.log('✅ Loaded symbols:', { total: allSymbols.length, priority: priority.length });
+        console.log('🎯 Priority symbols:', priority.slice(0, 10));
 
         setSymbols(allSymbols);
         setPrioritySymbols(priority);
 
         // Load initial data for priority symbols
-        await loadAnalysesForSymbols(priority.slice(0, 12));
-        await loadMarketDataForSymbols(priority.slice(0, 12));
+        const symbolsToLoad = priority.slice(0, 15); // Increased to 15 for better coverage
+        console.log('🚀 Loading data for symbols:', symbolsToLoad);
+
+        await loadAnalysesForSymbols(symbolsToLoad);
+        await loadMarketDataForSymbols(symbolsToLoad);
       } else {
+        console.warn('⚠️ API response not successful, using fallback symbols');
         // Enhanced fallback with more tokens
-        const fallbackSymbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'TRXUSDT', 'ADAUSDT', 'MATICUSDT', 'LINKUSDT'];
+        const fallbackSymbols = [
+          'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'TRXUSDT', 'ADAUSDT',
+          'MATICUSDT', 'LINKUSDT', 'UNIUSDT', 'AVAXUSDT', 'DOTUSDT', 'LTCUSDT'
+        ];
         setSymbols(fallbackSymbols);
         setPrioritySymbols(fallbackSymbols);
         await loadAnalysesForSymbols(fallbackSymbols);
         await loadMarketDataForSymbols(fallbackSymbols);
+        toast.error('Using fallback symbols - backend may be limited');
       }
-    } catch (error) {
-      console.error('Error loading symbols:', error);
-      const fallbackSymbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'TRXUSDT', 'ADAUSDT'];
+    } catch (error: any) {
+      console.error('❌ Error loading symbols:', error);
+      console.error('Error details:', error.response?.data || error.message);
+
+      const fallbackSymbols = [
+        'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'TRXUSDT', 'ADAUSDT',
+        'MATICUSDT', 'LINKUSDT', 'UNIUSDT', 'AVAXUSDT'
+      ];
       setSymbols(fallbackSymbols);
       setPrioritySymbols(fallbackSymbols);
-      toast.error('Failed to load symbols, using defaults');
+
+      // Still try to load data for fallback symbols
+      await loadAnalysesForSymbols(fallbackSymbols);
+      await loadMarketDataForSymbols(fallbackSymbols);
+
+      toast.error(`Failed to load symbols from backend: ${error.response?.status || 'Network error'}`);
     } finally {
       setLoading(false);
     }
@@ -88,30 +117,51 @@ export default function RecommendationsPage() {
 
   const loadAnalysesForSymbols = async (symbolList: string[]) => {
     try {
+      console.log('📈 Loading analyses for symbols:', symbolList);
+
       const promises = symbolList.map(async (symbol) => {
         try {
           const response = await marketApi.getAnalysis(symbol, 1);
           if (response?.success && response.data && response.data.length > 0) {
+            console.log(`✅ Analysis loaded for ${symbol}:`, response.data[0].recommendation);
             return { symbol, analysis: response.data[0] };
+          } else {
+            console.warn(`⚠️ No analysis data for ${symbol}:`, response);
           }
-        } catch (error) {
-          console.error(`Error loading analysis for ${symbol}:`, error);
+        } catch (error: any) {
+          console.error(`❌ Error loading analysis for ${symbol}:`, error.response?.status || error.message);
         }
         return null;
       });
 
       const results = await Promise.all(promises);
       const newAnalyses: Record<string, Analysis> = {};
+      let successCount = 0;
 
       results.forEach(result => {
         if (result) {
           newAnalyses[result.symbol] = result.analysis;
+          successCount++;
         }
       });
 
+      console.log(`📊 Analysis loading complete: ${successCount}/${symbolList.length} successful`);
       setAnalyses(prev => ({ ...prev, ...newAnalyses }));
-    } catch (error) {
-      console.error('Error loading analyses:', error);
+
+      if (successCount === 0) {
+        toast.error('No analysis data available from backend');
+      } else if (successCount < symbolList.length) {
+        toast(`Limited analysis data: ${successCount}/${symbolList.length} tokens analyzed`, {
+          icon: '⚠️',
+          style: {
+            background: '#fef3c7',
+            color: '#92400e',
+          },
+        });
+      }
+    } catch (error: any) {
+      console.error('❌ Error loading analyses:', error);
+      toast.error('Failed to load analysis data');
     }
   };
 
@@ -123,7 +173,7 @@ export default function RecommendationsPage() {
           if (response?.success && response.data) {
             return { symbol, data: response.data };
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error(`Error loading market data for ${symbol}:`, error);
         }
         return null;
@@ -139,7 +189,7 @@ export default function RecommendationsPage() {
       });
 
       setMarketData(prev => ({ ...prev, ...newMarketData }));
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading market data:', error);
     }
   };
@@ -154,9 +204,19 @@ export default function RecommendationsPage() {
       } else {
         toast.error(response.error || `Failed to analyze ${symbol}`);
       }
-    } catch (error) {
+    } catch (error: any) {
       toast.error(`Failed to analyze ${symbol}`);
     }
+  };
+
+  const handleTokenClick = (symbol: string) => {
+    setSelectedToken(symbol);
+    setIsModalOpen(true);
+  };
+
+  const handleModalClose = () => {
+    setIsModalOpen(false);
+    setSelectedToken(null);
   };
 
   const handleAnalysisUpdate = useCallback((data: any) => {
@@ -165,7 +225,7 @@ export default function RecommendationsPage() {
         setAnalyses(prev => ({ ...prev, [data.symbol]: data.analysis }));
         setLastUpdate(new Date());
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error handling analysis update:', error);
     }
   }, []);
@@ -175,7 +235,7 @@ export default function RecommendationsPage() {
       if (data?.symbol && data?.data) {
         setMarketData(prev => ({ ...prev, [data.symbol]: data.data }));
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error handling market update:', error);
     }
   }, []);
@@ -432,7 +492,10 @@ export default function RecommendationsPage() {
                 <div className={`absolute -inset-1 ${getRecommendationGradient(analysis.recommendation, analysis.confidence)} rounded-3xl blur opacity-25 group-hover:opacity-40 transition duration-300`}></div>
 
                 {/* Main Card */}
-                <div className="relative bg-white/90 backdrop-blur-xl rounded-3xl p-6 border border-white/30 shadow-xl hover:shadow-2xl transition-all duration-300 hover:transform hover:scale-105">
+                <div
+                  className="relative bg-white/90 backdrop-blur-xl rounded-3xl p-6 border border-white/30 shadow-xl hover:shadow-2xl transition-all duration-300 hover:transform hover:scale-105 cursor-pointer"
+                  onClick={() => handleTokenClick(symbol)}
+                >
 
                   {/* Header */}
                   <div className="flex items-start justify-between mb-6">
@@ -455,7 +518,10 @@ export default function RecommendationsPage() {
                       </div>
                     </div>
                     <button
-                      onClick={() => triggerAnalysisForSymbol(symbol)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        triggerAnalysisForSymbol(symbol);
+                      }}
                       className="p-2 rounded-xl bg-gray-100 hover:bg-gray-200 transition-colors"
                       title="Refresh analysis"
                     >
@@ -559,9 +625,14 @@ export default function RecommendationsPage() {
                         <Brain className="h-3 w-3" />
                         <span>{analysis.individualAnalyses?.length || 0} AI Models</span>
                       </div>
-                      <div className="flex items-center space-x-2 text-xs text-gray-600">
-                        <Clock className="h-3 w-3" />
-                        <span>{new Date(analysis.timestamp).toLocaleTimeString()}</span>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2 text-xs text-gray-600">
+                          <Clock className="h-3 w-3" />
+                          <span>{new Date(analysis.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                        <div className="text-xs text-blue-600 font-medium opacity-70">
+                          Click for details →
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -640,6 +711,17 @@ export default function RecommendationsPage() {
             </div>
           </div>
         </div>
+
+        {/* Token Detail Modal */}
+        {selectedToken && (
+          <TokenDetailModal
+            symbol={selectedToken}
+            isOpen={isModalOpen}
+            onClose={handleModalClose}
+            initialAnalysis={analyses[selectedToken]}
+            initialMarketData={marketData[selectedToken]}
+          />
+        )}
       </div>
       </DashboardLayout>
     </ErrorBoundary>

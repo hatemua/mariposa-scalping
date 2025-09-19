@@ -161,6 +161,71 @@ export const getBalance = async (req: AuthRequest, res: Response): Promise<void>
   }
 };
 
+export const getDeepAnalysis = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { symbol } = req.params;
+
+    // Validate and normalize the symbol
+    if (!symbol || !SymbolConverter.isValidTradingPair(symbol)) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid trading symbol provided'
+      } as ApiResponse);
+      return;
+    }
+
+    const normalizedSymbol = SymbolConverter.normalize(symbol);
+
+    // Get comprehensive market data for deep analysis
+    const [symbolInfo, klineData1m, klineData5m, klineData15m, klineData1h, orderBook] = await Promise.all([
+      binanceService.getSymbolInfo(normalizedSymbol),
+      binanceService.getKlineData(normalizedSymbol, '1m', 100),
+      binanceService.getKlineData(normalizedSymbol, '5m', 100),
+      binanceService.getKlineData(normalizedSymbol, '15m', 100),
+      binanceService.getKlineData(normalizedSymbol, '1h', 100),
+      binanceService.getOrderBook(normalizedSymbol, 50)
+    ]);
+
+    const marketData = {
+      symbol: normalizedSymbol,
+      price: parseFloat(symbolInfo.lastPrice),
+      volume: parseFloat(symbolInfo.volume),
+      change24h: parseFloat(symbolInfo.priceChangePercent),
+      high24h: parseFloat(symbolInfo.highPrice),
+      low24h: parseFloat(symbolInfo.lowPrice),
+      timestamp: new Date(),
+      klineData: klineData5m.slice(-20),
+      orderBook: {
+        bids: orderBook.bids.slice(0, 20),
+        asks: orderBook.asks.slice(0, 20)
+      }
+    };
+
+    // Generate deep analysis with multi-timeframe data
+    const deepAnalysis = await aiAnalysisService.generateDeepAnalysis(
+      marketData,
+      {
+        '1m': klineData1m,
+        '5m': klineData5m,
+        '15m': klineData15m,
+        '1h': klineData1h
+      },
+      orderBook
+    );
+
+    res.json({
+      success: true,
+      data: deepAnalysis
+    } as ApiResponse);
+  } catch (error) {
+    console.error('Error generating deep analysis:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate deep analysis'
+    } as ApiResponse);
+  }
+};
+
 export const getAvailableSymbols = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     // Get symbols from both exchanges for comprehensive list
