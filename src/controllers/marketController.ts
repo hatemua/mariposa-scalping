@@ -169,6 +169,19 @@ export const getAvailableSymbols = async (req: AuthRequest, res: Response): Prom
       binanceService.getExchangeInfo()
     ]);
 
+    // Priority symbols for trading (high volume, popular tokens)
+    const prioritySymbols = [
+      'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'XRPUSDT',
+      'DOGEUSDT', 'TRXUSDT', 'MATICUSDT', 'LINKUSDT', 'UNIUSDT', 'LTCUSDT',
+      'AVAXUSDT', 'DOTUSDT', 'SHIBUSDT', 'ATOMUSDT', 'FILUSDT', 'ETCUSDT',
+      'XLMUSDT', 'NEARUSDT', 'ALGOUSDT', 'VETUSDT', 'ICPUSDT', 'FTMUSDT',
+      'SANDUSDT', 'MANAUSDT', 'AXSUSDT', 'GALAUSDT', 'ENSUSDT', 'CHZUSDT',
+      'FLOWUSDT', 'XTZUSDT', 'EGLDUSDT', 'KLAYUSDT', 'WAVESUSDT', 'ZILUSDT',
+      'LRCUSDT', 'BATUSDT', 'ZECUSDT', 'OMGUSDT', 'SUSHIUSDT', 'CRVUSDT',
+      'COMPUSDT', 'YFIUSDT', 'SNXUSDT', 'MKRUSDT', 'AAVEUSDT', 'GRTUSDT',
+      'ONEUSDT', 'ENJUSDT', 'STORJUSDT', 'CTSIUSDT', 'DENTUSDT', 'HOTUSDT'
+    ];
+
     // Get Binance USDT pairs and normalize them
     const binanceUsdtPairs = binanceInfo.symbols
       .filter((symbol: any) =>
@@ -178,8 +191,13 @@ export const getAvailableSymbols = async (req: AuthRequest, res: Response): Prom
         !symbol.symbol.includes('UP')
       )
       .map((symbol: any) => SymbolConverter.normalize(symbol.symbol))
-      .slice(0, 100)
       .sort();
+
+    // Prioritize our selected symbols first, then add others
+    const sortedSymbols = [
+      ...prioritySymbols.filter(s => binanceUsdtPairs.includes(s)),
+      ...binanceUsdtPairs.filter(s => !prioritySymbols.includes(s))
+    ].slice(0, 100);
 
     // Get OKX USDT pairs and normalize them
     const okxUsdtPairs = okxSymbols
@@ -188,15 +206,16 @@ export const getAvailableSymbols = async (req: AuthRequest, res: Response): Prom
       .slice(0, 100)
       .sort();
 
-    // Combine and deduplicate
-    const allSymbols = Array.from(new Set([...binanceUsdtPairs, ...okxUsdtPairs])).sort();
+    // Combine and deduplicate, prioritizing our sorted symbols
+    const allSymbols = Array.from(new Set([...sortedSymbols, ...okxUsdtPairs])).slice(0, 120);
 
     res.json({
       success: true,
       data: {
         all: allSymbols,
-        binance: binanceUsdtPairs,
-        okx: okxUsdtPairs
+        binance: sortedSymbols,
+        okx: okxUsdtPairs,
+        priority: prioritySymbols.filter(s => allSymbols.includes(s))
       }
     } as ApiResponse);
   } catch (error) {

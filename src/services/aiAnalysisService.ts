@@ -21,7 +21,7 @@ export class AIAnalysisService {
     'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
     'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',
     'mistralai/Mixtral-8x7B-Instruct-v0.1',
-    'NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO'
+    'Qwen/Qwen2.5-7B-Instruct-Turbo'
   ];
 
   constructor() {
@@ -134,11 +134,12 @@ export class AIAnalysisService {
     } catch (error) {
       console.error(`Error getting analysis from ${model}:`, error);
 
+      // Enhanced fallback with more informative response
       return {
         model,
         recommendation: 'HOLD',
         confidence: 0.1,
-        reasoning: 'Analysis failed due to API error',
+        reasoning: `${model} analysis unavailable - API error. Recommend HOLD until market conditions are clearer.`,
         timestamp: new Date()
       };
     }
