@@ -152,6 +152,98 @@ export const marketApi = {
     return response.data;
   },
 
+  // New enhanced endpoints
+  getMultiTimeframeAnalysis: async (symbol: string, timeframes?: string[]): Promise<ApiResponse> => {
+    const response = await api.get(`/market/${symbol}/multi-timeframe`, {
+      params: { timeframes: timeframes?.join(',') }
+    });
+    return response.data;
+  },
+
+  getRealTimeAnalysis: async (symbol: string, models?: string[]): Promise<ApiResponse> => {
+    const response = await api.get(`/market/${symbol}/real-time`, {
+      params: { models: models?.join(',') }
+    });
+    return response.data;
+  },
+
+  getChartData: async (symbol: string, timeframe: string, limit = 200, indicators?: string[]): Promise<ApiResponse> => {
+    const response = await api.get(`/market/${symbol}/chart/${timeframe}`, {
+      params: {
+        limit,
+        indicators: indicators?.join(',')
+      }
+    });
+    return response.data;
+  },
+
+  getBulkTokenAnalysis: async (data: {
+    symbols?: string[];
+    sortBy?: string;
+    limit?: number;
+  }): Promise<ApiResponse> => {
+    const response = await api.post('/market/analysis/bulk', data);
+    return response.data;
+  },
+
+  getImmediateTradingSignals: async (symbol: string): Promise<ApiResponse> => {
+    // This would call the real-time analysis and extract signals
+    const response = await api.get(`/market/${symbol}/real-time`);
+
+    if (response.data?.success) {
+      // Extract trading signals from real-time analysis
+      const rtData = response.data.data;
+      const signals = [];
+
+      // Extract immediate signals based on consensus
+      if (rtData.consensus?.recommendation === 'BUY' && rtData.consensus?.confidence > 0.7) {
+        signals.push({
+          type: 'IMMEDIATE_BUY',
+          confidence: rtData.consensus.confidence,
+          targetPrice: rtData.consensus.targetPrice,
+          stopLoss: rtData.consensus.stopLoss,
+          timeWindow: rtData.consensus.timeToAction,
+          reasoning: rtData.consensus.reasoning
+        });
+      }
+
+      if (rtData.consensus?.recommendation === 'SELL' && rtData.consensus?.confidence > 0.7) {
+        signals.push({
+          type: 'IMMEDIATE_SELL',
+          confidence: rtData.consensus.confidence,
+          targetPrice: rtData.consensus.targetPrice,
+          stopLoss: rtData.consensus.stopLoss,
+          timeWindow: rtData.consensus.timeToAction,
+          reasoning: rtData.consensus.reasoning
+        });
+      }
+
+      // Add risk warnings
+      if (rtData.riskWarnings?.length > 0) {
+        signals.push({
+          type: 'RISK_WARNING',
+          level: 'HIGH',
+          warnings: rtData.riskWarnings,
+          action: 'REDUCE_POSITION_OR_WAIT'
+        });
+      }
+
+      return {
+        success: true,
+        data: {
+          symbol,
+          signals,
+          signalCount: signals.length,
+          hasImmediateAction: signals.some((s: any) => s.type.includes('IMMEDIATE')),
+          timestamp: new Date().toISOString()
+        }
+      };
+    }
+
+    return response.data;
+  },
+
+  // Legacy endpoints
   triggerAnalysis: async (symbol: string): Promise<ApiResponse> => {
     const response = await api.post('/market/analysis', { symbol });
     return response.data;

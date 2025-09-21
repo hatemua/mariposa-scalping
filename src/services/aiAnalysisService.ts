@@ -1519,6 +1519,738 @@ export class AIAnalysisService {
       return null;
     }
   }
+
+  // ===============================
+  // NEW ENHANCED ANALYSIS METHODS
+  // ===============================
+
+  async generateTimeframeSpecificAnalysis(
+    marketData: MarketData,
+    timeframeData: { [key: string]: any[] },
+    orderBook: any,
+    timeframe: string
+  ): Promise<any> {
+    const symbol = SymbolConverter.normalize(marketData.symbol);
+
+    try {
+      // Create timeframe-specific analysis prompt
+      const prompt = this.generateTimeframeSpecificPrompt(marketData, timeframeData, orderBook, timeframe);
+
+      // Get analysis from all models with timeframe focus
+      const analyses = await Promise.all(
+        this.models.map(async (model) => {
+          return await this.getModelAnalysis(model, prompt);
+        })
+      );
+
+      // Generate timeframe-specific consolidated analysis
+      const consolidatedAnalysis = await this.consolidateTimeframeAnalysis(
+        symbol,
+        analyses,
+        timeframe,
+        timeframeData
+      );
+
+      return {
+        ...consolidatedAnalysis,
+        timeframe,
+        timeframeType: this.getTimeframeType(timeframe),
+        chartPatterns: this.identifyChartPatterns(timeframeData[timeframe] || []),
+        keyLevels: this.calculateKeyLevels(timeframeData[timeframe] || []),
+        volumeAnalysis: this.analyzeVolumeSignals(timeframeData[timeframe] || []),
+        momentum: this.calculateTimeframeMomentum(timeframeData[timeframe] || [])
+      };
+    } catch (error) {
+      console.error(`Error in timeframe-specific analysis for ${symbol} on ${timeframe}:`, error);
+      throw error;
+    }
+  }
+
+  async generateConsolidatedMultiTimeframeAnalysis(
+    symbol: string,
+    multiTimeframeData: any[]
+  ): Promise<any> {
+    try {
+      // Create comprehensive multi-timeframe prompt
+      const prompt = this.generateMultiTimeframeConsolidationPrompt(symbol, multiTimeframeData);
+
+      // Get consolidated analysis from the most capable model
+      const response = await axios.post<TogetherAIResponse>(
+        this.baseURL,
+        {
+          model: this.models[1], // Use most capable model
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a senior quantitative analyst specializing in multi-timeframe analysis. Provide institutional-grade trading recommendations with specific entry/exit strategies.'
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          max_tokens: 1000,
+          temperature: 0.05
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      const content = response.data.choices[0].message.content;
+      const consolidatedAnalysis = this.parseConsolidatedResponse(content);
+
+      return {
+        symbol,
+        ...consolidatedAnalysis,
+        multiTimeframeAlignment: this.assessMultiTimeframeAlignment(multiTimeframeData),
+        confluentSignals: this.findConfluentSignals(multiTimeframeData),
+        riskProfile: this.calculateMultiTimeframeRiskProfile(multiTimeframeData),
+        optimalTimeframes: this.identifyOptimalTimeframes(multiTimeframeData),
+        timestamp: new Date()
+      };
+    } catch (error) {
+      console.error(`Error in consolidated multi-timeframe analysis for ${symbol}:`, error);
+      throw error;
+    }
+  }
+
+  async generateRealTimeAnalysis(
+    marketData: MarketData,
+    shortTermData: { [key: string]: any[] },
+    orderBook: any
+  ): Promise<any> {
+    const symbol = SymbolConverter.normalize(marketData.symbol);
+
+    try {
+      // Create real-time focused prompt
+      const prompt = this.generateRealTimeAnalysisPrompt(marketData, shortTermData, orderBook);
+
+      // Get rapid analysis from all models
+      const analyses = await Promise.all(
+        this.models.map(async (model) => {
+          const analysis = await this.getModelAnalysis(model, prompt);
+          return {
+            ...analysis,
+            model,
+            urgency: this.calculateUrgencyScore(analysis),
+            timeToAction: this.estimateTimeToAction(analysis)
+          };
+        })
+      );
+
+      // Create real-time consensus
+      const realTimeConsensus = this.createRealTimeConsensus(analyses);
+
+      return {
+        symbol,
+        consensus: realTimeConsensus,
+        individualModels: analyses,
+        marketConditions: this.assessCurrentMarketConditions(marketData, shortTermData, orderBook),
+        immediateSignals: this.extractImmediateSignals(analyses),
+        riskWarnings: this.generateRiskWarnings(marketData, analyses),
+        timestamp: new Date()
+      };
+    } catch (error) {
+      console.error(`Error in real-time analysis for ${symbol}:`, error);
+      throw error;
+    }
+  }
+
+  async generateImmediateTradingSignals(
+    symbol: string,
+    marketData: MarketData,
+    realTimeAnalysis: any
+  ): Promise<any> {
+    try {
+      const signals = [];
+
+      // Extract immediate action signals
+      if (realTimeAnalysis.consensus.recommendation === 'BUY' &&
+          realTimeAnalysis.consensus.confidence > 0.7) {
+        signals.push({
+          type: 'IMMEDIATE_BUY',
+          confidence: realTimeAnalysis.consensus.confidence,
+          targetPrice: realTimeAnalysis.consensus.targetPrice,
+          stopLoss: realTimeAnalysis.consensus.stopLoss,
+          timeWindow: '5-15 minutes',
+          reasoning: realTimeAnalysis.consensus.reasoning
+        });
+      }
+
+      if (realTimeAnalysis.consensus.recommendation === 'SELL' &&
+          realTimeAnalysis.consensus.confidence > 0.7) {
+        signals.push({
+          type: 'IMMEDIATE_SELL',
+          confidence: realTimeAnalysis.consensus.confidence,
+          targetPrice: realTimeAnalysis.consensus.targetPrice,
+          stopLoss: realTimeAnalysis.consensus.stopLoss,
+          timeWindow: '5-15 minutes',
+          reasoning: realTimeAnalysis.consensus.reasoning
+        });
+      }
+
+      // Add risk management signals
+      if (realTimeAnalysis.riskWarnings.length > 0) {
+        signals.push({
+          type: 'RISK_WARNING',
+          level: 'HIGH',
+          warnings: realTimeAnalysis.riskWarnings,
+          action: 'REDUCE_POSITION_OR_WAIT'
+        });
+      }
+
+      return {
+        symbol,
+        signals,
+        signalCount: signals.length,
+        hasImmediateAction: signals.some(s => s.type.includes('IMMEDIATE')),
+        nextUpdate: new Date(Date.now() + 60000), // Next update in 1 minute
+        timestamp: new Date()
+      };
+    } catch (error) {
+      console.error(`Error generating immediate trading signals for ${symbol}:`, error);
+      throw error;
+    }
+  }
+
+  async getQuickAnalysis(symbol: string): Promise<any> {
+    const normalizedSymbol = SymbolConverter.normalize(symbol);
+
+    try {
+      // Check for recent cached analysis first
+      const cachedAnalysis = await redisService.getCurrentAnalysis(normalizedSymbol);
+      if (cachedAnalysis && this.isAnalysisRecent(cachedAnalysis, 300)) { // 5 minutes for quick analysis
+        return cachedAnalysis;
+      }
+
+      // Generate quick analysis if no recent cache
+      const [symbolInfo, klineData5m] = await Promise.all([
+        binanceService.getSymbolInfo(normalizedSymbol),
+        binanceService.getKlineData(normalizedSymbol, '5m', 50)
+      ]);
+
+      const marketData = {
+        symbol: normalizedSymbol,
+        price: parseFloat(symbolInfo.lastPrice),
+        volume: parseFloat(symbolInfo.volume),
+        change24h: parseFloat(symbolInfo.priceChangePercent),
+        high24h: parseFloat(symbolInfo.highPrice),
+        low24h: parseFloat(symbolInfo.lowPrice),
+        timestamp: new Date()
+      };
+
+      // Quick analysis using the fastest model
+      const quickPrompt = this.generateQuickAnalysisPrompt(marketData, klineData5m);
+      const quickAnalysis = await this.getModelAnalysis(this.models[0], quickPrompt);
+
+      // Cache the quick analysis
+      await redisService.cacheAnalysis(normalizedSymbol, quickAnalysis);
+
+      return quickAnalysis;
+    } catch (error) {
+      console.error(`Error in quick analysis for ${normalizedSymbol}:`, error);
+      return {
+        symbol: normalizedSymbol,
+        recommendation: 'HOLD',
+        confidence: 0.3,
+        reasoning: 'Quick analysis unavailable',
+        timestamp: new Date()
+      };
+    }
+  }
+
+  async getAnalysisOverlays(symbol: string, timeframe: string): Promise<any[]> {
+    const normalizedSymbol = SymbolConverter.normalize(symbol);
+
+    try {
+      // Get recent analyses for this symbol and timeframe
+      const analyses = await this.getRecentAnalyses(normalizedSymbol, 5);
+
+      // Convert to chart overlay format
+      return analyses.map(analysis => ({
+        timestamp: new Date(analysis.timestamp).getTime(),
+        price: analysis.targetPrice || 0,
+        type: analysis.recommendation?.toLowerCase() || 'neutral',
+        confidence: analysis.confidence || 0.5,
+        reasoning: analysis.reasoning || '',
+        model: 'Consolidated',
+        active: this.isAnalysisRecent(analysis, 3600), // Active for 1 hour
+        timeframe
+      }));
+    } catch (error) {
+      console.error(`Error getting analysis overlays for ${normalizedSymbol}:`, error);
+      return [];
+    }
+  }
+
+  // ===============================
+  // PRIVATE HELPER METHODS
+  // ===============================
+
+  private generateTimeframeSpecificPrompt(
+    marketData: MarketData,
+    timeframeData: { [key: string]: any[] },
+    orderBook: any,
+    timeframe: string
+  ): string {
+    const timeframeType = this.getTimeframeType(timeframe);
+    const klineData = timeframeData[timeframe] || [];
+
+    return `
+      TIMEFRAME-SPECIFIC ANALYSIS for ${marketData.symbol} on ${timeframe} (${timeframeType}):
+
+      === TIMEFRAME CONTEXT ===
+      Analysis Focus: ${timeframeType}
+      Candle Period: ${timeframe}
+      Analysis Horizon: ${this.getAnalysisHorizon(timeframe)}
+
+      === MARKET DATA ===
+      Current Price: $${marketData.price}
+      24h Change: ${marketData.change24h}%
+      24h Volume: $${(parseFloat(String(marketData.volume)) / 1000000).toFixed(2)}M
+
+      === ${timeframe.toUpperCase()} PRICE ACTION ===
+      Recent Candles (${Math.min(klineData.length, 20)} periods):
+      ${klineData.slice(-20).map((candle: any, i: number) =>
+        `${i + 1}. O:${parseFloat(candle[1]).toFixed(4)} H:${parseFloat(candle[2]).toFixed(4)} L:${parseFloat(candle[3]).toFixed(4)} C:${parseFloat(candle[4]).toFixed(4)} V:${candle[5]}`
+      ).join('\n')}
+
+      === TIMEFRAME-SPECIFIC REQUIREMENTS ===
+      ${this.getTimeframeSpecificRequirements(timeframe)}
+
+      === ANALYSIS DELIVERABLES ===
+      1. TIMEFRAME TREND: Overall direction on this timeframe
+      2. KEY LEVELS: Support/resistance relevant to this timeframe
+      3. PATTERN RECOGNITION: Chart patterns visible on this timeframe
+      4. ENTRY/EXIT TIMING: Optimal timing for this timeframe
+      5. RISK ASSESSMENT: Risk factors specific to this timeframe
+      6. CONFLUENCE: How this timeframe aligns with others
+
+      Provide specific, actionable insights for ${timeframe} trading.
+    `;
+  }
+
+  private generateMultiTimeframeConsolidationPrompt(symbol: string, multiTimeframeData: any[]): string {
+    return `
+      MULTI-TIMEFRAME CONSOLIDATION ANALYSIS for ${symbol}:
+
+      === TIMEFRAME BREAKDOWN ===
+      ${multiTimeframeData.map(data => `
+      ${data.timeframe.toUpperCase()}:
+      - Trend: ${data.analysis?.technicalSetup || 'Unknown'}
+      - Recommendation: ${data.analysis?.recommendation || 'Unknown'}
+      - Confidence: ${data.analysis?.confidence ? (data.analysis.confidence * 100).toFixed(1) + '%' : 'Unknown'}
+      - Key Insight: ${data.analysis?.reasoning?.substring(0, 100) || 'No insight available'}...
+      `).join('\n')}
+
+      === CONSOLIDATION REQUIREMENTS ===
+      1. TREND ALIGNMENT: Assess agreement across timeframes
+      2. OPTIMAL ENTRY TIMEFRAME: Which timeframe offers best entry
+      3. RISK CONFLUENCE: Where multiple timeframes agree on risk
+      4. TIMING STRATEGY: When to enter based on timeframe confluence
+      5. POSITION SIZING: Recommended size based on timeframe agreement
+      6. EXIT STRATEGY: Multi-timeframe exit approach
+
+      Provide a consolidated recommendation that maximizes timeframe confluence and minimizes conflicting signals.
+    `;
+  }
+
+  private generateRealTimeAnalysisPrompt(
+    marketData: MarketData,
+    shortTermData: { [key: string]: any[] },
+    orderBook: any
+  ): string {
+    const current1m = shortTermData['1m'] || [];
+    const current5m = shortTermData['5m'] || [];
+
+    return `
+      REAL-TIME SCALPING ANALYSIS for ${marketData.symbol}:
+
+      === IMMEDIATE MARKET CONDITIONS ===
+      Current Price: $${marketData.price}
+      Last 1m Candles: ${current1m.slice(-5).map((c: any) => `${parseFloat(c[4]).toFixed(4)}`).join(' → ')}
+      Last 5m Candles: ${current5m.slice(-3).map((c: any) => `${parseFloat(c[4]).toFixed(4)}`).join(' → ')}
+
+      === ORDER BOOK PRESSURE ===
+      Best Bid: $${orderBook.bids?.[0]?.[0] || 'N/A'} (${orderBook.bids?.[0]?.[1] || 'N/A'})
+      Best Ask: $${orderBook.asks?.[0]?.[0] || 'N/A'} (${orderBook.asks?.[0]?.[1] || 'N/A'})
+
+      === IMMEDIATE ACTION REQUIREMENTS ===
+      Time Horizon: NEXT 5-15 MINUTES
+      Focus: SCALPING OPPORTUNITIES
+      Risk Tolerance: VERY LOW (tight stops required)
+
+      === CRITICAL QUESTIONS ===
+      1. Is there an IMMEDIATE trading opportunity RIGHT NOW?
+      2. What is the exact entry price and timing?
+      3. Where should stop-loss be placed (max 0.5% risk)?
+      4. What is the realistic profit target (0.3-1.0% gain)?
+      5. How urgent is this signal (1-10 scale)?
+
+      ONLY recommend BUY/SELL if you see a clear, high-probability setup forming NOW.
+      If uncertain, recommend WAIT with specific conditions to watch for.
+    `;
+  }
+
+  private generateQuickAnalysisPrompt(marketData: MarketData, klineData: any[]): string {
+    return `
+      QUICK MARKET SCAN for ${marketData.symbol}:
+
+      Price: $${marketData.price} (${marketData.change24h}% 24h)
+      Volume: $${(parseFloat(String(marketData.volume)) / 1000000).toFixed(1)}M
+      Recent 5m action: ${klineData.slice(-3).map((c: any) => parseFloat(c[4]).toFixed(4)).join(' → ')}
+
+      Quick assessment (30 words max):
+      - Direction: UP/DOWN/SIDEWAYS
+      - Strength: STRONG/WEAK/NEUTRAL
+      - Action: BUY/SELL/HOLD
+      - Risk: HIGH/MEDIUM/LOW
+    `;
+  }
+
+  private getTimeframeType(timeframe: string): string {
+    const types: any = {
+      '1m': 'ULTRA_SHORT_TERM',
+      '5m': 'SHORT_TERM',
+      '15m': 'SHORT_TERM',
+      '1h': 'MEDIUM_TERM',
+      '4h': 'MEDIUM_TERM',
+      '1d': 'LONG_TERM',
+      '1w': 'LONG_TERM',
+      '1M': 'VERY_LONG_TERM'
+    };
+    return types[timeframe] || 'UNKNOWN';
+  }
+
+  private getAnalysisHorizon(timeframe: string): string {
+    const horizons: any = {
+      '1m': '5-15 minutes',
+      '5m': '30-60 minutes',
+      '15m': '2-4 hours',
+      '1h': '6-12 hours',
+      '4h': '1-3 days',
+      '1d': '1-2 weeks',
+      '1w': '1-2 months',
+      '1M': '3-6 months'
+    };
+    return horizons[timeframe] || 'Variable';
+  }
+
+  private getTimeframeSpecificRequirements(timeframe: string): string {
+    const requirements: any = {
+      '1m': 'Focus on immediate price action, scalping opportunities, tight risk management',
+      '5m': 'Short-term momentum, quick reversals, entry/exit precision',
+      '15m': 'Swing trading setups, pattern completion, trend continuation',
+      '1h': 'Medium-term trend analysis, significant support/resistance levels',
+      '4h': 'Daily trend direction, major pattern formation, position trading',
+      '1d': 'Weekly trend analysis, long-term support/resistance, investment decisions',
+      '1w': 'Monthly trend direction, major market cycles, portfolio allocation',
+      '1M': 'Long-term investment outlook, macro trend analysis, strategic positioning'
+    };
+    return requirements[timeframe] || 'General market analysis';
+  }
+
+  private consolidateTimeframeAnalysis(
+    symbol: string,
+    analyses: LLMAnalysis[],
+    timeframe: string,
+    timeframeData: { [key: string]: any[] }
+  ): any {
+    // Simple consolidation for timeframe-specific analysis
+    const buyCount = analyses.filter(a => a.recommendation === 'BUY').length;
+    const sellCount = analyses.filter(a => a.recommendation === 'SELL').length;
+    const avgConfidence = analyses.reduce((sum, a) => sum + a.confidence, 0) / analyses.length;
+
+    let finalRecommendation: 'BUY' | 'SELL' | 'HOLD';
+    if (buyCount > sellCount) {
+      finalRecommendation = 'BUY';
+    } else if (sellCount > buyCount) {
+      finalRecommendation = 'SELL';
+    } else {
+      finalRecommendation = 'HOLD';
+    }
+
+    return {
+      symbol,
+      timeframe,
+      recommendation: finalRecommendation,
+      confidence: avgConfidence,
+      reasoning: `Timeframe-specific analysis for ${timeframe}: ${buyCount} BUY, ${sellCount} SELL signals`,
+      technicalSetup: this.determineTechnicalSetup(analyses),
+      individualAnalyses: analyses,
+      timestamp: new Date()
+    };
+  }
+
+  private assessMultiTimeframeAlignment(multiTimeframeData: any[]): any {
+    const recommendations = multiTimeframeData
+      .filter(data => !data.error && data.analysis)
+      .map(data => data.analysis.recommendation);
+
+    const buyCount = recommendations.filter(r => r === 'BUY').length;
+    const sellCount = recommendations.filter(r => r === 'SELL').length;
+    const totalCount = recommendations.length;
+
+    return {
+      alignment: buyCount > sellCount ? 'BULLISH' : sellCount > buyCount ? 'BEARISH' : 'NEUTRAL',
+      strength: Math.abs(buyCount - sellCount) / totalCount,
+      consensus: Math.max(buyCount, sellCount) / totalCount,
+      conflictingSignals: totalCount - Math.max(buyCount, sellCount),
+      recommendation: totalCount > 0 ? (buyCount > sellCount ? 'BUY' : sellCount > buyCount ? 'SELL' : 'HOLD') : 'HOLD'
+    };
+  }
+
+  private findConfluentSignals(multiTimeframeData: any[]): any[] {
+    // Find signals that appear across multiple timeframes
+    const signals: any[] = [];
+
+    // Check for trend alignment
+    const trends = multiTimeframeData
+      .filter(data => !data.error && data.analysis)
+      .map(data => ({
+        timeframe: data.timeframe,
+        trend: data.analysis.technicalSetup
+      }));
+
+    if (trends.filter(t => t.trend?.includes('BULLISH')).length >= 3) {
+      signals.push({
+        type: 'BULLISH_CONFLUENCE',
+        strength: 'HIGH',
+        timeframes: trends.filter(t => t.trend?.includes('BULLISH')).map(t => t.timeframe)
+      });
+    }
+
+    if (trends.filter(t => t.trend?.includes('BEARISH')).length >= 3) {
+      signals.push({
+        type: 'BEARISH_CONFLUENCE',
+        strength: 'HIGH',
+        timeframes: trends.filter(t => t.trend?.includes('BEARISH')).map(t => t.timeframe)
+      });
+    }
+
+    return signals;
+  }
+
+  private calculateMultiTimeframeRiskProfile(multiTimeframeData: any[]): any {
+    const confidences = multiTimeframeData
+      .filter(data => !data.error && data.analysis)
+      .map(data => data.analysis.confidence || 0.5);
+
+    const avgConfidence = confidences.reduce((sum, c) => sum + c, 0) / confidences.length;
+    const confidenceVariance = this.calculateStandardDeviation(confidences);
+
+    return {
+      averageConfidence: avgConfidence,
+      confidenceVariance: confidenceVariance,
+      riskLevel: avgConfidence > 0.7 && confidenceVariance < 0.2 ? 'LOW' :
+                 avgConfidence > 0.5 && confidenceVariance < 0.3 ? 'MEDIUM' : 'HIGH',
+      recommendation: avgConfidence > 0.7 ? 'PROCEED' : avgConfidence > 0.5 ? 'CAUTION' : 'AVOID'
+    };
+  }
+
+  private identifyOptimalTimeframes(multiTimeframeData: any[]): string[] {
+    return multiTimeframeData
+      .filter(data => !data.error && data.analysis && data.analysis.confidence > 0.6)
+      .sort((a, b) => (b.analysis.confidence || 0) - (a.analysis.confidence || 0))
+      .slice(0, 3)
+      .map(data => data.timeframe);
+  }
+
+  private calculateUrgencyScore(analysis: LLMAnalysis): number {
+    let urgency = 0;
+
+    // High confidence adds urgency
+    if (analysis.confidence > 0.8) urgency += 3;
+    else if (analysis.confidence > 0.6) urgency += 2;
+    else if (analysis.confidence > 0.4) urgency += 1;
+
+    // Strong recommendations add urgency
+    if (analysis.recommendation === 'BUY' || analysis.recommendation === 'SELL') {
+      urgency += 2;
+    }
+
+    // Certain keywords in reasoning add urgency
+    const urgentKeywords = ['immediate', 'breakout', 'urgent', 'now', 'quickly'];
+    const reasoning = analysis.reasoning.toLowerCase();
+    urgentKeywords.forEach(keyword => {
+      if (reasoning.includes(keyword)) urgency += 1;
+    });
+
+    return Math.min(urgency, 10);
+  }
+
+  private estimateTimeToAction(analysis: LLMAnalysis): string {
+    const urgency = this.calculateUrgencyScore(analysis);
+
+    if (urgency >= 7) return 'IMMEDIATE (1-5 min)';
+    if (urgency >= 5) return 'SOON (5-15 min)';
+    if (urgency >= 3) return 'SHORT TERM (15-60 min)';
+    return 'MEDIUM TERM (1-4 hours)';
+  }
+
+  private createRealTimeConsensus(analyses: LLMAnalysis[]): any {
+    const buyCount = analyses.filter(a => a.recommendation === 'BUY').length;
+    const sellCount = analyses.filter(a => a.recommendation === 'SELL').length;
+    const avgConfidence = analyses.reduce((sum, a) => sum + a.confidence, 0) / analyses.length;
+    const avgUrgency = analyses.reduce((sum, a) => this.calculateUrgencyScore(a), 0) / analyses.length;
+
+    let consensus: 'BUY' | 'SELL' | 'HOLD';
+    if (buyCount > sellCount) {
+      consensus = 'BUY';
+    } else if (sellCount > buyCount) {
+      consensus = 'SELL';
+    } else {
+      consensus = 'HOLD';
+    }
+
+    return {
+      recommendation: consensus,
+      confidence: avgConfidence,
+      urgency: avgUrgency,
+      modelAgreement: Math.max(buyCount, sellCount) / analyses.length,
+      timeToAction: this.estimateTimeToAction({ confidence: avgConfidence } as LLMAnalysis),
+      reasoning: `Real-time consensus: ${buyCount} BUY, ${sellCount} SELL signals with ${(avgConfidence * 100).toFixed(1)}% confidence`
+    };
+  }
+
+  private assessCurrentMarketConditions(marketData: MarketData, shortTermData: any, orderBook: any): any {
+    const spread = orderBook.asks?.[0] && orderBook.bids?.[0] ?
+      ((parseFloat(orderBook.asks[0][0]) - parseFloat(orderBook.bids[0][0])) / parseFloat(orderBook.asks[0][0])) * 100 : 0;
+
+    return {
+      volatility: ((marketData.high24h - marketData.low24h) / marketData.price) * 100,
+      spread: spread,
+      liquidity: orderBook.bids?.length + orderBook.asks?.length || 0,
+      volume24h: marketData.volume,
+      priceAction: marketData.change24h > 0 ? 'BULLISH' : 'BEARISH',
+      tradingCondition: spread < 0.1 && marketData.volume > 1000000 ? 'EXCELLENT' : 'FAIR'
+    };
+  }
+
+  private extractImmediateSignals(analyses: LLMAnalysis[]): any[] {
+    return analyses
+      .filter(analysis => this.calculateUrgencyScore(analysis) >= 6)
+      .map(analysis => ({
+        model: analysis.model,
+        signal: analysis.recommendation,
+        urgency: this.calculateUrgencyScore(analysis),
+        confidence: analysis.confidence,
+        reasoning: analysis.reasoning.substring(0, 100) + '...'
+      }));
+  }
+
+  private generateRiskWarnings(marketData: MarketData, analyses: LLMAnalysis[]): string[] {
+    const warnings: string[] = [];
+
+    // High volatility warning
+    const volatility = ((marketData.high24h - marketData.low24h) / marketData.price) * 100;
+    if (volatility > 15) {
+      warnings.push(`High volatility detected: ${volatility.toFixed(1)}% daily range`);
+    }
+
+    // Low volume warning
+    if (marketData.volume * marketData.price < 1000000) {
+      warnings.push('Low liquidity warning: Volume below $1M may cause slippage');
+    }
+
+    // Conflicting signals warning
+    const buyCount = analyses.filter(a => a.recommendation === 'BUY').length;
+    const sellCount = analyses.filter(a => a.recommendation === 'SELL').length;
+    if (Math.abs(buyCount - sellCount) <= 1 && analyses.length >= 4) {
+      warnings.push('Mixed signals: Models show conflicting recommendations');
+    }
+
+    return warnings;
+  }
+
+  private identifyChartPatterns(klineData: any[]): any[] {
+    if (klineData.length < 20) return [];
+
+    const patterns: any[] = [];
+    const closes = klineData.map(c => parseFloat(c[4]));
+    const highs = klineData.map(c => parseFloat(c[2]));
+    const lows = klineData.map(c => parseFloat(c[3]));
+
+    // Simple pattern recognition
+    const recentCloses = closes.slice(-10);
+    const isUptrend = recentCloses[recentCloses.length - 1] > recentCloses[0];
+    const isDowntrend = recentCloses[recentCloses.length - 1] < recentCloses[0];
+
+    if (isUptrend) {
+      patterns.push({
+        type: 'UPTREND',
+        strength: 'MEDIUM',
+        timeframe: 'SHORT_TERM'
+      });
+    }
+
+    if (isDowntrend) {
+      patterns.push({
+        type: 'DOWNTREND',
+        strength: 'MEDIUM',
+        timeframe: 'SHORT_TERM'
+      });
+    }
+
+    return patterns;
+  }
+
+  private calculateKeyLevels(klineData: any[]): any {
+    if (klineData.length < 10) return { support: [], resistance: [] };
+
+    const highs = klineData.map(c => parseFloat(c[2]));
+    const lows = klineData.map(c => parseFloat(c[3]));
+
+    const recentHighs = highs.slice(-20);
+    const recentLows = lows.slice(-20);
+
+    return {
+      support: [Math.min(...recentLows)],
+      resistance: [Math.max(...recentHighs)],
+      current: klineData[klineData.length - 1] ? parseFloat(klineData[klineData.length - 1][4]) : 0
+    };
+  }
+
+  private analyzeVolumeSignals(klineData: any[]): any {
+    if (klineData.length < 10) return { trend: 'NEUTRAL', strength: 0 };
+
+    const volumes = klineData.map(c => parseFloat(c[5]));
+    const recentVolumes = volumes.slice(-5);
+    const avgVolume = volumes.reduce((sum, v) => sum + v, 0) / volumes.length;
+    const currentVolume = recentVolumes[recentVolumes.length - 1];
+
+    return {
+      trend: currentVolume > avgVolume ? 'INCREASING' : 'DECREASING',
+      strength: Math.abs(currentVolume - avgVolume) / avgVolume,
+      ratio: currentVolume / avgVolume
+    };
+  }
+
+  private calculateTimeframeMomentum(klineData: any[]): any {
+    if (klineData.length < 10) return { value: 0, direction: 'NEUTRAL' };
+
+    const prices = klineData.map(c => parseFloat(c[4]));
+    const momentum = this.calculateMomentum(prices, Math.min(10, prices.length - 1));
+
+    return {
+      value: momentum,
+      direction: momentum > 1 ? 'BULLISH' : momentum < -1 ? 'BEARISH' : 'NEUTRAL',
+      strength: Math.abs(momentum)
+    };
+  }
+
+  private determineTechnicalSetup(analyses: LLMAnalysis[]): string {
+    const buyCount = analyses.filter(a => a.recommendation === 'BUY').length;
+    const sellCount = analyses.filter(a => a.recommendation === 'SELL').length;
+
+    if (buyCount > sellCount) return 'BULLISH_SETUP';
+    if (sellCount > buyCount) return 'BEARISH_SETUP';
+    return 'NEUTRAL_SETUP';
+  }
 }
 
 export const aiAnalysisService = new AIAnalysisService();
