@@ -15,6 +15,7 @@ interface TimeframeData {
   supportResistance: any;
   volumeProfile: any;
   momentum: any;
+  chartPatterns?: any[];
   error?: string;
 }
 

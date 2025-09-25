@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 
 interface LLMModel {
-  name: string;
+  model: string;
   recommendation: 'BUY' | 'SELL' | 'HOLD';
   confidence: number;
   reasoning: string;
@@ -72,14 +72,14 @@ interface LLMAnalysisPanelProps {
   className?: string;
 }
 
-const MODEL_COLORS = {
+const MODEL_COLORS: Record<string, string> = {
   'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo': 'bg-blue-100 text-blue-700 border-blue-200',
   'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo': 'bg-green-100 text-green-700 border-green-200',
   'mistralai/Mixtral-8x7B-Instruct-v0.1': 'bg-purple-100 text-purple-700 border-purple-200',
   'Qwen/Qwen2.5-7B-Instruct-Turbo': 'bg-orange-100 text-orange-700 border-orange-200'
 };
 
-const MODEL_NAMES = {
+const MODEL_NAMES: Record<string, string> = {
   'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo': 'Llama 3.1 8B',
   'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo': 'Llama 3.1 70B',
   'mistralai/Mixtral-8x7B-Instruct-v0.1': 'Mixtral 8x7B',
