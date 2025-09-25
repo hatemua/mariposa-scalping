@@ -501,6 +501,72 @@ export class AgendaService {
         await this.updateJobMetrics('system-health-check', 'error');
       }
     });
+
+    // Real-time Analysis Cache Refresh Job
+    this.agenda.define('refresh-realtime-analysis', async (job: any) => {
+      const { symbols } = job.attrs.data || { symbols: ['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'SOLUSDT'] };
+
+      try {
+        console.log(`🔄 Refreshing real-time analysis cache for ${symbols.length} symbols`);
+
+        for (const symbol of symbols) {
+          try {
+            const normalizedSymbol = SymbolConverter.normalize(symbol);
+            console.log(`📊 Refreshing analysis for ${normalizedSymbol}`);
+
+            // Get fresh market data
+            const [marketData, klineData1m, klineData5m, orderBook] = await Promise.all([
+              binanceService.getSymbolInfo(normalizedSymbol),
+              binanceService.getKlineData(normalizedSymbol, '1m', 100),
+              binanceService.getKlineData(normalizedSymbol, '5m', 100),
+              binanceService.getOrderBook(normalizedSymbol, 50)
+            ]);
+
+            const formattedMarketData = {
+              symbol: normalizedSymbol,
+              price: parseFloat(marketData.lastPrice),
+              volume: parseFloat(marketData.volume || '0'),
+              change24h: parseFloat(marketData.priceChangePercent || '0'),
+              high24h: parseFloat(marketData.highPrice || marketData.lastPrice),
+              low24h: parseFloat(marketData.lowPrice || marketData.lastPrice),
+              timestamp: new Date()
+            };
+
+            // Generate and cache analysis
+            const analysis = await aiAnalysisService.generateRealTimeAnalysis(
+              formattedMarketData,
+              {
+                '1m': klineData1m,
+                '5m': klineData5m
+              },
+              orderBook
+            );
+
+            await aiAnalysisService.cacheRealTimeAnalysis(normalizedSymbol, analysis);
+
+            // Also update stale cache
+            const staleCacheKey = `rt_analysis:${normalizedSymbol}:stale`;
+            await redisService.set(staleCacheKey, JSON.stringify(analysis), 900);
+
+            console.log(`✅ Analysis refreshed for ${normalizedSymbol}`);
+
+            // Small delay between symbols to avoid overwhelming APIs
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+          } catch (symbolError) {
+            console.error(`❌ Failed to refresh analysis for ${symbol}:`, symbolError);
+          }
+        }
+
+        console.log(`🎉 Completed real-time analysis refresh for all symbols`);
+        await this.updateJobMetrics('refresh-realtime-analysis', 'success');
+
+      } catch (error) {
+        console.error('❌ Error refreshing real-time analysis cache:', error);
+        await this.updateJobMetrics('refresh-realtime-analysis', 'error');
+        throw error;
+      }
+    });
   }
 
   private async performSystemHealthCheck(): Promise<void> {
@@ -594,6 +660,11 @@ export class AgendaService {
 
       // Update performance metrics every 5 minutes
       await this.agenda.every('5 minutes', 'update-performance-metrics');
+
+      // Refresh real-time analysis cache every 5 minutes
+      await this.agenda.every('5 minutes', 'refresh-realtime-analysis', {
+        symbols: ['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOTUSDT', 'LINKUSDT']
+      });
 
       // Warm cache every hour
       await this.agenda.every('1 hour', 'warm-cache', {

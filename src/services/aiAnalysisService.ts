@@ -2492,6 +2492,122 @@ export class AIAnalysisService {
 
     return analyses.map(analysis => this.validateLLMAnalysis(analysis));
   }
+
+  // ===============================
+  // CACHED ANALYSIS METHODS
+  // ===============================
+
+  async getCachedRealTimeAnalysis(symbol: string): Promise<any | null> {
+    try {
+      const cacheKey = `rt_analysis:${symbol}:5min`;
+      const cachedData = await redisService.get(cacheKey);
+
+      if (cachedData) {
+        console.log(`📊 Cache hit for real-time analysis: ${symbol}`);
+        const parsed = JSON.parse(cachedData);
+
+        // Add cache metadata
+        parsed.cached = true;
+        parsed.cacheAge = Date.now() - new Date(parsed.timestamp).getTime();
+        parsed.nextUpdate = new Date(Date.now() + (300 * 1000)); // 5 minutes from now
+
+        return parsed;
+      }
+
+      console.log(`🔄 Cache miss for real-time analysis: ${symbol}`);
+      return null;
+    } catch (error) {
+      console.error(`❌ Error getting cached analysis for ${symbol}:`, error);
+      return null;
+    }
+  }
+
+  async cacheRealTimeAnalysis(symbol: string, analysis: any): Promise<void> {
+    try {
+      const cacheKey = `rt_analysis:${symbol}:5min`;
+      const ttl = 300; // 5 minutes
+
+      // Add cache metadata
+      const cacheableData = {
+        ...analysis,
+        cached: false,
+        generatedAt: new Date(),
+        expiresAt: new Date(Date.now() + (ttl * 1000))
+      };
+
+      await redisService.set(cacheKey, JSON.stringify(cacheableData), ttl);
+      console.log(`💾 Cached real-time analysis for ${symbol} (TTL: ${ttl}s)`);
+    } catch (error) {
+      console.error(`❌ Error caching analysis for ${symbol}:`, error);
+    }
+  }
+
+  async getCachedOrGenerateRealTimeAnalysis(
+    marketData: MarketData,
+    shortTermData: { [key: string]: any[] },
+    orderBook: any
+  ): Promise<any> {
+    const symbol = SymbolConverter.normalize(marketData.symbol);
+
+    // Try to get cached analysis first
+    const cachedAnalysis = await this.getCachedRealTimeAnalysis(symbol);
+    if (cachedAnalysis) {
+      return cachedAnalysis;
+    }
+
+    // Check for stale cache (up to 15 minutes old)
+    const staleCacheKey = `rt_analysis:${symbol}:stale`;
+    const staleData = await redisService.get(staleCacheKey);
+
+    if (staleData) {
+      console.log(`⏰ Using stale analysis for ${symbol}, triggering background refresh`);
+      const parsed = JSON.parse(staleData);
+      parsed.cached = true;
+      parsed.stale = true;
+      parsed.message = 'Using recent analysis data, refresh in progress';
+
+      // Trigger background analysis (non-blocking)
+      this.generateAndCacheAnalysis(marketData, shortTermData, orderBook).catch(error => {
+        console.error(`❌ Background analysis failed for ${symbol}:`, error);
+      });
+
+      return parsed;
+    }
+
+    // No cache available, generate fresh analysis
+    console.log(`🔄 No cache available for ${symbol}, generating fresh analysis`);
+    const freshAnalysis = await this.generateRealTimeAnalysis(marketData, shortTermData, orderBook);
+
+    // Cache the fresh analysis
+    await this.cacheRealTimeAnalysis(symbol, freshAnalysis);
+
+    // Also store as stale cache with longer TTL
+    await redisService.set(staleCacheKey, JSON.stringify(freshAnalysis), 900); // 15 minutes
+
+    return freshAnalysis;
+  }
+
+  private async generateAndCacheAnalysis(
+    marketData: MarketData,
+    shortTermData: { [key: string]: any[] },
+    orderBook: any
+  ): Promise<void> {
+    try {
+      const symbol = SymbolConverter.normalize(marketData.symbol);
+      console.log(`🔄 Background analysis generation started for ${symbol}`);
+
+      const analysis = await this.generateRealTimeAnalysis(marketData, shortTermData, orderBook);
+      await this.cacheRealTimeAnalysis(symbol, analysis);
+
+      // Update stale cache
+      const staleCacheKey = `rt_analysis:${symbol}:stale`;
+      await redisService.set(staleCacheKey, JSON.stringify(analysis), 900); // 15 minutes
+
+      console.log(`✅ Background analysis completed for ${symbol}`);
+    } catch (error) {
+      console.error(`❌ Background analysis failed:`, error);
+    }
+  }
 }
 
 export const aiAnalysisService = new AIAnalysisService();

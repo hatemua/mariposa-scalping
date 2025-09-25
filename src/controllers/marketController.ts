@@ -814,10 +814,11 @@ export const getRealTimeAnalysis = async (req: AuthRequest, res: Response): Prom
       timestamp: new Date()
     };
 
-    console.log(`🧠 Generating AI analysis for ${normalizedSymbol}...`);
+    console.log(`🧠 Getting cached or generating AI analysis for ${normalizedSymbol}...`);
     let realTimeAnalysis;
     try {
-      realTimeAnalysis = await aiAnalysisService.generateRealTimeAnalysis(
+      // Use cached analysis method (5-minute cache)
+      realTimeAnalysis = await aiAnalysisService.getCachedOrGenerateRealTimeAnalysis(
         marketData,
         {
           '1m': klineData1m,
@@ -825,7 +826,10 @@ export const getRealTimeAnalysis = async (req: AuthRequest, res: Response): Prom
         },
         orderBook
       );
-      console.log(`✅ AI analysis completed in ${Date.now() - startTime}ms`);
+
+      const cacheStatus = realTimeAnalysis.cached ?
+        (realTimeAnalysis.stale ? 'stale cache' : 'fresh cache') : 'generated fresh';
+      console.log(`✅ AI analysis ${cacheStatus} in ${Date.now() - startTime}ms`);
     } catch (analysisError) {
       console.error(`❌ AI analysis failed for ${normalizedSymbol}:`, analysisError);
 
@@ -851,7 +855,9 @@ export const getRealTimeAnalysis = async (req: AuthRequest, res: Response): Prom
         },
         immediateSignals: [],
         riskWarnings: ['AI analysis service temporarily unavailable'],
-        timestamp: new Date()
+        timestamp: new Date(),
+        cached: false,
+        fallback: true
       };
     }
 
@@ -878,7 +884,15 @@ export const getRealTimeAnalysis = async (req: AuthRequest, res: Response): Prom
       momentum: {},
       liquidity: {},
       timestamp: new Date(),
-      processingTime: Date.now() - startTime
+      processingTime: Date.now() - startTime,
+      cache: {
+        used: realTimeAnalysis.cached || false,
+        stale: realTimeAnalysis.stale || false,
+        age: realTimeAnalysis.cacheAge || 0,
+        nextUpdate: realTimeAnalysis.nextUpdate || new Date(Date.now() + (300 * 1000)),
+        fallback: realTimeAnalysis.fallback || false,
+        ttl: 300 // 5 minutes
+      }
     };
 
     // Try to generate additional data but don't fail if it errors
