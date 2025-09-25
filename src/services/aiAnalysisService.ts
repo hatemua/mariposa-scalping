@@ -1747,8 +1747,18 @@ export class AIAnalysisService {
       const quickPrompt = this.generateQuickAnalysisPrompt(marketData, klineData5m);
       const quickAnalysis = await this.getModelAnalysis(this.models[0], quickPrompt);
 
-      // Cache the quick analysis
-      await redisService.cacheAnalysis(normalizedSymbol, quickAnalysis);
+      // Cache the quick analysis - convert LLMAnalysis to ConsolidatedAnalysis
+      const consolidatedQuickAnalysis: ConsolidatedAnalysis = {
+        symbol: normalizedSymbol,
+        recommendation: quickAnalysis.recommendation,
+        confidence: quickAnalysis.confidence,
+        targetPrice: quickAnalysis.targetPrice,
+        stopLoss: quickAnalysis.stopLoss,
+        reasoning: quickAnalysis.reasoning,
+        individualAnalyses: [quickAnalysis],
+        timestamp: quickAnalysis.timestamp
+      };
+      await redisService.cacheAnalysis(normalizedSymbol, consolidatedQuickAnalysis);
 
       return quickAnalysis;
     } catch (error) {

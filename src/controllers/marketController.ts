@@ -327,7 +327,7 @@ export const getMultiTokenAnalysis = async (req: AuthRequest, res: Response): Pr
       try {
         // Get multi-timeframe market data
         const timeframeData = await Promise.all(
-          limitedTimeframes.map(async (timeframe) => {
+          limitedTimeframes.map(async (timeframe: string) => {
             const [symbolInfo, klineData, orderBook] = await Promise.all([
               binanceService.getSymbolInfo(symbol),
               binanceService.getKlineData(symbol, timeframe, 100),
@@ -399,9 +399,17 @@ export const getMultiTokenAnalysis = async (req: AuthRequest, res: Response): Pr
 
 export const getRealtimeAnalysisStream = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { symbols = [] } = req.query;
+    const { symbols: symbolsParam } = req.query;
 
-    if (!Array.isArray(symbols) || symbols.length === 0) {
+    // Handle different types of symbols parameter
+    let symbols: string[] = [];
+    if (Array.isArray(symbolsParam)) {
+      symbols = symbolsParam.map(s => String(s));
+    } else if (typeof symbolsParam === 'string') {
+      symbols = [symbolsParam];
+    }
+
+    if (symbols.length === 0) {
       res.status(400).json({
         success: false,
         error: 'Symbols array is required'
@@ -410,8 +418,8 @@ export const getRealtimeAnalysisStream = async (req: AuthRequest, res: Response)
     }
 
     const validSymbols = symbols.filter((symbol: string) =>
-      SymbolConverter.isValidTradingPair(symbol as string)
-    ).map((symbol: string) => SymbolConverter.normalize(symbol as string));
+      SymbolConverter.isValidTradingPair(symbol)
+    ).map((symbol: string) => SymbolConverter.normalize(symbol));
 
     // Start streaming analysis for the requested symbols
     const streamingResults = await Promise.all(
@@ -623,7 +631,7 @@ const calculateMACD = (prices: number[]): any => {
 export const getMultiTimeframeAnalysis = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { symbol } = req.params;
-    const { timeframes = ['1m', '5m', '15m', '1h', '4h', '1d'] } = req.query;
+    const { timeframes: timeframesParam } = req.query;
 
     if (!symbol || !SymbolConverter.isValidTradingPair(symbol)) {
       res.status(400).json({
@@ -634,7 +642,16 @@ export const getMultiTimeframeAnalysis = async (req: AuthRequest, res: Response)
     }
 
     const normalizedSymbol = SymbolConverter.normalize(symbol);
-    const timeframeArray = Array.isArray(timeframes) ? timeframes : [timeframes];
+
+    // Handle different types of timeframes parameter
+    let timeframes: string[] = ['1m', '5m', '15m', '1h', '4h', '1d'];
+    if (Array.isArray(timeframesParam)) {
+      timeframes = timeframesParam.map(t => String(t));
+    } else if (typeof timeframesParam === 'string') {
+      timeframes = timeframesParam.split(',');
+    }
+
+    const timeframeArray = timeframes;
 
     // Get comprehensive multi-timeframe data
     const multiTimeframeData = await Promise.all(
@@ -787,7 +804,7 @@ export const getRealTimeAnalysis = async (req: AuthRequest, res: Response): Prom
 export const getChartData = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { symbol, timeframe } = req.params;
-    const { limit = 200, indicators = [] } = req.query;
+    const { limit = 200, indicators: indicatorsParam } = req.query;
 
     if (!symbol || !SymbolConverter.isValidTradingPair(symbol)) {
       res.status(400).json({
@@ -798,7 +815,16 @@ export const getChartData = async (req: AuthRequest, res: Response): Promise<voi
     }
 
     const normalizedSymbol = SymbolConverter.normalize(symbol);
-    const requestedIndicators = Array.isArray(indicators) ? indicators : [indicators];
+
+    // Handle different types of indicators parameter
+    let indicators: string[] = [];
+    if (Array.isArray(indicatorsParam)) {
+      indicators = indicatorsParam.map(i => String(i));
+    } else if (typeof indicatorsParam === 'string') {
+      indicators = indicatorsParam.split(',').map(i => i.trim());
+    }
+
+    const requestedIndicators = indicators;
 
     // Get kline data
     const klineData = await binanceService.getKlineData(normalizedSymbol, timeframe, Number(limit));
@@ -883,7 +909,7 @@ export const getBulkTokenAnalysis = async (req: AuthRequest, res: Response): Pro
           // Calculate key metrics
           const volatility = ((marketData.high24h - marketData.low24h) / marketData.price) * 100;
           const volumeUSD = marketData.volume * marketData.price;
-          const profitPotential = calculateProfitPotential(marketData, klineData5m);
+          const profitPotential = calculateSingleTokenProfitPotential(marketData, klineData5m);
           const riskScore = calculateRiskScore(marketData, klineData5m);
 
           return {
@@ -1293,7 +1319,7 @@ const identifyPriceChannels = (chartData: any[]): any => {
   ];
 };
 
-const calculateProfitPotential = (marketData: any, klineData: any[]): number => {
+const calculateSingleTokenProfitPotential = (marketData: any, klineData: any[]): number => {
   const volatility = ((marketData.high24h - marketData.low24h) / marketData.price) * 100;
   const volumeScore = Math.min(marketData.volume * marketData.price / 10000000, 10);
   const momentum = klineData.length > 10 ?
@@ -1308,6 +1334,35 @@ const calculateRiskScore = (marketData: any, klineData: any[]): number => {
   const priceRisk = volatility > 15 ? 3 : volatility > 10 ? 2 : volatility > 5 ? 1 : 0;
 
   return Math.min(10, volumeRisk + priceRisk + (volatility > 20 ? 4 : 0));
+};
+
+const calculateVolatility = (prices: number[], period: number): number => {
+  if (prices.length < 2 || period < 1) return 0;
+
+  const returns = [];
+  for (let i = 1; i < prices.length && i <= period; i++) {
+    if (prices[i-1] !== 0) {
+      returns.push((prices[i] - prices[i-1]) / prices[i-1]);
+    }
+  }
+
+  if (returns.length === 0) return 0;
+
+  const mean = returns.reduce((sum, ret) => sum + ret, 0) / returns.length;
+  const variance = returns.reduce((sum, ret) => sum + Math.pow(ret - mean, 2), 0) / returns.length;
+
+  return Math.sqrt(variance) * 100; // Return as percentage
+};
+
+const calculateMomentum = (prices: number[], period: number): number => {
+  if (prices.length < period + 1) return 0;
+
+  const currentPrice = prices[prices.length - 1];
+  const pastPrice = prices[prices.length - 1 - period];
+
+  if (pastPrice === 0) return 0;
+
+  return ((currentPrice - pastPrice) / pastPrice) * 100;
 };
 
 const calculateMomentumScore = (klineData: any[]): number => {
