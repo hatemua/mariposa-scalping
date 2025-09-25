@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { marketApi } from '@/lib/api';
+import { safeNumber } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
 import {
   Brain,
@@ -240,7 +241,7 @@ export default function LLMAnalysisPanel({
                     Consensus: {realTimeAnalysis.consensus.recommendation}
                   </h3>
                   <p className="text-sm text-gray-600">
-                    {(realTimeAnalysis.consensus.confidence * 100).toFixed(1)}% confidence
+                    {safeNumber.toFixed((realTimeAnalysis.consensus?.confidence ?? 0) * 100, 1)}% confidence
                   </p>
                 </div>
               </div>
@@ -261,7 +262,7 @@ export default function LLMAnalysisPanel({
 
             <div className="mt-3 flex items-center justify-between text-sm">
               <div className="text-gray-600">
-                Model Agreement: {(realTimeAnalysis.consensus.modelAgreement * 100).toFixed(0)}%
+                Model Agreement: {safeNumber.toFixed((realTimeAnalysis.consensus?.modelAgreement ?? 0) * 100, 0)}%
               </div>
               <div className="text-gray-600">
                 Market Condition: {realTimeAnalysis.marketConditions.tradingCondition}
@@ -289,7 +290,7 @@ export default function LLMAnalysisPanel({
                       </div>
                       {signal.confidence && (
                         <span className="text-sm text-gray-600">
-                          {(signal.confidence * 100).toFixed(0)}% confidence
+                          {safeNumber.toFixed((signal.confidence ?? 0) * 100, 0)}% confidence
                         </span>
                       )}
                     </div>
@@ -303,7 +304,7 @@ export default function LLMAnalysisPanel({
                         <div>
                           <span className="text-gray-600">Target Price:</span>
                           <span className="ml-2 font-medium text-green-600">
-                            ${signal.targetPrice.toFixed(4)}
+                            {safeNumber.price(signal.targetPrice)}
                           </span>
                         </div>
                       )}
@@ -311,7 +312,7 @@ export default function LLMAnalysisPanel({
                         <div>
                           <span className="text-gray-600">Stop Loss:</span>
                           <span className="ml-2 font-medium text-red-600">
-                            ${signal.stopLoss.toFixed(4)}
+                            {safeNumber.price(signal.stopLoss)}
                           </span>
                         </div>
                       )}

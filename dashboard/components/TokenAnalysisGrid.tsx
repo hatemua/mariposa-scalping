@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { marketApi } from '@/lib/api';
+import { safeNumber } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
 import {
   Grid3X3,
@@ -318,16 +319,16 @@ export default function TokenAnalysisGrid({
                 <div className="mb-3">
                   <div className="flex items-center justify-between">
                     <span className="text-lg font-semibold text-gray-900">
-                      ${token.marketData.price.toFixed(4)}
+                      {safeNumber.price(token.marketData?.price)}
                     </span>
                     <span className={`text-sm font-medium ${
-                      token.marketData.change24h >= 0 ? 'text-green-600' : 'text-red-600'
+                      (token.marketData?.change24h ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'
                     }`}>
-                      {token.marketData.change24h >= 0 ? '+' : ''}{token.marketData.change24h.toFixed(2)}%
+                      {(token.marketData?.change24h ?? 0) >= 0 ? '+' : ''}{safeNumber.toFixed(token.marketData?.change24h, 2)}%
                     </span>
                   </div>
                   <div className="text-xs text-gray-600">
-                    Vol: ${(token.marketData.volume / 1000000).toFixed(1)}M
+                    Vol: ${safeNumber.toFixed((token.marketData?.volume ?? 0) / 1000000, 1)}M
                   </div>
                 </div>
 
@@ -337,10 +338,10 @@ export default function TokenAnalysisGrid({
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs text-gray-600">AI Confidence</span>
                       <span className="text-xs font-medium">
-                        {(token.analysis.confidence * 100).toFixed(0)}%
+                        {safeNumber.toFixed((token.analysis?.confidence ?? 0) * 100, 0)}%
                       </span>
                     </div>
-                    <ScoreBar score={token.analysis.confidence * 10} />
+                    <ScoreBar score={(token.analysis?.confidence ?? 0) * 10} />
 
                     {(token.analysis.targetPrice || token.analysis.stopLoss) && (
                       <div className="mt-2 text-xs space-y-1">
@@ -348,7 +349,7 @@ export default function TokenAnalysisGrid({
                           <div className="flex justify-between">
                             <span className="text-gray-600">Target:</span>
                             <span className="font-medium text-green-600">
-                              ${token.analysis.targetPrice.toFixed(4)}
+                              {safeNumber.price(token.analysis?.targetPrice)}
                             </span>
                           </div>
                         )}
@@ -356,7 +357,7 @@ export default function TokenAnalysisGrid({
                           <div className="flex justify-between">
                             <span className="text-gray-600">Stop:</span>
                             <span className="font-medium text-red-600">
-                              ${token.analysis.stopLoss.toFixed(4)}
+                              {safeNumber.price(token.analysis?.stopLoss)}
                             </span>
                           </div>
                         )}
@@ -370,31 +371,31 @@ export default function TokenAnalysisGrid({
                   <div>
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-gray-600">Profit Potential</span>
-                      <span className={`font-medium ${getScoreColor(token.metrics.profitPotential)}`}>
-                        {token.metrics.profitPotential.toFixed(1)}/10
+                      <span className={`font-medium ${getScoreColor(token.metrics?.profitPotential ?? 0)}`}>
+                        {safeNumber.toFixed(token.metrics?.profitPotential, 1)}/10
                       </span>
                     </div>
-                    <ScoreBar score={token.metrics.profitPotential} />
+                    <ScoreBar score={token.metrics?.profitPotential ?? 0} />
                   </div>
 
                   <div>
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-gray-600">Risk Score</span>
-                      <span className={`font-medium ${getScoreColor(token.metrics.riskScore, true)}`}>
-                        {token.metrics.riskScore.toFixed(1)}/10
+                      <span className={`font-medium ${getScoreColor(token.metrics?.riskScore ?? 0, true)}`}>
+                        {safeNumber.toFixed(token.metrics?.riskScore, 1)}/10
                       </span>
                     </div>
-                    <ScoreBar score={token.metrics.riskScore} invert />
+                    <ScoreBar score={token.metrics?.riskScore ?? 0} invert />
                   </div>
 
                   <div>
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-gray-600">Momentum</span>
-                      <span className={`font-medium ${getScoreColor(token.metrics.momentumScore)}`}>
-                        {token.metrics.momentumScore.toFixed(1)}/10
+                      <span className={`font-medium ${getScoreColor(token.metrics?.momentumScore ?? 0)}`}>
+                        {safeNumber.toFixed(token.metrics?.momentumScore, 1)}/10
                       </span>
                     </div>
-                    <ScoreBar score={token.metrics.momentumScore} />
+                    <ScoreBar score={token.metrics?.momentumScore ?? 0} />
                   </div>
                 </div>
 
@@ -442,11 +443,11 @@ export default function TokenAnalysisGrid({
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <span className="text-gray-600">Volatility:</span>
-                          <span className="ml-1 font-medium">{token.metrics.volatility.toFixed(1)}%</span>
+                          <span className="ml-1 font-medium">{safeNumber.toFixed(token.metrics?.volatility, 1)}%</span>
                         </div>
                         <div>
                           <span className="text-gray-600">Liquidity:</span>
-                          <span className="ml-1 font-medium">{token.metrics.liquidityScore.toFixed(1)}/10</span>
+                          <span className="ml-1 font-medium">{safeNumber.toFixed(token.metrics?.liquidityScore, 1)}/10</span>
                         </div>
                       </div>
                       {token.analysis?.reasoning && (
