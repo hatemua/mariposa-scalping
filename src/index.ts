@@ -13,7 +13,19 @@ import routes from './routes';
 const app = express();
 const server = createServer(app);
 
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
+
+// Handle preflight OPTIONS requests
+app.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+  res.header('Access-Control-Max-Age', '3600');
+  res.sendStatus(200);
+});
+
 app.use(cors({
   origin: "*",  // Allow all origins
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -26,10 +38,15 @@ app.use(cors({
     "Access-Control-Request-Method",
     "Access-Control-Request-Headers"
   ],
-  credentials: false  // Must be false when origin is "*"
+  credentials: false,  // Must be false when origin is "*"
+  preflightContinue: false,
+  optionsSuccessStatus: 200
 }));
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Apply rate limiting after CORS
 app.use(rateLimitMiddleware);
 
 app.use('/api', routes);
