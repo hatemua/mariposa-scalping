@@ -730,11 +730,17 @@ export const getMultiTimeframeAnalysis = async (req: AuthRequest, res: Response)
 };
 
 export const getRealTimeAnalysis = async (req: AuthRequest, res: Response): Promise<void> => {
+  const startTime = Date.now();
+  let normalizedSymbol = '';
+
   try {
     const { symbol } = req.params;
     const { models = ['all'] } = req.query;
 
+    console.log(`🚀 Starting real-time analysis for ${symbol}`);
+
     if (!symbol || !SymbolConverter.isValidTradingPair(symbol)) {
+      console.warn(`❌ Invalid symbol provided: ${symbol}`);
       res.status(400).json({
         success: false,
         error: 'Invalid trading symbol provided'
@@ -742,61 +748,181 @@ export const getRealTimeAnalysis = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    const normalizedSymbol = SymbolConverter.normalize(symbol);
+    normalizedSymbol = SymbolConverter.normalize(symbol);
+    console.log(`📊 Processing real-time analysis for ${normalizedSymbol}`);
 
-    // Get real-time market data
-    const [symbolInfo, klineData1m, klineData5m, orderBook] = await Promise.all([
-      binanceService.getSymbolInfo(normalizedSymbol),
-      binanceService.getKlineData(normalizedSymbol, '1m', 100),
-      binanceService.getKlineData(normalizedSymbol, '5m', 100),
-      binanceService.getOrderBook(normalizedSymbol, 50)
-    ]);
+    // Get real-time market data with timeout handling
+    console.log(`📡 Fetching market data for ${normalizedSymbol}...`);
+    let symbolInfo, klineData1m, klineData5m, orderBook;
+
+    try {
+      [symbolInfo, klineData1m, klineData5m, orderBook] = await Promise.all([
+        Promise.race([
+          binanceService.getSymbolInfo(normalizedSymbol),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Symbol info timeout')), 10000))
+        ]),
+        Promise.race([
+          binanceService.getKlineData(normalizedSymbol, '1m', 100),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('1m kline timeout')), 10000))
+        ]),
+        Promise.race([
+          binanceService.getKlineData(normalizedSymbol, '5m', 100),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('5m kline timeout')), 10000))
+        ]),
+        Promise.race([
+          binanceService.getOrderBook(normalizedSymbol, 50),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Order book timeout')), 10000))
+        ])
+      ]);
+      console.log(`✅ Market data fetched successfully in ${Date.now() - startTime}ms`);
+    } catch (dataError) {
+      console.error(`❌ Failed to fetch market data for ${normalizedSymbol}:`, dataError);
+      res.status(503).json({
+        success: false,
+        error: 'Unable to fetch current market data. Please try again.',
+        details: dataError instanceof Error ? dataError.message : 'Unknown data error'
+      } as ApiResponse);
+      return;
+    }
+
+    // Validate market data
+    if (!symbolInfo || !symbolInfo.lastPrice) {
+      console.error(`❌ Invalid symbol info for ${normalizedSymbol}:`, symbolInfo);
+      res.status(404).json({
+        success: false,
+        error: 'Symbol not found or market data unavailable'
+      } as ApiResponse);
+      return;
+    }
+
+    if (!klineData1m || !Array.isArray(klineData1m) || klineData1m.length === 0) {
+      console.error(`❌ Invalid 1m kline data for ${normalizedSymbol}`);
+      res.status(503).json({
+        success: false,
+        error: 'Insufficient price history data available'
+      } as ApiResponse);
+      return;
+    }
 
     const marketData = {
       symbol: normalizedSymbol,
       price: parseFloat(symbolInfo.lastPrice),
-      volume: parseFloat(symbolInfo.volume),
-      change24h: parseFloat(symbolInfo.priceChangePercent),
-      high24h: parseFloat(symbolInfo.highPrice),
-      low24h: parseFloat(symbolInfo.lowPrice),
+      volume: parseFloat(symbolInfo.volume || '0'),
+      change24h: parseFloat(symbolInfo.priceChangePercent || '0'),
+      high24h: parseFloat(symbolInfo.highPrice || symbolInfo.lastPrice),
+      low24h: parseFloat(symbolInfo.lowPrice || symbolInfo.lastPrice),
       timestamp: new Date()
     };
 
-    // Generate real-time analysis with all 4 LLMs
-    const realTimeAnalysis = await aiAnalysisService.generateRealTimeAnalysis(
-      marketData,
-      {
-        '1m': klineData1m,
-        '5m': klineData5m
-      },
-      orderBook
-    );
+    console.log(`🧠 Generating AI analysis for ${normalizedSymbol}...`);
+    let realTimeAnalysis;
+    try {
+      realTimeAnalysis = await aiAnalysisService.generateRealTimeAnalysis(
+        marketData,
+        {
+          '1m': klineData1m,
+          '5m': klineData5m
+        },
+        orderBook
+      );
+      console.log(`✅ AI analysis completed in ${Date.now() - startTime}ms`);
+    } catch (analysisError) {
+      console.error(`❌ AI analysis failed for ${normalizedSymbol}:`, analysisError);
 
-    // Calculate immediate trading signals
-    const tradingSignals = await aiAnalysisService.generateImmediateTradingSignals(
-      normalizedSymbol,
+      // Provide fallback analysis
+      realTimeAnalysis = {
+        symbol: normalizedSymbol,
+        consensus: {
+          recommendation: 'HOLD',
+          confidence: 0.3,
+          urgency: 1,
+          modelAgreement: 0,
+          timeToAction: 'MEDIUM TERM (1-4 hours)',
+          reasoning: 'AI analysis temporarily unavailable - using fallback recommendation'
+        },
+        individualModels: [],
+        marketConditions: {
+          volatility: ((marketData.high24h - marketData.low24h) / marketData.price) * 100,
+          spread: 0,
+          liquidity: 0,
+          volume24h: marketData.volume,
+          priceAction: marketData.change24h > 0 ? 'BULLISH' : 'BEARISH',
+          tradingCondition: 'UNKNOWN'
+        },
+        immediateSignals: [],
+        riskWarnings: ['AI analysis service temporarily unavailable'],
+        timestamp: new Date()
+      };
+    }
+
+    console.log(`🎯 Generating trading signals for ${normalizedSymbol}...`);
+    let tradingSignals = [];
+    try {
+      tradingSignals = await aiAnalysisService.generateImmediateTradingSignals(
+        normalizedSymbol,
+        marketData,
+        realTimeAnalysis
+      );
+      console.log(`✅ Trading signals generated successfully`);
+    } catch (signalsError) {
+      console.error(`❌ Trading signals generation failed for ${normalizedSymbol}:`, signalsError);
+      // Continue with empty signals array
+    }
+
+    const responseData = {
+      symbol: normalizedSymbol,
       marketData,
-      realTimeAnalysis
-    );
+      realTimeAnalysis,
+      tradingSignals,
+      priceAlerts: [],
+      momentum: {},
+      liquidity: {},
+      timestamp: new Date(),
+      processingTime: Date.now() - startTime
+    };
+
+    // Try to generate additional data but don't fail if it errors
+    try {
+      responseData.priceAlerts = calculatePriceAlerts(marketData, realTimeAnalysis);
+    } catch (e) {
+      console.warn(`⚠️ Price alerts calculation failed: ${e}`);
+    }
+
+    try {
+      responseData.momentum = calculateRealTimeMomentum(klineData1m, klineData5m);
+    } catch (e) {
+      console.warn(`⚠️ Momentum calculation failed: ${e}`);
+    }
+
+    try {
+      responseData.liquidity = assessLiquidityConditions(orderBook, marketData);
+    } catch (e) {
+      console.warn(`⚠️ Liquidity assessment failed: ${e}`);
+    }
+
+    console.log(`🎉 Real-time analysis completed for ${normalizedSymbol} in ${Date.now() - startTime}ms`);
 
     res.json({
       success: true,
-      data: {
-        symbol: normalizedSymbol,
-        marketData,
-        realTimeAnalysis,
-        tradingSignals,
-        priceAlerts: calculatePriceAlerts(marketData, realTimeAnalysis),
-        momentum: calculateRealTimeMomentum(klineData1m, klineData5m),
-        liquidity: assessLiquidityConditions(orderBook, marketData),
-        timestamp: new Date()
-      }
+      data: responseData
     } as ApiResponse);
+
   } catch (error) {
-    console.error('Error in real-time analysis:', error);
+    console.error(`💥 Critical error in real-time analysis for ${normalizedSymbol}:`, error);
+
+    // Provide detailed error information
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    const errorDetails = {
+      symbol: normalizedSymbol || 'unknown',
+      error: errorMessage,
+      processingTime: Date.now() - startTime,
+      timestamp: new Date()
+    };
+
     res.status(500).json({
       success: false,
-      error: 'Failed to generate real-time analysis'
+      error: 'Failed to generate real-time analysis',
+      details: errorDetails
     } as ApiResponse);
   }
 };

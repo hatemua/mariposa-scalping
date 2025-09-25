@@ -104,46 +104,95 @@ export class AIAnalysisService {
   }
 
   private async getModelAnalysis(model: string, prompt: string): Promise<LLMAnalysis> {
-    try {
-      const response = await axios.post<TogetherAIResponse>(
-        this.baseURL,
-        {
-          model,
-          messages: [
+    const maxRetries = 2;
+    let attempt = 0;
+
+    while (attempt < maxRetries) {
+      attempt++;
+      try {
+        console.log(`🔄 Model ${model} analysis attempt ${attempt}/${maxRetries}...`);
+
+        const response = await Promise.race([
+          axios.post<TogetherAIResponse>(
+            this.baseURL,
             {
-              role: 'system',
-              content: 'You are an expert cryptocurrency trading analyst. Provide clear, actionable trading recommendations based on technical analysis.'
+              model,
+              messages: [
+                {
+                  role: 'system',
+                  content: 'You are an expert cryptocurrency trading analyst. Provide clear, actionable trading recommendations based on technical analysis. Always include your reasoning for the recommendation.'
+                },
+                {
+                  role: 'user',
+                  content: prompt
+                }
+              ],
+              max_tokens: 500,
+              temperature: 0.1
             },
             {
-              role: 'user',
-              content: prompt
+              headers: {
+                'Authorization': `Bearer ${this.apiKey}`,
+                'Content-Type': 'application/json'
+              },
+              timeout: 30000
             }
-          ],
-          max_tokens: 500,
-          temperature: 0.1
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json'
-          }
+          ),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('Model analysis timeout')), 35000);
+          })
+        ]);
+
+        // Validate response structure
+        if (!response.data || !response.data.choices || response.data.choices.length === 0) {
+          throw new Error(`Invalid response structure from ${model}`);
         }
-      );
 
-      const content = response.data.choices[0].message.content;
-      return this.parseModelResponse(model, content);
-    } catch (error) {
-      console.error(`Error getting analysis from ${model}:`, error);
+        const content = response.data.choices[0]?.message?.content;
+        if (!content || content.trim().length === 0) {
+          throw new Error(`Empty response content from ${model}`);
+        }
 
-      // Enhanced fallback with more informative response
-      return {
-        model,
-        recommendation: 'HOLD',
-        confidence: 0.1,
-        reasoning: `${model} analysis unavailable - API error. Recommend HOLD until market conditions are clearer.`,
-        timestamp: new Date()
-      };
+        console.log(`✅ Model ${model} responded with ${content.length} characters`);
+
+        const parsedAnalysis = this.parseModelResponse(model, content);
+
+        // Validate the parsed analysis
+        if (!parsedAnalysis.reasoning || parsedAnalysis.reasoning.trim().length === 0) {
+          console.warn(`⚠️ Model ${model} returned analysis without reasoning, adding default`);
+          parsedAnalysis.reasoning = `Analysis from ${model} completed successfully but reasoning was not provided.`;
+        }
+
+        return parsedAnalysis;
+
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error(`❌ Model ${model} attempt ${attempt} failed: ${errorMessage}`);
+
+        // If this is the last attempt, return fallback
+        if (attempt === maxRetries) {
+          console.warn(`⚠️ Model ${model} exhausted all retries, returning fallback`);
+
+          return {
+            model,
+            recommendation: 'HOLD',
+            confidence: 0.15,
+            reasoning: `${model} analysis unavailable after ${maxRetries} attempts (${errorMessage}). Using safe HOLD recommendation until service recovers.`,
+            targetPrice: undefined,
+            stopLoss: undefined,
+            timestamp: new Date()
+          };
+        }
+
+        // Wait before retry (exponential backoff)
+        const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+        console.log(`⏳ Retrying ${model} in ${delayMs}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
     }
+
+    // This should never be reached due to the fallback in the loop
+    throw new Error(`Unexpected error in getModelAnalysis for ${model}`);
   }
 
   private parseModelResponse(model: string, content: string): LLMAnalysis {
@@ -1626,36 +1675,142 @@ export class AIAnalysisService {
     const symbol = SymbolConverter.normalize(marketData.symbol);
 
     try {
+      console.log(`🔮 Starting real-time AI analysis for ${symbol}...`);
+
+      // Validate input data
+      if (!marketData || !marketData.price || marketData.price <= 0) {
+        throw new Error(`Invalid market data for ${symbol}: missing or invalid price`);
+      }
+
+      if (!shortTermData || Object.keys(shortTermData).length === 0) {
+        throw new Error(`Invalid short-term data for ${symbol}: no timeframe data provided`);
+      }
+
       // Create real-time focused prompt
       const prompt = this.generateRealTimeAnalysisPrompt(marketData, shortTermData, orderBook);
+      console.log(`📝 Generated analysis prompt for ${symbol} (${prompt.length} characters)`);
 
-      // Get rapid analysis from all models
-      const analyses = await Promise.all(
-        this.models.map(async (model) => {
+      // Get rapid analysis from all models with individual error handling
+      const analyses = [];
+      let successfulAnalyses = 0;
+      let failedAnalyses = 0;
+
+      for (const model of this.models) {
+        try {
+          console.log(`🤖 Getting analysis from model ${model}...`);
           const analysis = await this.getModelAnalysis(model, prompt);
-          return {
-            ...analysis,
+
+          // Validate the analysis response
+          const validatedAnalysis = this.validateLLMAnalysis(analysis);
+
+          const enhancedAnalysis = {
+            ...validatedAnalysis,
             model,
-            urgency: this.calculateUrgencyScore(analysis),
-            timeToAction: this.estimateTimeToAction(analysis)
+            urgency: this.calculateUrgencyScore(validatedAnalysis),
+            timeToAction: this.estimateTimeToAction(validatedAnalysis)
           };
-        })
-      );
 
-      // Create real-time consensus
-      const realTimeConsensus = this.createRealTimeConsensus(analyses);
+          analyses.push(enhancedAnalysis);
+          successfulAnalyses++;
+          console.log(`✅ Model ${model} analysis completed successfully`);
+        } catch (modelError) {
+          failedAnalyses++;
+          console.error(`❌ Model ${model} failed:`, modelError);
 
-      return {
+          // Create fallback analysis for this model
+          const fallbackAnalysis = {
+            model,
+            recommendation: 'HOLD' as const,
+            confidence: 0.2,
+            reasoning: `Model ${model} analysis failed - using fallback`,
+            targetPrice: undefined,
+            stopLoss: undefined,
+            timestamp: new Date(),
+            urgency: 1,
+            timeToAction: 'MEDIUM TERM (1-4 hours)'
+          };
+          analyses.push(fallbackAnalysis);
+        }
+      }
+
+      console.log(`📊 Analysis summary: ${successfulAnalyses} successful, ${failedAnalyses} failed`);
+
+      if (analyses.length === 0) {
+        throw new Error(`All AI models failed for ${symbol} - no analysis available`);
+      }
+
+      // Create real-time consensus with error handling
+      let realTimeConsensus;
+      try {
+        realTimeConsensus = this.createRealTimeConsensus(analyses);
+        console.log(`🎯 Real-time consensus created: ${realTimeConsensus.recommendation} (${(realTimeConsensus.confidence * 100).toFixed(1)}% confidence)`);
+      } catch (consensusError) {
+        console.error(`❌ Failed to create consensus for ${symbol}:`, consensusError);
+        // Fallback consensus
+        realTimeConsensus = {
+          recommendation: 'HOLD',
+          confidence: 0.3,
+          urgency: 1,
+          modelAgreement: 0,
+          timeToAction: 'MEDIUM TERM (1-4 hours)',
+          reasoning: 'Unable to create model consensus - using safe fallback'
+        };
+      }
+
+      // Generate market conditions assessment
+      let marketConditions;
+      try {
+        marketConditions = this.assessCurrentMarketConditions(marketData, shortTermData, orderBook);
+      } catch (conditionsError) {
+        console.error(`❌ Market conditions assessment failed for ${symbol}:`, conditionsError);
+        marketConditions = {
+          volatility: 0,
+          spread: 0,
+          liquidity: 0,
+          volume24h: marketData.volume,
+          priceAction: marketData.change24h > 0 ? 'BULLISH' : 'BEARISH',
+          tradingCondition: 'UNKNOWN'
+        };
+      }
+
+      // Extract immediate signals
+      let immediateSignals;
+      try {
+        immediateSignals = this.extractImmediateSignals(analyses);
+      } catch (signalsError) {
+        console.error(`❌ Immediate signals extraction failed for ${symbol}:`, signalsError);
+        immediateSignals = [];
+      }
+
+      // Generate risk warnings
+      let riskWarnings;
+      try {
+        riskWarnings = this.generateRiskWarnings(marketData, analyses);
+      } catch (warningsError) {
+        console.error(`❌ Risk warnings generation failed for ${symbol}:`, warningsError);
+        riskWarnings = ['Risk assessment temporarily unavailable'];
+      }
+
+      const result = {
         symbol,
         consensus: realTimeConsensus,
         individualModels: analyses,
-        marketConditions: this.assessCurrentMarketConditions(marketData, shortTermData, orderBook),
-        immediateSignals: this.extractImmediateSignals(analyses),
-        riskWarnings: this.generateRiskWarnings(marketData, analyses),
-        timestamp: new Date()
+        marketConditions,
+        immediateSignals,
+        riskWarnings,
+        timestamp: new Date(),
+        analysisStats: {
+          successfulModels: successfulAnalyses,
+          failedModels: failedAnalyses,
+          totalModels: this.models.length
+        }
       };
+
+      console.log(`🎉 Real-time analysis completed for ${symbol}`);
+      return result;
+
     } catch (error) {
-      console.error(`Error in real-time analysis for ${symbol}:`, error);
+      console.error(`💥 Critical error in real-time analysis for ${symbol}:`, error);
       throw error;
     }
   }
