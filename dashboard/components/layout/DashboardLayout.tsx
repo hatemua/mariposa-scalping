@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import { storage } from '@/lib/storage';
+import { useIsClient } from '@/hooks/useIsClient';
 import {
   LayoutDashboard,
   TrendingUp,
@@ -38,10 +40,13 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [user, setUser] = useState<any>(null);
   const pathname = usePathname();
   const router = useRouter();
+  const isClient = useIsClient();
 
   useEffect(() => {
+    if (!isClient) return;
+
     // Check if user is authenticated
-    const token = localStorage.getItem('token');
+    const token = storage.getItem('token');
     if (!token) {
       router.push('/login');
       return;
@@ -50,15 +55,15 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     // Load user data (you can replace this with actual user data fetching)
     const userData = {
       name: 'Trading User',
-      email: localStorage.getItem('userEmail') || 'user@example.com',
+      email: storage.getItem('userEmail') || 'user@example.com',
       avatar: null
     };
     setUser(userData);
-  }, [router]);
+  }, [isClient, router]);
 
   const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('userEmail');
+    storage.removeItem('token');
+    storage.removeItem('userEmail');
     router.push('/login');
   };
 
@@ -69,10 +74,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     return pathname.startsWith(href);
   };
 
-  if (!user) {
+  if (!user || !isClient) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white"></div>
+        <span className="ml-3 text-white">Loading dashboard...</span>
       </div>
     );
   }

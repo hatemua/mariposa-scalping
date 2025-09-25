@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { marketApi } from '@/lib/api';
 import { wsClient } from '@/lib/websocket';
+import { storage } from '@/lib/storage';
+import { useIsClient } from '@/hooks/useIsClient';
 import { MarketData } from '@/types';
 import { toast } from 'react-hot-toast';
 import {
@@ -36,15 +38,12 @@ export default function MarketPage() {
   const [showLLMPanel, setShowLLMPanel] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [technicalIndicators, setTechnicalIndicators] = useState<any[]>([]);
+  const isClient = useIsClient();
 
   useEffect(() => {
-    try {
-      const token = localStorage.getItem('token');
-      if (token) {
-        wsClient.connect(token);
-      }
-    } catch (error) {
-      console.error('Error accessing localStorage:', error);
+    const token = storage.getItem('token');
+    if (token) {
+      wsClient.connect(token);
     }
   }, []);
 
@@ -61,6 +60,20 @@ export default function MarketPage() {
     // Handle indicator parameter changes
     console.log('Parameter change:', indicatorName, parameters);
   };
+
+  // Show loading state during SSR to prevent hydration issues
+  if (!isClient) {
+    return (
+      <DashboardLayout>
+        <div className="px-4 sm:px-6 lg:px-8 py-6">
+          <div className="flex items-center justify-center min-h-[400px]">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <span className="ml-2 text-gray-600">Loading market dashboard...</span>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <ErrorBoundary>

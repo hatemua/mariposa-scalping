@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { ApiResponse } from '@/types';
 import config from './config';
+import { storage } from './storage';
 
 const api = axios.create({
   baseURL: config.getBackendUrl(),
@@ -12,13 +13,9 @@ const api = axios.create({
 
 api.interceptors.request.use(
   (config) => {
-    try {
-      const token = localStorage.getItem('token');
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
-      }
-    } catch (error) {
-      console.error('Error accessing localStorage:', error);
+    const token = storage.getItem('token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   },
@@ -34,12 +31,10 @@ api.interceptors.response.use(
     console.error('API Error:', error.response?.data || error.message);
 
     if (error.response?.status === 401) {
-      try {
-        localStorage.removeItem('token');
-        localStorage.removeItem('userEmail');
+      storage.removeItem('token');
+      storage.removeItem('userEmail');
+      if (typeof window !== 'undefined') {
         window.location.href = '/login';
-      } catch (e) {
-        console.error('Error clearing localStorage:', e);
       }
     }
     return Promise.reject(error);
