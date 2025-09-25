@@ -356,7 +356,7 @@ export default function MultiTimeframeChart({
         ) : (
           <div className="space-y-6">
             {/* Consolidated Analysis Summary */}
-            {consolidatedAnalysis && (
+            {consolidatedAnalysis && consolidatedAnalysis.recommendation && (
               <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-100">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -394,7 +394,7 @@ export default function MultiTimeframeChart({
                     {activeTimeframe} Chart with AI Analysis
                   </h3>
 
-                  {timeframeData[activeTimeframe]?.analysis && (
+                  {timeframeData[activeTimeframe]?.analysis && timeframeData[activeTimeframe].analysis.recommendation && (
                     <div className="flex items-center gap-4 text-sm">
                       <div className="flex items-center gap-1">
                         {getRecommendationIcon(timeframeData[activeTimeframe].analysis.recommendation)}
@@ -458,11 +458,11 @@ export default function MultiTimeframeChart({
                   >
                     <div className="flex items-center justify-between mb-3">
                       <div className="font-semibold text-gray-900">{tf}</div>
-                      {data.analysis && getRecommendationIcon(data.analysis.recommendation)}
+                      {data.analysis && data.analysis.recommendation && getRecommendationIcon(data.analysis.recommendation)}
                     </div>
 
                     <div className="space-y-2 text-sm">
-                      {data.analysis && (
+                      {data.analysis && data.analysis.recommendation && (
                         <>
                           <div className="flex justify-between">
                             <span className="text-gray-600">Signal:</span>

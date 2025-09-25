@@ -226,7 +226,7 @@ export default function LLMAnalysisPanel({
           <Activity className="h-8 w-8 animate-spin text-blue-600 mx-auto mb-2" />
           <p className="text-gray-600">Loading AI analysis...</p>
         </div>
-      ) : realTimeAnalysis ? (
+      ) : realTimeAnalysis && realTimeAnalysis.consensus ? (
         <div className="p-6 space-y-6">
           {/* Consensus Analysis */}
           <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl p-4 border border-purple-100">
@@ -494,6 +494,14 @@ export default function LLMAnalysisPanel({
               </div>
             </div>
           )}
+        </div>
+      ) : realTimeAnalysis ? (
+        <div className="p-6 text-center">
+          <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
+            <AlertTriangle className="h-8 w-8 text-yellow-600 mx-auto mb-2" />
+            <p className="text-yellow-700 font-medium">Analysis data incomplete</p>
+            <p className="text-sm text-yellow-600">Consensus data is not available</p>
+          </div>
         </div>
       ) : null}
     </div>
