@@ -2608,6 +2608,168 @@ export class AIAnalysisService {
       console.error(`❌ Background analysis failed:`, error);
     }
   }
+
+  // ===============================
+  // TIMEFRAME-SPECIFIC CACHING
+  // ===============================
+
+  async getCachedTimeframeAnalysis(symbol: string, timeframe: string): Promise<any | null> {
+    try {
+      const cacheKey = `mtf_analysis:${symbol}:${timeframe}:5min`;
+      const cachedData = await redisService.get(cacheKey);
+
+      if (cachedData) {
+        console.log(`📊 Cache hit for timeframe analysis: ${symbol}:${timeframe}`);
+        const parsed = JSON.parse(cachedData);
+        parsed.cached = true;
+        parsed.cacheAge = Date.now() - new Date(parsed.timestamp).getTime();
+        return parsed;
+      }
+
+      console.log(`🔄 Cache miss for timeframe analysis: ${symbol}:${timeframe}`);
+      return null;
+    } catch (error) {
+      console.error(`❌ Error getting cached timeframe analysis for ${symbol}:${timeframe}:`, error);
+      return null;
+    }
+  }
+
+  async cacheTimeframeAnalysis(symbol: string, timeframe: string, analysis: any): Promise<void> {
+    try {
+      const cacheKey = `mtf_analysis:${symbol}:${timeframe}:5min`;
+      const ttl = 300; // 5 minutes
+
+      const cacheableData = {
+        ...analysis,
+        cached: false,
+        generatedAt: new Date(),
+        expiresAt: new Date(Date.now() + (ttl * 1000))
+      };
+
+      await redisService.set(cacheKey, JSON.stringify(cacheableData), ttl);
+      console.log(`💾 Cached timeframe analysis for ${symbol}:${timeframe} (TTL: ${ttl}s)`);
+    } catch (error) {
+      console.error(`❌ Error caching timeframe analysis for ${symbol}:${timeframe}:`, error);
+    }
+  }
+
+  async getCachedOrGenerateTimeframeAnalysis(
+    marketData: MarketData,
+    timeframeData: { [key: string]: any[] },
+    orderBook: any,
+    timeframe: string
+  ): Promise<any> {
+    const symbol = SymbolConverter.normalize(marketData.symbol);
+
+    // Try to get cached analysis first
+    const cachedAnalysis = await this.getCachedTimeframeAnalysis(symbol, timeframe);
+    if (cachedAnalysis) {
+      return cachedAnalysis;
+    }
+
+    // No cache available, generate fresh analysis
+    console.log(`🔄 No cache available for ${symbol}:${timeframe}, generating fresh analysis`);
+    const freshAnalysis = await this.generateTimeframeSpecificAnalysis(
+      marketData,
+      timeframeData,
+      orderBook,
+      timeframe
+    );
+
+    // Cache the fresh analysis
+    await this.cacheTimeframeAnalysis(symbol, timeframe, freshAnalysis);
+
+    return freshAnalysis;
+  }
+
+  // ===============================
+  // BULK ANALYSIS CACHING
+  // ===============================
+
+  async getCachedBulkAnalysis(symbols: string[]): Promise<{ [key: string]: any }> {
+    const results: { [key: string]: any } = {};
+
+    for (const symbol of symbols) {
+      const normalizedSymbol = SymbolConverter.normalize(symbol);
+      const cachedAnalysis = await this.getCachedRealTimeAnalysis(normalizedSymbol);
+
+      if (cachedAnalysis) {
+        results[normalizedSymbol] = cachedAnalysis;
+        console.log(`📊 Cache hit for bulk analysis: ${normalizedSymbol}`);
+      } else {
+        console.log(`🔄 Cache miss for bulk analysis: ${normalizedSymbol}`);
+      }
+    }
+
+    return results;
+  }
+
+  // ===============================
+  // DEEP ANALYSIS CACHING
+  // ===============================
+
+  async getCachedDeepAnalysis(symbol: string): Promise<any | null> {
+    try {
+      const cacheKey = `deep_analysis:${symbol}:15min`;
+      const cachedData = await redisService.get(cacheKey);
+
+      if (cachedData) {
+        console.log(`📊 Cache hit for deep analysis: ${symbol}`);
+        const parsed = JSON.parse(cachedData);
+        parsed.cached = true;
+        parsed.cacheAge = Date.now() - new Date(parsed.timestamp).getTime();
+        return parsed;
+      }
+
+      console.log(`🔄 Cache miss for deep analysis: ${symbol}`);
+      return null;
+    } catch (error) {
+      console.error(`❌ Error getting cached deep analysis for ${symbol}:`, error);
+      return null;
+    }
+  }
+
+  async cacheDeepAnalysis(symbol: string, analysis: any): Promise<void> {
+    try {
+      const cacheKey = `deep_analysis:${symbol}:15min`;
+      const ttl = 900; // 15 minutes (longer for deep analysis)
+
+      const cacheableData = {
+        ...analysis,
+        cached: false,
+        generatedAt: new Date(),
+        expiresAt: new Date(Date.now() + (ttl * 1000))
+      };
+
+      await redisService.set(cacheKey, JSON.stringify(cacheableData), ttl);
+      console.log(`💾 Cached deep analysis for ${symbol} (TTL: ${ttl}s)`);
+    } catch (error) {
+      console.error(`❌ Error caching deep analysis for ${symbol}:`, error);
+    }
+  }
+
+  async getCachedOrGenerateDeepAnalysis(
+    marketData: MarketData,
+    multiTimeframeData: { [key: string]: any[] },
+    orderBook: any
+  ): Promise<any> {
+    const symbol = SymbolConverter.normalize(marketData.symbol);
+
+    // Try to get cached analysis first
+    const cachedAnalysis = await this.getCachedDeepAnalysis(symbol);
+    if (cachedAnalysis) {
+      return cachedAnalysis;
+    }
+
+    // No cache available, generate fresh analysis
+    console.log(`🔄 No cache available for deep analysis ${symbol}, generating fresh analysis`);
+    const freshAnalysis = await this.generateDeepAnalysis(marketData, multiTimeframeData, orderBook);
+
+    // Cache the fresh analysis
+    await this.cacheDeepAnalysis(symbol, freshAnalysis);
+
+    return freshAnalysis;
+  }
 }
 
 export const aiAnalysisService = new AIAnalysisService();

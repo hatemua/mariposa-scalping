@@ -201,8 +201,8 @@ export const getDeepAnalysis = async (req: AuthRequest, res: Response): Promise<
       }
     };
 
-    // Generate deep analysis with multi-timeframe data
-    const deepAnalysis = await aiAnalysisService.generateDeepAnalysis(
+    // Generate cached or fresh deep analysis with multi-timeframe data
+    const deepAnalysis = await aiAnalysisService.getCachedOrGenerateDeepAnalysis(
       marketData,
       {
         '1m': klineData1m,
@@ -673,8 +673,8 @@ export const getMultiTimeframeAnalysis = async (req: AuthRequest, res: Response)
             timestamp: new Date()
           };
 
-          // Generate deep analysis for this timeframe
-          const timeframeAnalysis = await aiAnalysisService.generateTimeframeSpecificAnalysis(
+          // Generate cached or fresh analysis for this timeframe
+          const timeframeAnalysis = await aiAnalysisService.getCachedOrGenerateTimeframeAnalysis(
             marketData,
             { [timeframe]: klineData },
             orderBook,
@@ -1025,11 +1025,53 @@ export const getBulkTokenAnalysis = async (req: AuthRequest, res: Response): Pro
       .map((symbol: string) => SymbolConverter.normalize(symbol))
       .slice(0, Number(limit));
 
+    console.log(`🔄 Starting bulk analysis for ${validSymbols.length} symbols`);
+
+    // First, try to get cached analysis for all symbols
+    const cachedAnalyses = await aiAnalysisService.getCachedBulkAnalysis(validSymbols);
+
     // Process symbols in parallel with rate limiting
     const bulkAnalysis = await Promise.all(
       validSymbols.map(async (symbol: string) => {
         try {
-          // Get basic market data
+          // Check if we have cached analysis
+          const cachedAnalysis = cachedAnalyses[symbol];
+
+          if (cachedAnalysis) {
+            console.log(`📊 Using cached analysis for ${symbol}`);
+            // Extract market data from cached analysis
+            const marketData = {
+              symbol,
+              price: cachedAnalysis.marketData?.price || 0,
+              volume: cachedAnalysis.marketData?.volume || 0,
+              change24h: cachedAnalysis.marketData?.change24h || 0,
+              high24h: cachedAnalysis.marketData?.high24h || 0,
+              low24h: cachedAnalysis.marketData?.low24h || 0,
+              timestamp: new Date(cachedAnalysis.timestamp)
+            };
+
+            // Calculate metrics from cached data
+            const volatility = ((marketData.high24h - marketData.low24h) / marketData.price) * 100;
+            const volumeUSD = marketData.volume * marketData.price;
+
+            return {
+              symbol,
+              marketData,
+              analysis: cachedAnalysis,
+              metrics: {
+                volatility,
+                volumeUSD,
+                profitPotential: cachedAnalysis.consensus?.confidence || 0.5,
+                riskScore: 1 - (cachedAnalysis.consensus?.confidence || 0.5),
+                recommendation: cachedAnalysis.consensus?.recommendation || 'HOLD'
+              },
+              cached: true,
+              cacheAge: cachedAnalysis.cacheAge || 0
+            };
+          }
+
+          // No cache available, get fresh data
+          console.log(`🔄 No cache for ${symbol}, fetching fresh data`);
           const [symbolInfo, klineData5m, quickAnalysis] = await Promise.all([
             binanceService.getSymbolInfo(symbol),
             binanceService.getKlineData(symbol, '5m', 50),

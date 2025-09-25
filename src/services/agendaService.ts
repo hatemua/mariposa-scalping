@@ -567,6 +567,164 @@ export class AgendaService {
         throw error;
       }
     });
+
+    // Multi-timeframe Analysis Cache Refresh Job
+    this.agenda.define('refresh-multiframe-analysis', async (job: any) => {
+      const { symbols } = job.attrs.data || { symbols: ['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'SOLUSDT'] };
+
+      try {
+        console.log(`🔄 Refreshing multi-timeframe analysis cache for ${symbols.length} symbols`);
+
+        for (const symbol of symbols) {
+          try {
+            const normalizedSymbol = SymbolConverter.normalize(symbol);
+            console.log(`📊 Refreshing multi-timeframe analysis for ${normalizedSymbol}`);
+
+            // Get market data
+            const [symbolInfo, klineData1m, klineData5m, klineData15m, orderBook] = await Promise.all([
+              binanceService.getSymbolInfo(normalizedSymbol),
+              binanceService.getKlineData(normalizedSymbol, '1m', 100),
+              binanceService.getKlineData(normalizedSymbol, '5m', 100),
+              binanceService.getKlineData(normalizedSymbol, '15m', 100),
+              binanceService.getOrderBook(normalizedSymbol, 100)
+            ]);
+
+            const marketData = {
+              symbol: normalizedSymbol,
+              price: parseFloat(symbolInfo.lastPrice),
+              volume: parseFloat(symbolInfo.volume || '0'),
+              change24h: parseFloat(symbolInfo.priceChangePercent || '0'),
+              high24h: parseFloat(symbolInfo.highPrice || symbolInfo.lastPrice),
+              low24h: parseFloat(symbolInfo.lowPrice || symbolInfo.lastPrice),
+              timestamp: new Date()
+            };
+
+            // Generate and cache analysis for multiple timeframes
+            const timeframes = ['5m', '15m'];
+            for (const timeframe of timeframes) {
+              await aiAnalysisService.getCachedOrGenerateTimeframeAnalysis(
+                marketData,
+                {
+                  '1m': klineData1m,
+                  '5m': klineData5m,
+                  '15m': klineData15m
+                },
+                orderBook,
+                timeframe
+              );
+            }
+
+            console.log(`✅ Multi-timeframe analysis refreshed for ${normalizedSymbol}`);
+
+            // Small delay between symbols to avoid overwhelming APIs
+            await new Promise(resolve => setTimeout(resolve, 3000));
+
+          } catch (symbolError) {
+            console.error(`❌ Failed to refresh multi-timeframe analysis for ${symbol}:`, symbolError);
+          }
+        }
+
+        console.log(`🎉 Completed multi-timeframe analysis refresh for all symbols`);
+        await this.updateJobMetrics('refresh-multiframe-analysis', 'success');
+
+      } catch (error) {
+        console.error('❌ Error refreshing multi-timeframe analysis cache:', error);
+        await this.updateJobMetrics('refresh-multiframe-analysis', 'error');
+        throw error;
+      }
+    });
+
+    // Deep Analysis Cache Refresh Job
+    this.agenda.define('refresh-deep-analysis', async (job: any) => {
+      const { symbols } = job.attrs.data || { symbols: ['BTCUSDT', 'ETHUSDT'] }; // Fewer symbols for expensive deep analysis
+
+      try {
+        console.log(`🔄 Refreshing deep analysis cache for ${symbols.length} symbols`);
+
+        for (const symbol of symbols) {
+          try {
+            const normalizedSymbol = SymbolConverter.normalize(symbol);
+            console.log(`📊 Refreshing deep analysis for ${normalizedSymbol}`);
+
+            // Get comprehensive market data for deep analysis
+            const [symbolInfo, klineData1m, klineData5m, klineData15m, klineData1h, orderBook] = await Promise.all([
+              binanceService.getSymbolInfo(normalizedSymbol),
+              binanceService.getKlineData(normalizedSymbol, '1m', 100),
+              binanceService.getKlineData(normalizedSymbol, '5m', 100),
+              binanceService.getKlineData(normalizedSymbol, '15m', 100),
+              binanceService.getKlineData(normalizedSymbol, '1h', 100),
+              binanceService.getOrderBook(normalizedSymbol, 100)
+            ]);
+
+            const marketData = {
+              symbol: normalizedSymbol,
+              price: parseFloat(symbolInfo.lastPrice),
+              volume: parseFloat(symbolInfo.volume || '0'),
+              change24h: parseFloat(symbolInfo.priceChangePercent || '0'),
+              high24h: parseFloat(symbolInfo.highPrice || symbolInfo.lastPrice),
+              low24h: parseFloat(symbolInfo.lowPrice || symbolInfo.lastPrice),
+              orderBook: {
+                bids: orderBook.bids.slice(0, 20),
+                asks: orderBook.asks.slice(0, 20)
+              },
+              timestamp: new Date()
+            };
+
+            // Generate and cache deep analysis
+            const analysis = await aiAnalysisService.getCachedOrGenerateDeepAnalysis(
+              marketData,
+              {
+                '1m': klineData1m,
+                '5m': klineData5m,
+                '15m': klineData15m,
+                '1h': klineData1h
+              },
+              marketData.orderBook
+            );
+
+            console.log(`✅ Deep analysis refreshed for ${normalizedSymbol}`);
+
+            // Longer delay between symbols for expensive deep analysis
+            await new Promise(resolve => setTimeout(resolve, 5000));
+
+          } catch (symbolError) {
+            console.error(`❌ Failed to refresh deep analysis for ${symbol}:`, symbolError);
+          }
+        }
+
+        console.log(`🎉 Completed deep analysis refresh for all symbols`);
+        await this.updateJobMetrics('refresh-deep-analysis', 'success');
+
+      } catch (error) {
+        console.error('❌ Error refreshing deep analysis cache:', error);
+        await this.updateJobMetrics('refresh-deep-analysis', 'error');
+        throw error;
+      }
+    });
+
+    // Bulk Analysis Cache Refresh Job
+    this.agenda.define('refresh-bulk-analysis', async (job: any) => {
+      const prioritySymbols = [
+        'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
+        'MATICUSDT', 'LINKUSDT', 'UNIUSDT', 'AVAXUSDT', 'DOTUSDT', 'LTCUSDT',
+        'BNBUSDT', 'XRPUSDT', 'SHIBUSDT', 'ATOMUSDT', 'NEARUSDT', 'FTMUSDT'
+      ];
+
+      try {
+        console.log(`🔄 Refreshing bulk analysis cache for ${prioritySymbols.length} symbols`);
+
+        // Refresh cached analysis for priority symbols
+        await aiAnalysisService.getCachedBulkAnalysis(prioritySymbols);
+
+        console.log(`🎉 Completed bulk analysis cache refresh`);
+        await this.updateJobMetrics('refresh-bulk-analysis', 'success');
+
+      } catch (error) {
+        console.error('❌ Error refreshing bulk analysis cache:', error);
+        await this.updateJobMetrics('refresh-bulk-analysis', 'error');
+        throw error;
+      }
+    });
   }
 
   private async performSystemHealthCheck(): Promise<void> {
@@ -665,6 +823,19 @@ export class AgendaService {
       await this.agenda.every('5 minutes', 'refresh-realtime-analysis', {
         symbols: ['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOTUSDT', 'LINKUSDT']
       });
+
+      // Refresh multi-timeframe analysis cache every 10 minutes (offset by 2 minutes)
+      await this.agenda.every('10 minutes', 'refresh-multiframe-analysis', {
+        symbols: ['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'SOLUSDT']
+      });
+
+      // Refresh deep analysis cache every 15 minutes (offset by 5 minutes) - only for most popular symbols
+      await this.agenda.every('15 minutes', 'refresh-deep-analysis', {
+        symbols: ['BTCUSDT', 'ETHUSDT']
+      });
+
+      // Refresh bulk analysis cache every 30 minutes
+      await this.agenda.every('30 minutes', 'refresh-bulk-analysis');
 
       // Warm cache every hour
       await this.agenda.every('1 hour', 'warm-cache', {
