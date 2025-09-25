@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosInstance, AxiosRequestConfig, AxiosError } from 'axios';
 import { config } from '../config/environment';
 import { LLMAnalysis, ConsolidatedAnalysis, MarketData } from '../types';
 import { ConsolidatedAnalysis as AnalysisModel } from '../models';
@@ -17,6 +17,7 @@ interface TogetherAIResponse {
 export class AIAnalysisService {
   private apiKey: string;
   private baseURL = 'https://api.together.xyz/v1/chat/completions';
+  private httpClient: AxiosInstance;
 
   private models = [
     'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
@@ -27,6 +28,101 @@ export class AIAnalysisService {
 
   constructor() {
     this.apiKey = config.TOGETHER_AI_API_KEY;
+    this.httpClient = this.createHttpClient();
+  }
+
+  private createHttpClient(): AxiosInstance {
+    const client = axios.create({
+      baseURL: this.baseURL,
+      timeout: 45000, // 45 seconds
+      headers: {
+        'Authorization': `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mariposa-Scalping/1.0.0',
+        'Accept': 'application/json'
+      },
+      // Better connection handling
+      maxRedirects: 3,
+      validateStatus: (status) => status >= 200 && status < 300,
+      // Socket configuration to prevent hang ups
+      httpAgent: new (require('http').Agent)({
+        keepAlive: true,
+        keepAliveMsecs: 30000,
+        maxSockets: 10,
+        maxFreeSockets: 5,
+        timeout: 45000,
+        freeSocketTimeout: 15000,
+        socketActiveTTL: 60000
+      }),
+      httpsAgent: new (require('https').Agent)({
+        keepAlive: true,
+        keepAliveMsecs: 30000,
+        maxSockets: 10,
+        maxFreeSockets: 5,
+        timeout: 45000,
+        freeSocketTimeout: 15000,
+        socketActiveTTL: 60000,
+        rejectUnauthorized: true
+      })
+    });
+
+    // Add response interceptor for better error handling
+    client.interceptors.response.use(
+      (response) => response,
+      (error: AxiosError) => {
+        if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT' || error.code === 'ENOTFOUND') {
+          console.warn(`⚠️ Network error ${error.code}, will retry...`);
+        }
+        return Promise.reject(error);
+      }
+    );
+
+    return client;
+  }
+
+  // Enhanced retry logic with exponential backoff
+  private async retryWithBackoff<T>(
+    operation: () => Promise<T>,
+    maxRetries: number = 3,
+    baseDelay: number = 1000,
+    context: string = 'operation'
+  ): Promise<T> {
+    let lastError: any;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`🔄 ${context} attempt ${attempt}/${maxRetries}`);
+        return await operation();
+      } catch (error: any) {
+        lastError = error;
+
+        const isRetriableError =
+          error.code === 'ECONNRESET' ||
+          error.code === 'ETIMEDOUT' ||
+          error.code === 'ENOTFOUND' ||
+          error.code === 'ECONNABORTED' ||
+          (error.response?.status >= 500 && error.response?.status < 600) ||
+          error.response?.status === 429;
+
+        console.error(`❌ ${context} attempt ${attempt} failed:`, {
+          code: error.code,
+          status: error.response?.status,
+          message: error.message?.substring(0, 100),
+          isRetriable: isRetriableError
+        });
+
+        if (!isRetriableError || attempt === maxRetries) {
+          break;
+        }
+
+        // Exponential backoff with jitter
+        const delay = baseDelay * Math.pow(2, attempt - 1) + Math.random() * 1000;
+        console.log(`⏳ Waiting ${Math.round(delay)}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+
+    throw lastError;
   }
 
   async analyzeMarketData(
@@ -104,44 +200,23 @@ export class AIAnalysisService {
   }
 
   private async getModelAnalysis(model: string, prompt: string): Promise<LLMAnalysis> {
-    const maxRetries = 2;
-    let attempt = 0;
-
-    while (attempt < maxRetries) {
-      attempt++;
-      try {
-        console.log(`🔄 Model ${model} analysis attempt ${attempt}/${maxRetries}...`);
-
-        const response = await Promise.race([
-          axios.post<TogetherAIResponse>(
-            this.baseURL,
+    return await this.retryWithBackoff(
+      async () => {
+        const response = await this.httpClient.post<TogetherAIResponse>('', {
+          model,
+          messages: [
             {
-              model,
-              messages: [
-                {
-                  role: 'system',
-                  content: 'You are an expert cryptocurrency trading analyst. Provide clear, actionable trading recommendations based on technical analysis. Always include your reasoning for the recommendation.'
-                },
-                {
-                  role: 'user',
-                  content: prompt
-                }
-              ],
-              max_tokens: 500,
-              temperature: 0.1
+              role: 'system',
+              content: 'You are an expert cryptocurrency trading analyst. Provide clear, actionable trading recommendations based on technical analysis. Always include your reasoning for the recommendation.'
             },
             {
-              headers: {
-                'Authorization': `Bearer ${this.apiKey}`,
-                'Content-Type': 'application/json'
-              },
-              timeout: 30000
+              role: 'user',
+              content: prompt
             }
-          ),
-          new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error('Model analysis timeout')), 35000);
-          })
-        ]);
+          ],
+          max_tokens: 500,
+          temperature: 0.1
+        });
 
         // Validate response structure
         if (!response.data || !response.data.choices || response.data.choices.length === 0) {
@@ -164,35 +239,11 @@ export class AIAnalysisService {
         }
 
         return parsedAnalysis;
-
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        console.error(`❌ Model ${model} attempt ${attempt} failed: ${errorMessage}`);
-
-        // If this is the last attempt, return fallback
-        if (attempt === maxRetries) {
-          console.warn(`⚠️ Model ${model} exhausted all retries, returning fallback`);
-
-          return {
-            model,
-            recommendation: 'HOLD',
-            confidence: 0.15,
-            reasoning: `${model} analysis unavailable after ${maxRetries} attempts (${errorMessage}). Using safe HOLD recommendation until service recovers.`,
-            targetPrice: undefined,
-            stopLoss: undefined,
-            timestamp: new Date()
-          };
-        }
-
-        // Wait before retry (exponential backoff)
-        const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-        console.log(`⏳ Retrying ${model} in ${delayMs}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-      }
-    }
-
-    // This should never be reached due to the fallback in the loop
-    throw new Error(`Unexpected error in getModelAnalysis for ${model}`);
+      },
+      3,
+      2000,
+      `Model ${model} analysis`
+    );
   }
 
   private parseModelResponse(model: string, content: string): LLMAnalysis {
@@ -276,9 +327,8 @@ export class AIAnalysisService {
         }
       `;
 
-      const response = await axios.post<TogetherAIResponse>(
-        this.baseURL,
-        {
+      const response = await this.retryWithBackoff(
+        () => this.httpClient.post<TogetherAIResponse>('', {
           model: this.models[1], // Use the most capable model for consolidation
           messages: [
             {
@@ -292,13 +342,10 @@ export class AIAnalysisService {
           ],
           max_tokens: 300,
           temperature: 0.05
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json'
-          }
-        }
+        }),
+        3,
+        2000,
+        `${symbol} analysis consolidation`
       );
 
       const content = response.data.choices[0].message.content;
@@ -1175,9 +1222,8 @@ export class AIAnalysisService {
         }
       `;
 
-      const response = await axios.post<TogetherAIResponse>(
-        this.baseURL,
-        {
+      const response = await this.retryWithBackoff(
+        () => this.httpClient.post<TogetherAIResponse>('', {
           model: this.models[1], // Use most capable model
           messages: [
             {
@@ -1191,13 +1237,10 @@ export class AIAnalysisService {
           ],
           max_tokens: 800,
           temperature: 0.05
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json'
-          }
-        }
+        }),
+        3,
+        2000,
+        `Deep analysis consolidation`
       );
 
       const content = response.data.choices[0].message.content;
@@ -1624,9 +1667,8 @@ export class AIAnalysisService {
       const prompt = this.generateMultiTimeframeConsolidationPrompt(symbol, multiTimeframeData);
 
       // Get consolidated analysis from the most capable model
-      const response = await axios.post<TogetherAIResponse>(
-        this.baseURL,
-        {
+      const response = await this.retryWithBackoff(
+        () => this.httpClient.post<TogetherAIResponse>('', {
           model: this.models[1], // Use most capable model
           messages: [
             {
@@ -1640,13 +1682,10 @@ export class AIAnalysisService {
           ],
           max_tokens: 1000,
           temperature: 0.05
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json'
-          }
-        }
+        }),
+        3,
+        2000,
+        `Multi-timeframe analysis for ${symbol}`
       );
 
       const content = response.data.choices[0].message.content;
