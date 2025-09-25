@@ -15,11 +15,18 @@ const server = createServer(app);
 
 app.use(helmet());
 app.use(cors({
-  origin: [
-    "https://mariposa-scalping.vercel.app",
-    "http://localhost:3000"  // for local development
+  origin: "*",  // Allow all origins
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+    "Access-Control-Request-Method",
+    "Access-Control-Request-Headers"
   ],
-  credentials: true
+  credentials: false  // Must be false when origin is "*"
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
