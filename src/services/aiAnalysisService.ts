@@ -2073,6 +2073,11 @@ export class AIAnalysisService {
   private calculateUrgencyScore(analysis: LLMAnalysis): number {
     let urgency = 0;
 
+    // Debug logging for undefined reasoning
+    if (analysis.reasoning === undefined || analysis.reasoning === null) {
+      console.warn(`[DEBUG] calculateUrgencyScore: reasoning is ${analysis.reasoning} for model ${analysis.model}. Full analysis:`, JSON.stringify(analysis));
+    }
+
     // High confidence adds urgency
     if (analysis.confidence > 0.8) urgency += 3;
     else if (analysis.confidence > 0.6) urgency += 2;
@@ -2085,7 +2090,7 @@ export class AIAnalysisService {
 
     // Certain keywords in reasoning add urgency
     const urgentKeywords = ['immediate', 'breakout', 'urgent', 'now', 'quickly'];
-    const reasoning = analysis.reasoning.toLowerCase();
+    const reasoning = analysis.reasoning?.toLowerCase() || '';
     urgentKeywords.forEach(keyword => {
       if (reasoning.includes(keyword)) urgency += 1;
     });
@@ -2144,13 +2149,20 @@ export class AIAnalysisService {
   private extractImmediateSignals(analyses: LLMAnalysis[]): any[] {
     return analyses
       .filter(analysis => this.calculateUrgencyScore(analysis) >= 6)
-      .map(analysis => ({
-        model: analysis.model,
-        signal: analysis.recommendation,
-        urgency: this.calculateUrgencyScore(analysis),
-        confidence: analysis.confidence,
-        reasoning: analysis.reasoning.substring(0, 100) + '...'
-      }));
+      .map(analysis => {
+        // Debug logging for undefined reasoning
+        if (analysis.reasoning === undefined || analysis.reasoning === null) {
+          console.warn(`[DEBUG] extractImmediateSignals: reasoning is ${analysis.reasoning} for model ${analysis.model}. Full analysis:`, JSON.stringify(analysis));
+        }
+
+        return {
+          model: analysis.model,
+          signal: analysis.recommendation,
+          urgency: this.calculateUrgencyScore(analysis),
+          confidence: analysis.confidence,
+          reasoning: (analysis.reasoning || 'No reasoning provided').substring(0, 100) + '...'
+        };
+      });
   }
 
   private generateRiskWarnings(marketData: MarketData, analyses: LLMAnalysis[]): string[] {
@@ -2260,6 +2272,54 @@ export class AIAnalysisService {
     if (buyCount > sellCount) return 'BULLISH_SETUP';
     if (sellCount > buyCount) return 'BEARISH_SETUP';
     return 'NEUTRAL_SETUP';
+  }
+
+  // ===============================
+  // DATA VALIDATION AND SANITIZATION
+  // ===============================
+
+  private validateLLMAnalysis(analysis: any): LLMAnalysis {
+    // Validate and sanitize LLMAnalysis object to ensure all required properties exist
+    const validatedAnalysis: LLMAnalysis = {
+      model: analysis?.model || 'unknown',
+      recommendation: this.validateRecommendation(analysis?.recommendation),
+      confidence: this.validateConfidence(analysis?.confidence),
+      reasoning: analysis?.reasoning || 'No reasoning provided',
+      targetPrice: analysis?.targetPrice && typeof analysis.targetPrice === 'number' ? analysis.targetPrice : undefined,
+      stopLoss: analysis?.stopLoss && typeof analysis.stopLoss === 'number' ? analysis.stopLoss : undefined,
+      timestamp: analysis?.timestamp ? new Date(analysis.timestamp) : new Date()
+    };
+
+    // Log if we had to apply fallbacks
+    if (analysis?.reasoning === undefined || analysis?.reasoning === null) {
+      console.warn(`LLMAnalysis missing reasoning for model ${validatedAnalysis.model}, using fallback`);
+    }
+
+    return validatedAnalysis;
+  }
+
+  private validateRecommendation(recommendation: any): 'BUY' | 'SELL' | 'HOLD' {
+    const validRecommendations = ['BUY', 'SELL', 'HOLD'];
+    if (typeof recommendation === 'string' && validRecommendations.includes(recommendation.toUpperCase())) {
+      return recommendation.toUpperCase() as 'BUY' | 'SELL' | 'HOLD';
+    }
+    return 'HOLD';
+  }
+
+  private validateConfidence(confidence: any): number {
+    if (typeof confidence === 'number' && confidence >= 0 && confidence <= 1) {
+      return confidence;
+    }
+    return 0.5; // Default to neutral confidence
+  }
+
+  validateLLMAnalysisArray(analyses: any[]): LLMAnalysis[] {
+    if (!Array.isArray(analyses)) {
+      console.warn('Expected array of LLMAnalysis objects, got:', typeof analyses);
+      return [];
+    }
+
+    return analyses.map(analysis => this.validateLLMAnalysis(analysis));
   }
 }
 

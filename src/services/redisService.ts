@@ -190,11 +190,68 @@ export class RedisService {
 
       // Get the most recent analysis
       const sortedKeys = keys.sort().reverse();
-      return this.get(sortedKeys[0]);
+      const analysis = await this.get(sortedKeys[0]);
+
+      if (!analysis) return null;
+
+      // Validate the analysis data and ensure all required properties exist
+      return this.validateConsolidatedAnalysis(analysis);
     } catch (error) {
       console.error(`Error getting current analysis for ${symbol}:`, error);
       return null;
     }
+  }
+
+  private validateConsolidatedAnalysis(analysis: any): ConsolidatedAnalysis {
+    // Ensure the analysis has all required properties
+    const validatedAnalysis: ConsolidatedAnalysis = {
+      symbol: analysis?.symbol || 'UNKNOWN',
+      recommendation: this.validateRecommendation(analysis?.recommendation),
+      confidence: this.validateConfidence(analysis?.confidence),
+      targetPrice: analysis?.targetPrice && typeof analysis.targetPrice === 'number' ? analysis.targetPrice : undefined,
+      stopLoss: analysis?.stopLoss && typeof analysis.stopLoss === 'number' ? analysis.stopLoss : undefined,
+      reasoning: analysis?.reasoning || 'No reasoning provided from cache',
+      individualAnalyses: this.validateIndividualAnalyses(analysis?.individualAnalyses),
+      timestamp: analysis?.timestamp ? new Date(analysis.timestamp) : new Date()
+    };
+
+    // Log if we had to apply fallbacks
+    if (!analysis?.reasoning) {
+      console.warn(`ConsolidatedAnalysis missing reasoning for symbol ${validatedAnalysis.symbol}, using fallback`);
+    }
+
+    return validatedAnalysis;
+  }
+
+  private validateIndividualAnalyses(analyses: any): any[] {
+    if (!Array.isArray(analyses)) {
+      return [];
+    }
+
+    return analyses.map(analysis => ({
+      model: analysis?.model || 'unknown',
+      recommendation: this.validateRecommendation(analysis?.recommendation),
+      confidence: this.validateConfidence(analysis?.confidence),
+      reasoning: analysis?.reasoning || 'No reasoning provided',
+      targetPrice: analysis?.targetPrice && typeof analysis.targetPrice === 'number' ? analysis.targetPrice : undefined,
+      stopLoss: analysis?.stopLoss && typeof analysis.stopLoss === 'number' ? analysis.stopLoss : undefined,
+      timestamp: analysis?.timestamp ? new Date(analysis.timestamp) : new Date()
+    }));
+  }
+
+  private validateRecommendation(recommendation: any): 'BUY' | 'SELL' | 'HOLD' {
+    const validRecommendations = ['BUY', 'SELL', 'HOLD'];
+    if (typeof recommendation === 'string' && validRecommendations.includes(recommendation.toUpperCase())) {
+      return recommendation.toUpperCase() as 'BUY' | 'SELL' | 'HOLD';
+    }
+    return 'HOLD';
+  }
+
+  private validateConfidence(confidence: any): number {
+    if (typeof confidence === 'number' && confidence >= 0 && confidence <= 1) {
+      return confidence;
+    }
+    return 0.5; // Default to neutral confidence
   }
 
   async cacheTradeSignal(agentId: string, signal: any): Promise<boolean> {
