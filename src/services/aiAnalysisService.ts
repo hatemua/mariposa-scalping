@@ -2107,6 +2107,22 @@ export class AIAnalysisService {
     return 'MEDIUM TERM (1-4 hours)';
   }
 
+  private estimateTimeToActionFromValues(confidence: number, urgency: number): string {
+    // Calculate time to action based on confidence and urgency values directly
+    // Higher confidence and urgency = more immediate action needed
+    let adjustedUrgency = urgency;
+
+    // Adjust urgency based on confidence level
+    if (confidence > 0.8) adjustedUrgency += 2;
+    else if (confidence > 0.6) adjustedUrgency += 1;
+    else if (confidence < 0.4) adjustedUrgency -= 1;
+
+    if (adjustedUrgency >= 7) return 'IMMEDIATE (1-5 min)';
+    if (adjustedUrgency >= 5) return 'SOON (5-15 min)';
+    if (adjustedUrgency >= 3) return 'SHORT TERM (15-60 min)';
+    return 'MEDIUM TERM (1-4 hours)';
+  }
+
   private createRealTimeConsensus(analyses: LLMAnalysis[]): any {
     const buyCount = analyses.filter(a => a.recommendation === 'BUY').length;
     const sellCount = analyses.filter(a => a.recommendation === 'SELL').length;
@@ -2127,7 +2143,7 @@ export class AIAnalysisService {
       confidence: avgConfidence,
       urgency: avgUrgency,
       modelAgreement: Math.max(buyCount, sellCount) / analyses.length,
-      timeToAction: this.estimateTimeToAction({ confidence: avgConfidence } as LLMAnalysis),
+      timeToAction: this.estimateTimeToActionFromValues(avgConfidence, avgUrgency),
       reasoning: `Real-time consensus: ${buyCount} BUY, ${sellCount} SELL signals with ${(avgConfidence * 100).toFixed(1)}% confidence`
     };
   }
