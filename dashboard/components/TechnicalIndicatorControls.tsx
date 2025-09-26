@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { safeArray } from '@/lib/formatters';
 import {
   BarChart3,
   TrendingUp,
@@ -138,17 +139,17 @@ export default function TechnicalIndicatorControls({
   onParameterChange,
   className = ''
 }: TechnicalIndicatorControlsProps) {
-  const [indicators, setIndicators] = useState<TechnicalIndicator[]>(availableIndicators);
+  const [indicators, setIndicators] = useState<TechnicalIndicator[]>(availableIndicators || DEFAULT_INDICATORS);
   const [showSettings, setShowSettings] = useState(false);
   const [selectedIndicator, setSelectedIndicator] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overlay' | 'oscillator' | 'volume'>('overlay');
 
   useEffect(() => {
-    setIndicators(availableIndicators);
+    setIndicators(availableIndicators || DEFAULT_INDICATORS);
   }, [availableIndicators]);
 
   const toggleIndicator = (name: string) => {
-    const updatedIndicators = indicators.map(indicator =>
+    const updatedIndicators = safeArray.map(indicators, (indicator) =>
       indicator.name === name
         ? { ...indicator, visible: !indicator.visible }
         : indicator
@@ -159,7 +160,7 @@ export default function TechnicalIndicatorControls({
   };
 
   const updateIndicatorColor = (name: string, color: string) => {
-    const updatedIndicators = indicators.map(indicator =>
+    const updatedIndicators = safeArray.map(indicators, (indicator) =>
       indicator.name === name
         ? { ...indicator, color }
         : indicator
@@ -170,7 +171,7 @@ export default function TechnicalIndicatorControls({
   };
 
   const updateIndicatorParameters = (name: string, parameters: { [key: string]: number }) => {
-    const updatedIndicators = indicators.map(indicator =>
+    const updatedIndicators = safeArray.map(indicators, (indicator) =>
       indicator.name === name
         ? { ...indicator, parameters: { ...indicator.parameters, ...parameters } }
         : indicator
@@ -187,7 +188,7 @@ export default function TechnicalIndicatorControls({
   };
 
   const enableAllOverlays = () => {
-    const updatedIndicators = indicators.map(indicator =>
+    const updatedIndicators = safeArray.map(indicators, (indicator) =>
       indicator.type === 'overlay'
         ? { ...indicator, visible: true }
         : indicator
@@ -198,7 +199,7 @@ export default function TechnicalIndicatorControls({
   };
 
   const disableAll = () => {
-    const updatedIndicators = indicators.map(indicator =>
+    const updatedIndicators = safeArray.map(indicators, (indicator) =>
       ({ ...indicator, visible: false })
     );
 
@@ -207,10 +208,10 @@ export default function TechnicalIndicatorControls({
   };
 
   const getIndicatorsByType = (type: 'overlay' | 'oscillator' | 'volume') => {
-    return indicators.filter(indicator => indicator.type === type);
+    return safeArray.filter(indicators, (indicator) => indicator.type === type);
   };
 
-  const visibleCount = indicators.filter(i => i.visible).length;
+  const visibleCount = safeArray.filter(indicators, (i) => i.visible).length;
 
   return (
     <div className={`bg-white rounded-xl shadow-lg border border-gray-200 ${className}`}>

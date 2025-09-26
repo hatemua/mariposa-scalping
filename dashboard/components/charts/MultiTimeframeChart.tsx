@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { marketApi } from '@/lib/api';
+import { safeArray } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
 import { Clock, TrendingUp, TrendingDown, Activity, AlertTriangle, Target, Shield } from 'lucide-react';
 import EnhancedTradingChart from './EnhancedTradingChart';
@@ -137,9 +138,9 @@ export default function MultiTimeframeChart({
   // Process chart data for active timeframe
   const chartData = useMemo(() => {
     const activeData = timeframeData[activeTimeframe];
-    if (!activeData || !activeData.klineData) return [];
+    if (!activeData) return [];
 
-    return activeData.klineData.map((candle: any) => ({
+    return safeArray.map(activeData.klineData, (candle: any) => ({
       timestamp: candle[0],
       time: new Date(candle[0]).toISOString(),
       open: parseFloat(candle[1]),
@@ -153,9 +154,10 @@ export default function MultiTimeframeChart({
   // Process technical indicators for active timeframe
   const technicalIndicators = useMemo(() => {
     const activeData = timeframeData[activeTimeframe];
-    if (!activeData || !activeData.technicalIndicators) return [];
+    if (!activeData) return [];
 
-    return Object.entries(activeData.technicalIndicators).map(([name, data]: [string, any]) => ({
+    const indicators = activeData.technicalIndicators || {};
+    return safeArray.map(Object.entries(indicators), ([name, data]: [string, any]) => ({
       name,
       values: Array.isArray(data) ? data : data.values || [data],
       color: getIndicatorColor(name),

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Analysis, MarketData } from '@/types';
 import { marketApi } from '@/lib/api';
+import { safeArray } from '@/lib/formatters';
 import {
   X, TrendingUp, TrendingDown, Target, Shield, Brain,
   DollarSign, Percent, Calculator, BarChart3, Activity,
@@ -66,7 +67,7 @@ export default function TokenDetailModal({
       // Fallback to basic analysis if deep analysis fails
       try {
         const fallbackResponse = await marketApi.getAnalysis(symbol, 1);
-        if (fallbackResponse?.success && fallbackResponse.data?.length > 0) {
+        if (fallbackResponse?.success && safeArray.hasItems(fallbackResponse.data)) {
           setAnalysis(fallbackResponse.data[0]);
         }
       } catch (fallbackError) {
@@ -286,7 +287,7 @@ export default function TokenDetailModal({
                 </h3>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  {scenarios.map((scenario, index) => (
+                  {safeArray.map(scenarios, (scenario, index) => (
                     <div key={index} className="bg-white rounded-xl p-6 border-2 border-transparent hover:border-purple-200 transition-all">
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center space-x-2">
@@ -417,7 +418,7 @@ export default function TokenDetailModal({
                         <Activity className="h-5 w-5 text-blue-600" />
                         <span className="font-semibold text-gray-700">RSI Signals</span>
                       </div>
-                      {Object.entries((analysis as any).technicalIndicators || {}).map(([timeframe, indicators]: [string, any]) => (
+                      {safeArray.map(Object.entries((analysis as any).technicalIndicators || {}), ([timeframe, indicators]: [string, any]) => (
                         <div key={timeframe} className="flex justify-between text-sm mb-1">
                           <span className="text-gray-600">{timeframe.toUpperCase()}:</span>
                           <span className={`font-bold ${
@@ -436,7 +437,7 @@ export default function TokenDetailModal({
                         <BarChart3 className="h-5 w-5 text-green-600" />
                         <span className="font-semibold text-gray-700">Volume Ratios</span>
                       </div>
-                      {Object.entries((analysis as any).technicalIndicators || {}).map(([timeframe, indicators]: [string, any]) => (
+                      {safeArray.map(Object.entries((analysis as any).technicalIndicators || {}), ([timeframe, indicators]: [string, any]) => (
                         <div key={timeframe} className="flex justify-between text-sm mb-1">
                           <span className="text-gray-600">{timeframe.toUpperCase()}:</span>
                           <span className={`font-bold ${
@@ -455,7 +456,7 @@ export default function TokenDetailModal({
                         <TrendingUp className="h-5 w-5 text-purple-600" />
                         <span className="font-semibold text-gray-700">Trend Signals</span>
                       </div>
-                      {Object.entries((analysis as any).technicalIndicators || {}).map(([timeframe, indicators]: [string, any]) => (
+                      {safeArray.map(Object.entries((analysis as any).technicalIndicators || {}), ([timeframe, indicators]: [string, any]) => (
                         <div key={timeframe} className="flex justify-between text-sm mb-1">
                           <span className="text-gray-600">{timeframe.toUpperCase()}:</span>
                           <span className={`font-bold ${
@@ -559,7 +560,7 @@ export default function TokenDetailModal({
 
                           <h5 className="font-medium text-gray-700 mb-2">Key Catalysts:</h5>
                           <div className="flex flex-wrap gap-2">
-                            {((analysis as any).keyCatalysts || []).map((catalyst: string, index: number) => (
+                            {safeArray.map((analysis as any).keyCatalysts || [], (catalyst: string, index: number) => (
                               <span key={index} className="px-2 py-1 bg-purple-100 text-purple-700 text-xs rounded-lg">
                                 {catalyst}
                               </span>
@@ -573,7 +574,7 @@ export default function TokenDetailModal({
               )}
 
               {/* Individual AI Models */}
-              {analysis.individualAnalyses && analysis.individualAnalyses.length > 0 && (
+              {analysis.individualAnalyses && safeArray.hasItems(analysis.individualAnalyses) && (
                 <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-6">
                   <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center space-x-2">
                     <Brain className="h-6 w-6 text-blue-600" />
@@ -581,7 +582,7 @@ export default function TokenDetailModal({
                   </h3>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {analysis.individualAnalyses.map((llmAnalysis, index) => (
+                    {safeArray.map(analysis.individualAnalyses, (llmAnalysis, index) => (
                       <div key={index} className="bg-white rounded-xl p-4 border border-gray-200">
                         <div className="flex items-center justify-between mb-3">
                           <div className="flex items-center space-x-2">

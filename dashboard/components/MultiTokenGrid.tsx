@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { safeArray, safeNumber } from '@/lib/formatters';
 import { TrendingUp, TrendingDown, Activity, Zap, AlertTriangle, Target, DollarSign } from 'lucide-react';
 
 interface TokenAnalysis {
@@ -55,7 +56,7 @@ export default function MultiTokenGrid({
   const [selectedTimeframes, setSelectedTimeframes] = useState(['5m', '15m', '1h']);
 
   const fetchMultiTokenAnalysis = useCallback(async () => {
-    if (!symbols || symbols.length === 0) return;
+    if (!safeArray.hasItems(symbols)) return;
 
     try {
       const response = await fetch('/api/market/analysis/multi-token', {
@@ -79,7 +80,7 @@ export default function MultiTokenGrid({
       if (data.success && data.data.analyses) {
         const newAnalyses: Record<string, TokenAnalysis> = {};
 
-        data.data.analyses.forEach((analysis: TokenAnalysis) => {
+        safeArray.forEach(data.data.analyses, (analysis: TokenAnalysis) => {
           newAnalyses[analysis.symbol] = analysis;
           onAnalysisUpdate?.(analysis);
         });
@@ -127,16 +128,16 @@ export default function MultiTokenGrid({
   };
 
   const formatPrice = (price: number) => {
-    if (price < 1) return price.toFixed(6);
-    if (price < 100) return price.toFixed(4);
-    return price.toFixed(2);
+    if (price < 1) return safeNumber.toFixed(price, 6);
+    if (price < 100) return safeNumber.toFixed(price, 4);
+    return safeNumber.toFixed(price, 2);
   };
 
   const formatVolume = (volume: number) => {
-    if (volume >= 1000000000) return `${(volume / 1000000000).toFixed(1)}B`;
-    if (volume >= 1000000) return `${(volume / 1000000).toFixed(1)}M`;
-    if (volume >= 1000) return `${(volume / 1000).toFixed(1)}K`;
-    return volume.toFixed(0);
+    if (volume >= 1000000000) return `${safeNumber.toFixed(volume / 1000000000, 1)}B`;
+    if (volume >= 1000000) return `${safeNumber.toFixed(volume / 1000000, 1)}M`;
+    if (volume >= 1000) return `${safeNumber.toFixed(volume / 1000, 1)}K`;
+    return safeNumber.toFixed(volume, 0);
   };
 
   if (loading && Object.keys(analyses).length === 0) {
@@ -196,7 +197,7 @@ export default function MultiTokenGrid({
 
       {/* Token Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {symbols.map(symbol => {
+        {safeArray.map(symbols, (symbol) => {
           const analysis = analyses[symbol];
           const latestData = analysis?.timeframeData?.[0]?.marketData;
           const llmAnalysis = analysis?.analysis;
@@ -241,7 +242,7 @@ export default function MultiTokenGrid({
                     <span className={`text-sm font-medium ${
                       latestData.change24h >= 0 ? 'text-green-600' : 'text-red-600'
                     }`}>
-                      {latestData.change24h >= 0 ? '+' : ''}{latestData.change24h.toFixed(2)}%
+                      {latestData.change24h >= 0 ? '+' : ''}{safeNumber.toFixed(latestData.change24h, 2)}%
                     </span>
                   </div>
 
@@ -261,7 +262,7 @@ export default function MultiTokenGrid({
                           {llmAnalysis.recommendation}
                         </span>
                         <span className="text-xs text-gray-600">
-                          {(llmAnalysis.confidence * 100).toFixed(0)}% confidence
+                          {safeNumber.toFixed(llmAnalysis.confidence * 100, 0)}% confidence
                         </span>
                       </div>
 
@@ -295,11 +296,11 @@ export default function MultiTokenGrid({
                   </div>
 
                   {/* Timeframe Analysis Summary */}
-                  {analysis?.timeframeData && analysis.timeframeData.length > 0 && (
+                  {analysis?.timeframeData && safeArray.hasItems(analysis.timeframeData) && (
                     <div className="pt-2 border-t border-gray-100">
                       <div className="text-xs text-gray-600 mb-1">Multi-timeframe:</div>
                       <div className="flex gap-1">
-                        {analysis.timeframeData.map(tf => (
+                        {safeArray.map(analysis.timeframeData, (tf) => (
                           <div
                             key={tf.timeframe}
                             className={`px-1 py-0.5 text-xs rounded ${
@@ -332,25 +333,25 @@ export default function MultiTokenGrid({
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="text-center">
             <div className="text-2xl font-bold text-green-600">
-              {Object.values(analyses).filter(a => a.analysis?.recommendation === 'BUY').length}
+              {safeArray.filter(Object.values(analyses), (a) => a.analysis?.recommendation === 'BUY').length}
             </div>
             <div className="text-sm text-gray-600">Buy Signals</div>
           </div>
           <div className="text-center">
             <div className="text-2xl font-bold text-red-600">
-              {Object.values(analyses).filter(a => a.analysis?.recommendation === 'SELL').length}
+              {safeArray.filter(Object.values(analyses), (a) => a.analysis?.recommendation === 'SELL').length}
             </div>
             <div className="text-sm text-gray-600">Sell Signals</div>
           </div>
           <div className="text-center">
             <div className="text-2xl font-bold text-yellow-600">
-              {Object.values(analyses).filter(a => a.profitPotential >= 7).length}
+              {safeArray.filter(Object.values(analyses), (a) => a.profitPotential >= 7).length}
             </div>
             <div className="text-sm text-gray-600">High Profit Potential</div>
           </div>
           <div className="text-center">
             <div className="text-2xl font-bold text-blue-600">
-              {Object.values(analyses).filter(a => a.riskLevel === 'LOW').length}
+              {safeArray.filter(Object.values(analyses), (a) => a.riskLevel === 'LOW').length}
             </div>
             <div className="text-sm text-gray-600">Low Risk</div>
           </div>

@@ -85,4 +85,76 @@ export const safeNumber = {
   }
 };
 
+/**
+ * Safe array utilities to prevent length/map errors on undefined/null arrays
+ */
+export const safeArray = {
+  /**
+   * Safely map over an array, returning empty array if undefined
+   */
+  map: <T, R>(array: T[] | undefined | null, callback: (item: T, index: number, arr: T[]) => R): R[] => {
+    if (!array || !Array.isArray(array)) {
+      return [];
+    }
+    return array.map(callback);
+  },
+
+  /**
+   * Safely filter an array, returning empty array if undefined
+   */
+  filter: <T>(array: T[] | undefined | null, callback: (item: T, index: number, arr: T[]) => boolean): T[] => {
+    if (!array || !Array.isArray(array)) {
+      return [];
+    }
+    return array.filter(callback);
+  },
+
+  /**
+   * Safely get array length, returning 0 if undefined
+   */
+  length: (array: any[] | undefined | null): number => {
+    if (!array || !Array.isArray(array)) {
+      return 0;
+    }
+    return array.length;
+  },
+
+  /**
+   * Safely slice an array, returning empty array if undefined
+   */
+  slice: <T>(array: T[] | undefined | null, start?: number, end?: number): T[] => {
+    if (!array || !Array.isArray(array)) {
+      return [];
+    }
+    return array.slice(start, end);
+  },
+
+  /**
+   * Get a safe array value with fallback
+   */
+  getValue: <T>(array: T[] | undefined | null, fallback: T[] = []): T[] => {
+    if (!array || !Array.isArray(array)) {
+      return fallback;
+    }
+    return array;
+  },
+
+  /**
+   * Check if array is valid and has items
+   */
+  hasItems: (array: any[] | undefined | null): boolean => {
+    return Array.isArray(array) && array.length > 0;
+  },
+
+  /**
+   * Safely forEach over an array
+   */
+  forEach: <T>(array: T[] | undefined | null, callback: (item: T, index: number, arr: T[]) => void): void => {
+    if (!array || !Array.isArray(array)) {
+      return;
+    }
+    array.forEach(callback);
+  }
+};
+
 export default safeNumber;

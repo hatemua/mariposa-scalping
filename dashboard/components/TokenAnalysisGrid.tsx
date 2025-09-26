@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { marketApi } from '@/lib/api';
-import { safeNumber } from '@/lib/formatters';
+import { safeNumber, safeArray } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
 import {
   Grid3X3,
@@ -416,9 +416,9 @@ export default function TokenAnalysisGrid({
                           {signal.type.toUpperCase()}
                         </span>
                       ))}
-                      {token.signals.length > 3 && (
+                      {safeArray.length(token.signals) > 3 && (
                         <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs">
-                          +{token.signals.length - 3}
+                          +{safeArray.length(token.signals) - 3}
                         </span>
                       )}
                     </div>

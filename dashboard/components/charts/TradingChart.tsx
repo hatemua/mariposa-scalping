@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { safeArray, safeNumber } from '@/lib/formatters';
 import {
   ComposedChart,
   XAxis,
@@ -100,18 +101,18 @@ export default function TradingChart({
   onCandleClick
 }: TradingChartProps) {
   const [visibleIndicators, setVisibleIndicators] = useState<string[]>(
-    technicalIndicators.filter(i => i.visible).map(i => i.name)
+    safeArray.map(safeArray.filter(technicalIndicators, (i) => i.visible), (i) => i.name)
   );
 
   const chartHeight = showVolume ? height * 0.75 : height;
   const volumeHeight = showVolume ? height * 0.25 : 0;
 
   const processedData = useMemo(() => {
-    return data.map((candle, index) => {
+    return safeArray.map(data, (candle, index) => {
       const enhanced: any = { ...candle, index };
 
-      technicalIndicators.forEach(indicator => {
-        if (indicator.values[index] !== undefined) {
+      safeArray.forEach(technicalIndicators, (indicator) => {
+        if (safeArray.getValue(indicator.values, [])[index] !== undefined) {
           enhanced[indicator.name.toLowerCase()] = indicator.values[index];
         }
       });
@@ -121,8 +122,8 @@ export default function TradingChart({
   }, [data, technicalIndicators]);
 
   const formatYAxisTick = (value: number) => {
-    if (value >= 1000) return `$${(value / 1000).toFixed(1)}k`;
-    return `$${value.toFixed(2)}`;
+    if (value >= 1000) return `$${safeNumber.toFixed(value / 1000, 1)}k`;
+    return `$${safeNumber.toFixed(value, 2)}`;
   };
 
   const formatXAxisTick = (timestamp: number) => {
@@ -154,7 +155,7 @@ export default function TradingChart({
     );
   }
 
-  if (data.length === 0) {
+  if (safeArray.length(data) === 0) {
     return (
       <div className="flex items-center justify-center h-full bg-gray-50 rounded-lg">
         <div className="text-center">
@@ -175,23 +176,27 @@ export default function TradingChart({
           </span>
         </div>
 
-        {data.length > 0 && (
-          <div className="flex items-center gap-4 text-sm">
-            <div className="flex items-center gap-1">
-              {data[data.length - 1].close > data[data.length - 1].open ? (
-                <TrendingUp className="h-4 w-4 text-green-600" />
-              ) : (
-                <TrendingDown className="h-4 w-4 text-red-600" />
-              )}
-              <span className="font-medium">${data[data.length - 1].close.toFixed(4)}</span>
+        {safeArray.hasItems(data) && (() => {
+          const lastCandle = data[data.length - 1];
+          if (!lastCandle) return null;
+          return (
+            <div className="flex items-center gap-4 text-sm">
+              <div className="flex items-center gap-1">
+                {lastCandle.close > lastCandle.open ? (
+                  <TrendingUp className="h-4 w-4 text-green-600" />
+                ) : (
+                  <TrendingDown className="h-4 w-4 text-red-600" />
+                )}
+                <span className="font-medium">${safeNumber.toFixed(lastCandle.close, 4)}</span>
+              </div>
+              <span className={`font-medium ${
+                lastCandle.close > lastCandle.open ? 'text-green-600' : 'text-red-600'
+              }`}>
+                {safeNumber.toFixed(((lastCandle.close - lastCandle.open) / lastCandle.open) * 100, 2)}%
+              </span>
             </div>
-            <span className={`font-medium ${
-              data[data.length - 1].close > data[data.length - 1].open ? 'text-green-600' : 'text-red-600'
-            }`}>
-              {(((data[data.length - 1].close - data[data.length - 1].open) / data[data.length - 1].open) * 100).toFixed(2)}%
-            </span>
-          </div>
-        )}
+          );
+        })()}
       </div>
 
       <div className="p-2">
@@ -236,19 +241,19 @@ export default function TradingChart({
                       <div className="grid grid-cols-2 gap-2">
                         <div className="flex justify-between">
                           <span className="text-gray-600">O:</span>
-                          <span className="font-medium">${data.open?.toFixed(4)}</span>
+                          <span className="font-medium">${safeNumber.toFixed(data.open, 4)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-600">H:</span>
-                          <span className="font-medium text-green-600">${data.high?.toFixed(4)}</span>
+                          <span className="font-medium text-green-600">${safeNumber.toFixed(data.high, 4)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-600">L:</span>
-                          <span className="font-medium text-red-600">${data.low?.toFixed(4)}</span>
+                          <span className="font-medium text-red-600">${safeNumber.toFixed(data.low, 4)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-600">C:</span>
-                          <span className="font-medium">${data.close?.toFixed(4)}</span>
+                          <span className="font-medium">${safeNumber.toFixed(data.close, 4)}</span>
                         </div>
                       </div>
                       <div className="flex justify-between border-t pt-1">
@@ -268,9 +273,9 @@ export default function TradingChart({
               onClick={(data) => onCandleClick?.(data)}
             />
 
-            {technicalIndicators
-              .filter(indicator => visibleIndicators.includes(indicator.name))
-              .map((indicator) => {
+            {safeArray.map(
+              safeArray.filter(technicalIndicators, (indicator) => safeArray.getValue(visibleIndicators, []).includes(indicator.name)),
+              (indicator) => {
                 if (indicator.type === 'line') {
                   return (
                     <Line
@@ -318,9 +323,9 @@ export default function TradingChart({
 
               <YAxis
                 tickFormatter={(value) => {
-                  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
-                  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
-                  return value.toFixed(0);
+                  if (value >= 1000000) return `${safeNumber.toFixed(value / 1000000, 1)}M`;
+                  if (value >= 1000) return `${safeNumber.toFixed(value / 1000, 1)}k`;
+                  return safeNumber.toFixed(value, 0);
                 }}
                 tick={{ fontSize: 12 }}
                 stroke="#6b7280"
@@ -328,7 +333,7 @@ export default function TradingChart({
               />
 
               <Tooltip
-                formatter={(value: number) => [value.toLocaleString(), 'Volume']}
+                formatter={(value: number) => [safeNumber.isValid(value) ? value.toLocaleString() : '0', 'Volume']}
                 labelFormatter={(timestamp: number) => new Date(timestamp).toLocaleString()}
               />
 

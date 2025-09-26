@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { safeArray, safeNumber } from '@/lib/formatters';
 import {
   ComposedChart,
   XAxis,
@@ -299,7 +300,7 @@ export default function EnhancedTradingChart({
   onAnalysisPointClick
 }: EnhancedTradingChartProps) {
   const [visibleIndicators, setVisibleIndicators] = useState<string[]>(
-    technicalIndicators.filter(i => i.visible).map(i => i.name)
+    safeArray.map(safeArray.filter(technicalIndicators, (i) => i.visible), (i) => i.name)
   );
   const [visibleAnalyses, setVisibleAnalyses] = useState<string[]>(['buy', 'sell', 'support', 'resistance']);
   const [showSettings, setShowSettings] = useState(false);
@@ -311,12 +312,12 @@ export default function EnhancedTradingChart({
 
   // Process data with technical indicators
   const processedData = useMemo(() => {
-    return data.map((candle, index) => {
+    return safeArray.map(data, (candle, index) => {
       const enhanced: any = { ...candle, index };
 
       // Add technical indicator values
-      technicalIndicators.forEach(indicator => {
-        if (indicator.values[index] !== undefined) {
+      safeArray.forEach(technicalIndicators, (indicator) => {
+        if (safeArray.getValue(indicator.values, [])[index] !== undefined) {
           enhanced[indicator.name.toLowerCase()] = indicator.values[index];
         }
       });
@@ -327,10 +328,10 @@ export default function EnhancedTradingChart({
 
   // Calculate price range with padding
   const priceRange = useMemo(() => {
-    if (data.length === 0) return { min: 0, max: 100 };
+    if (safeArray.length(data) === 0) return { min: 0, max: 100 };
 
-    const highs = data.map(d => d.high);
-    const lows = data.map(d => d.low);
+    const highs = safeArray.map(data, (d) => d.high);
+    const lows = safeArray.map(data, (d) => d.low);
     const maxHigh = Math.max(...highs);
     const minLow = Math.min(...lows);
     const padding = (maxHigh - minLow) * 0.1;
@@ -343,13 +344,13 @@ export default function EnhancedTradingChart({
 
   // Calculate max volume for candle sizing
   const maxVolume = useMemo(() => {
-    return data.length > 0 ? Math.max(...data.map(d => d.volume)) : 0;
+    return safeArray.hasItems(data) ? Math.max(...safeArray.map(data, (d) => d.volume)) : 0;
   }, [data]);
 
   // Filter active LLM analyses
   const activeAnalyses = useMemo(() => {
-    return llmAnalyses.filter(analysis =>
-      visibleAnalyses.includes(analysis.type) && analysis.active
+    return safeArray.filter(llmAnalyses, (analysis) =>
+      safeArray.getValue(visibleAnalyses, []).includes(analysis.type) && analysis.active
     );
   }, [llmAnalyses, visibleAnalyses]);
 
@@ -370,8 +371,8 @@ export default function EnhancedTradingChart({
   };
 
   const formatYAxisTick = (value: number) => {
-    if (value >= 1000) return `$${(value / 1000).toFixed(1)}k`;
-    return `$${value.toFixed(2)}`;
+    if (value >= 1000) return `$${safeNumber.toFixed(value / 1000, 1)}k`;
+    return `$${safeNumber.toFixed(value, 2)}`;
   };
 
   const formatXAxisTick = (timestamp: number) => {
@@ -403,7 +404,7 @@ export default function EnhancedTradingChart({
     );
   }
 
-  if (data.length === 0) {
+  if (safeArray.length(data) === 0) {
     return (
       <div className="flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900 rounded-lg">
         <div className="text-center">
