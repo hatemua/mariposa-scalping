@@ -55,7 +55,7 @@ export default function MultiTokenGrid({
   const [selectedTimeframes, setSelectedTimeframes] = useState(['5m', '15m', '1h']);
 
   const fetchMultiTokenAnalysis = useCallback(async () => {
-    if (symbols.length === 0) return;
+    if (!symbols || symbols.length === 0) return;
 
     try {
       const response = await fetch('/api/market/analysis/multi-token', {
@@ -142,7 +142,7 @@ export default function MultiTokenGrid({
   if (loading && Object.keys(analyses).length === 0) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {symbols.map(symbol => (
+        {(symbols || []).map(symbol => (
           <div key={symbol} className="bg-white rounded-lg border border-gray-200 p-4">
             <div className="animate-pulse">
               <div className="h-6 bg-gray-200 rounded mb-3"></div>

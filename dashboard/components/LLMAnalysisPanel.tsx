@@ -271,7 +271,7 @@ export default function LLMAnalysisPanel({
           </div>
 
           {/* Trading Signals */}
-          {tradingSignals.length > 0 && (
+          {tradingSignals && tradingSignals.length > 0 && (
             <div className="space-y-3">
               <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
                 <Target className="h-5 w-5 text-blue-600" />
@@ -279,7 +279,7 @@ export default function LLMAnalysisPanel({
               </h3>
 
               <div className="space-y-3">
-                {tradingSignals.map((signal, index) => (
+                {(tradingSignals || []).map((signal, index) => (
                   <div key={index} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
@@ -334,7 +334,7 @@ export default function LLMAnalysisPanel({
                       <div className="mt-3 pt-3 border-t border-gray-200">
                         <div className="text-sm text-gray-600 mb-2">Warnings:</div>
                         <div className="space-y-1">
-                          {signal.warnings.map((warning: string, idx: number) => (
+                          {(signal.warnings || []).map((warning: string, idx: number) => (
                             <div key={idx} className="flex items-center gap-2 text-sm text-orange-700">
                               <AlertTriangle className="h-3 w-3" />
                               {warning}
@@ -354,7 +354,7 @@ export default function LLMAnalysisPanel({
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
                 <Brain className="h-5 w-5 text-purple-600" />
-                Individual Models ({realTimeAnalysis.individualModels.length})
+                Individual Models ({realTimeAnalysis.individualModels?.length ?? 0})
               </h3>
               <button
                 onClick={() => setShowAllModels(!showAllModels)}
@@ -366,7 +366,7 @@ export default function LLMAnalysisPanel({
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {(showAllModels ? realTimeAnalysis.individualModels : realTimeAnalysis.individualModels.slice(0, 2))
+              {(showAllModels ? (realTimeAnalysis.individualModels || []) : (realTimeAnalysis.individualModels || []).slice(0, 2))
                 .map((model, index) => (
                 <div key={index} className="border border-gray-200 rounded-lg p-4">
                   <div className="flex items-center justify-between mb-3">
@@ -479,14 +479,14 @@ export default function LLMAnalysisPanel({
           </div>
 
           {/* Risk Warnings */}
-          {realTimeAnalysis.riskWarnings.length > 0 && (
+          {realTimeAnalysis.riskWarnings && realTimeAnalysis.riskWarnings.length > 0 && (
             <div className="bg-red-50 rounded-lg p-4 border border-red-200">
               <h3 className="text-lg font-semibold text-red-900 mb-3 flex items-center gap-2">
                 <Shield className="h-5 w-5 text-red-600" />
                 Risk Warnings
               </h3>
               <div className="space-y-2">
-                {realTimeAnalysis.riskWarnings.map((warning, index) => (
+                {(realTimeAnalysis.riskWarnings || []).map((warning, index) => (
                   <div key={index} className="flex items-center gap-2 text-sm text-red-700">
                     <AlertTriangle className="h-4 w-4" />
                     {warning}
