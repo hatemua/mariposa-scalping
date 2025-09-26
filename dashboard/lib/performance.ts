@@ -49,7 +49,9 @@ export const memoize = <T extends (...args: any[]) => any>(
     // Clear cache if it gets too large (prevent memory leaks)
     if (cache.size > 100) {
       const firstKey = cache.keys().next().value;
-      cache.delete(firstKey);
+      if (firstKey !== undefined) {
+        cache.delete(firstKey);
+      }
     }
 
     return result;
@@ -140,7 +142,7 @@ export const createLazyLoader = (threshold: number = 0.1) => {
 
 // Memory usage monitor
 export const memoryMonitor = {
-  getMemoryUsage: (): MemoryInfo | null => {
+  getMemoryUsage: (): any | null => {
     if ('memory' in performance) {
       return (performance as any).memory;
     }
@@ -217,7 +219,7 @@ export const arrayUtils = {
 
   deduplicate: <T>(array: T[], keyFn?: (item: T) => any): T[] => {
     if (!keyFn) {
-      return [...new Set(array)];
+      return Array.from(new Set(array));
     }
 
     const seen = new Set();
@@ -287,11 +289,13 @@ export class ResponseCache {
 
   private cleanup(): void {
     const now = Date.now();
-    for (const [key, entry] of this.cache.entries()) {
+    const keysToDelete: string[] = [];
+    this.cache.forEach((entry, key) => {
       if (now - entry.timestamp > entry.ttl) {
-        this.cache.delete(key);
+        keysToDelete.push(key);
       }
-    }
+    });
+    keysToDelete.forEach(key => this.cache.delete(key));
   }
 }
 

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { marketApi } from '@/lib/api';
-import { safeNumber, safeArray } from '@/lib/formatters';
+import { safeNumber, safeArray, safeObject } from '@/lib/formatters';
 import { TokenAnalysisGridSkeleton } from './ui/SkeletonLoaders';
 import { toast } from 'react-hot-toast';
 import {

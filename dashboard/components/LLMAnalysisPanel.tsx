@@ -264,7 +264,7 @@ export default function LLMAnalysisPanel({
                 Model Agreement: {safeNumber.toFixed((safeObject.get(realTimeAnalysis, 'consensus.modelAgreement', 0)) * 100, 0)}%
               </div>
               <div className="text-gray-600">
-                Market Condition: {realTimeAnalysis.marketConditions.tradingCondition}
+                Market Condition: {safeObject.get(realTimeAnalysis, 'marketConditions.tradingCondition', '')}
               </div>
             </div>
           </div>
@@ -353,7 +353,7 @@ export default function LLMAnalysisPanel({
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
                 <Brain className="h-5 w-5 text-purple-600" />
-                Individual Models ({realTimeAnalysis.individualModels?.length ?? 0})
+                Individual Models ({safeArray.length(safeObject.get(realTimeAnalysis, 'individualModels', []))})
               </h3>
               <button
                 onClick={() => setShowAllModels(!showAllModels)}
@@ -365,62 +365,65 @@ export default function LLMAnalysisPanel({
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {(showAllModels ? (realTimeAnalysis.individualModels || []) : (realTimeAnalysis.individualModels || []).slice(0, 2))
-                .map((model, index) => (
+              {safeArray.map(
+                showAllModels ?
+                  safeObject.get(realTimeAnalysis, 'individualModels', []) :
+                  safeArray.slice(safeObject.get(realTimeAnalysis, 'individualModels', []), 0, 2),
+                (model, index) => (
                 <div key={index} className="border border-gray-200 rounded-lg p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className={`px-2 py-1 rounded text-xs font-medium border ${getModelColor(model.model)}`}>
-                      {formatModelName(model.model)}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className={`px-2 py-1 rounded text-xs font-medium border ${getModelColor(safeObject.get(model, 'model', ''))}`}>
+                        {formatModelName(safeObject.get(model, 'model', ''))}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {getRecommendationIcon(safeObject.get(model, 'recommendation', ''))}
+                        <span className="font-medium">{safeObject.get(model, 'recommendation', '')}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      {getRecommendationIcon(model.recommendation)}
-                      <span className="font-medium">{model.recommendation}</span>
-                    </div>
-                  </div>
 
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Confidence:</span>
-                      <span className="font-medium">{(model.confidence * 100).toFixed(0)}%</span>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Confidence:</span>
+                        <span className="font-medium">{safeNumber.toFixed((safeObject.get(model, 'confidence', 0)) * 100, 0)}%</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Urgency:</span>
+                        <span className={`font-medium ${getUrgencyColor(safeObject.get(model, 'urgency', 0)).split(' ')[0]}`}>
+                          {safeObject.get(model, 'urgency', 0)}/10
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Time to Action:</span>
+                        <span className="font-medium">{safeObject.get(model, 'timeToAction', '')}</span>
+                      </div>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Urgency:</span>
-                      <span className={`font-medium ${getUrgencyColor(model.urgency).split(' ')[0]}`}>
-                        {model.urgency}/10
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Time to Action:</span>
-                      <span className="font-medium">{model.timeToAction}</span>
-                    </div>
-                  </div>
 
-                  {model.reasoning && (
-                    <div className="mt-3 pt-3 border-t border-gray-100">
-                      <p className="text-xs text-gray-600 line-clamp-3">{model.reasoning}</p>
-                    </div>
-                  )}
+                    {safeObject.get(model, 'reasoning') && (
+                      <div className="mt-3 pt-3 border-t border-gray-100">
+                        <p className="text-xs text-gray-600 line-clamp-3">{safeObject.get(model, 'reasoning', '')}</p>
+                      </div>
+                    )}
 
-                  {(model.targetPrice || model.stopLoss) && (
-                    <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 gap-2 text-xs">
-                      {model.targetPrice && (
-                        <div>
-                          <span className="text-gray-600">Target:</span>
-                          <span className="ml-1 font-medium text-green-600">
-                            ${model.targetPrice.toFixed(4)}
-                          </span>
-                        </div>
-                      )}
-                      {model.stopLoss && (
-                        <div>
-                          <span className="text-gray-600">Stop:</span>
-                          <span className="ml-1 font-medium text-red-600">
-                            ${model.stopLoss.toFixed(4)}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                    {(safeObject.get(model, 'targetPrice') || safeObject.get(model, 'stopLoss')) && (
+                      <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 gap-2 text-xs">
+                        {safeObject.get(model, 'targetPrice') && (
+                          <div>
+                            <span className="text-gray-600">Target:</span>
+                            <span className="ml-1 font-medium text-green-600">
+                              ${safeNumber.toFixed(safeObject.get(model, 'targetPrice', 0), 4)}
+                            </span>
+                          </div>
+                        )}
+                        {safeObject.get(model, 'stopLoss') && (
+                          <div>
+                            <span className="text-gray-600">Stop:</span>
+                            <span className="ml-1 font-medium text-red-600">
+                              ${safeNumber.toFixed(safeObject.get(model, 'stopLoss', 0), 4)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                 </div>
               ))}
             </div>
@@ -437,58 +440,58 @@ export default function LLMAnalysisPanel({
               <div>
                 <span className="text-gray-600">Volatility:</span>
                 <span className="ml-2 font-medium">
-                  {realTimeAnalysis.marketConditions.volatility.toFixed(2)}%
+                  {safeNumber.toFixed(safeObject.get(realTimeAnalysis, 'marketConditions.volatility', 0), 2)}%
                 </span>
               </div>
               <div>
                 <span className="text-gray-600">Spread:</span>
                 <span className="ml-2 font-medium">
-                  {realTimeAnalysis.marketConditions.spread.toFixed(4)}%
+                  {safeNumber.toFixed(safeObject.get(realTimeAnalysis, 'marketConditions.spread', 0), 4)}%
                 </span>
               </div>
               <div>
                 <span className="text-gray-600">Liquidity:</span>
                 <span className="ml-2 font-medium">
-                  {realTimeAnalysis.marketConditions.liquidity}
+                  {safeObject.get(realTimeAnalysis, 'marketConditions.liquidity', 'N/A')}
                 </span>
               </div>
               <div>
                 <span className="text-gray-600">Volume 24h:</span>
                 <span className="ml-2 font-medium">
-                  ${(realTimeAnalysis.marketConditions.volume24h / 1000000).toFixed(1)}M
+                  ${safeNumber.toFixed((safeObject.get(realTimeAnalysis, 'marketConditions.volume24h', 0) / 1000000), 1)}M
                 </span>
               </div>
               <div>
                 <span className="text-gray-600">Price Action:</span>
                 <span className={`ml-2 font-medium ${
-                  realTimeAnalysis.marketConditions.priceAction === 'BULLISH' ? 'text-green-600' : 'text-red-600'
+                  safeObject.get(realTimeAnalysis, 'marketConditions.priceAction', '') === 'BULLISH' ? 'text-green-600' : 'text-red-600'
                 }`}>
-                  {realTimeAnalysis.marketConditions.priceAction}
+                  {safeObject.get(realTimeAnalysis, 'marketConditions.priceAction', '')}
                 </span>
               </div>
               <div>
                 <span className="text-gray-600">Condition:</span>
                 <span className={`ml-2 font-medium ${
-                  realTimeAnalysis.marketConditions.tradingCondition === 'EXCELLENT' ? 'text-green-600' : 'text-orange-600'
+                  safeObject.get(realTimeAnalysis, 'marketConditions.tradingCondition', '') === 'EXCELLENT' ? 'text-green-600' : 'text-orange-600'
                 }`}>
-                  {realTimeAnalysis.marketConditions.tradingCondition}
+                  {safeObject.get(realTimeAnalysis, 'marketConditions.tradingCondition', '')}
                 </span>
               </div>
             </div>
           </div>
 
           {/* Risk Warnings */}
-          {realTimeAnalysis.riskWarnings && realTimeAnalysis.riskWarnings.length > 0 && (
+          {safeArray.hasItems(safeObject.get(realTimeAnalysis, 'riskWarnings', [])) && (
             <div className="bg-red-50 rounded-lg p-4 border border-red-200">
               <h3 className="text-lg font-semibold text-red-900 mb-3 flex items-center gap-2">
                 <Shield className="h-5 w-5 text-red-600" />
                 Risk Warnings
               </h3>
               <div className="space-y-2">
-                {(realTimeAnalysis.riskWarnings || []).map((warning, index) => (
+                {safeArray.map(safeObject.get(realTimeAnalysis, 'riskWarnings', []), (warning, index) => (
                   <div key={index} className="flex items-center gap-2 text-sm text-red-700">
                     <AlertTriangle className="h-4 w-4" />
-                    {warning}
+                    {String(warning)}
                   </div>
                 ))}
               </div>
