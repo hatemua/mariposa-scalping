@@ -232,7 +232,7 @@ export default function MultiTimeframeConfluence({
   const analyzeTimeframeSignals = async (symbol: string, timeframe: string): Promise<TimeframeSignal> => {
     try {
       const chartData = await marketApi.getChartData(symbol, timeframe, 100);
-      const klines = safeArray.get(safeObject.get(chartData, 'data.klines', []));
+      const klines = safeArray.getValue(safeObject.get(chartData, 'data.klines', [])) as any[];
 
       if (klines.length === 0) {
         throw new Error(`No data available for ${timeframe}`);
@@ -256,37 +256,37 @@ export default function MultiTimeframeConfluence({
       const currentVolume = volumes[volumes.length - 1];
 
       // Generate signals
-      const signals = {
+      const signals: TimeframeSignal['signals'] = {
         rsi: {
           value: rsi,
-          signal: rsi > 70 ? 'SELL' as const : rsi < 30 ? 'BUY' as const : 'NEUTRAL' as const,
+          signal: rsi > 70 ? 'SELL' : rsi < 30 ? 'BUY' : 'NEUTRAL',
           weight: 1.0
         },
         macd: {
           value: macd.histogram,
-          signal: macd.histogram > 0 ? 'BUY' as const : macd.histogram < 0 ? 'SELL' as const : 'NEUTRAL' as const,
+          signal: macd.histogram > 0 ? 'BUY' : macd.histogram < 0 ? 'SELL' : 'NEUTRAL',
           weight: 1.2
         },
         ema: {
           value: (currentPrice - ema20) / ema20 * 100,
-          signal: currentPrice > ema20 && ema20 > ema50 ? 'BUY' as const :
-                 currentPrice < ema20 && ema20 < ema50 ? 'SELL' as const : 'NEUTRAL' as const,
+          signal: currentPrice > ema20 && ema20 > ema50 ? 'BUY' :
+                 currentPrice < ema20 && ema20 < ema50 ? 'SELL' : 'NEUTRAL',
           weight: 1.5
         },
         volume: {
           value: currentVolume / avgVolume,
-          signal: currentVolume > avgVolume * 1.5 && priceChange > 0 ? 'BUY' as const :
-                 currentVolume > avgVolume * 1.5 && priceChange < 0 ? 'SELL' as const : 'NEUTRAL' as const,
+          signal: currentVolume > avgVolume * 1.5 && priceChange > 0 ? 'BUY' :
+                 currentVolume > avgVolume * 1.5 && priceChange < 0 ? 'SELL' : 'NEUTRAL',
           weight: 1.0
         },
         support: {
           value: 0,
-          signal: 'NEUTRAL' as const,
+          signal: 'NEUTRAL',
           weight: 0.8
         },
         momentum: {
           value: priceChange,
-          signal: priceChange > 1 ? 'BUY' as const : priceChange < -1 ? 'SELL' as const : 'NEUTRAL' as const,
+          signal: priceChange > 1 ? 'BUY' : priceChange < -1 ? 'SELL' : 'NEUTRAL',
           weight: 1.1
         }
       };

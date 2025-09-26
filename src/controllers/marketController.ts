@@ -1717,10 +1717,20 @@ export const getConfluenceScore = async (req: AuthRequest, res: Response): Promi
     console.log(`🎯 Calculating confluence score for ${normalizedSymbol}`);
 
     // Get real-time analysis and market data
-    const [rtAnalysis, marketData] = await Promise.all([
-      aiAnalysisService.generateRealTimeAnalysis(normalizedSymbol),
-      binanceService.getSymbolInfo(normalizedSymbol)
+    const [marketData, shortTermKlines] = await Promise.all([
+      binanceService.getSymbolInfo(normalizedSymbol),
+      binanceService.getKlines(normalizedSymbol, '1m', 100)
     ]);
+
+    // Get order book data
+    const orderBook = await binanceService.getOrderBook(normalizedSymbol);
+
+    // Generate real-time analysis with proper parameters
+    const rtAnalysis = await aiAnalysisService.generateRealTimeAnalysis(
+      marketData,
+      { '1m': shortTermKlines },
+      orderBook
+    );
 
     if (!rtAnalysis?.consensus || !marketData) {
       res.status(500).json({
@@ -1868,12 +1878,19 @@ export const getEntrySignals = async (req: AuthRequest, res: Response): Promise<
     console.log(`🎯 Analyzing entry signals for ${normalizedSymbol}`);
 
     // Get required data
-    const [rtAnalysis, marketData, chart1m, chart5m] = await Promise.all([
-      aiAnalysisService.generateRealTimeAnalysis(normalizedSymbol),
+    const [marketData, chart1m, chart5m, orderBook] = await Promise.all([
       binanceService.getSymbolInfo(normalizedSymbol),
       binanceService.getKlines(normalizedSymbol, '1m', 100),
-      binanceService.getKlines(normalizedSymbol, '5m', 50)
+      binanceService.getKlines(normalizedSymbol, '5m', 50),
+      binanceService.getOrderBook(normalizedSymbol)
     ]);
+
+    // Generate real-time analysis with proper parameters
+    const rtAnalysis = await aiAnalysisService.generateRealTimeAnalysis(
+      marketData,
+      { '1m': chart1m, '5m': chart5m },
+      orderBook
+    );
 
     const currentPrice = marketData?.price || 0;
     const consensus = rtAnalysis?.consensus || {};
@@ -1883,17 +1900,17 @@ export const getEntrySignals = async (req: AuthRequest, res: Response): Promise<
     const liquidityGrabs = [];
     if (chart1m && chart1m.length > 20) {
       const recentCandles = chart1m.slice(-20);
-      const highs = recentCandles.map(c => parseFloat(c[2]));
-      const lows = recentCandles.map(c => parseFloat(c[3]));
-      const volumes = recentCandles.map(c => parseFloat(c[5]));
+      const highs = recentCandles.map((c: any) => parseFloat(c[2]));
+      const lows = recentCandles.map((c: any) => parseFloat(c[3]));
+      const volumes = recentCandles.map((c: any) => parseFloat(c[5]));
 
       const maxHigh = Math.max(...highs);
       const minLow = Math.min(...lows);
 
       // Check for high sweep with reversal
       if (currentPrice < maxHigh * 0.995) {
-        const avgVolume = volumes.reduce((a, b) => a + b, 0) / volumes.length;
-        const recentVolume = volumes.slice(-3).reduce((a, b) => a + b, 0) / 3;
+        const avgVolume = volumes.reduce((a: number, b: number) => a + b, 0) / volumes.length;
+        const recentVolume = volumes.slice(-3).reduce((a: number, b: number) => a + b, 0) / 3;
 
         liquidityGrabs.push({
           type: 'HIGH_SWEEP',
@@ -1907,8 +1924,8 @@ export const getEntrySignals = async (req: AuthRequest, res: Response): Promise<
 
       // Check for low sweep with reversal
       if (currentPrice > minLow * 1.005) {
-        const avgVolume = volumes.reduce((a, b) => a + b, 0) / volumes.length;
-        const recentVolume = volumes.slice(-3).reduce((a, b) => a + b, 0) / 3;
+        const avgVolume = volumes.reduce((a: number, b: number) => a + b, 0) / volumes.length;
+        const recentVolume = volumes.slice(-3).reduce((a: number, b: number) => a + b, 0) / 3;
 
         liquidityGrabs.push({
           type: 'LOW_SWEEP',
@@ -1925,7 +1942,7 @@ export const getEntrySignals = async (req: AuthRequest, res: Response): Promise<
     const volumeBreakouts = [];
     if (chart5m && chart5m.length > 10) {
       const recentCandles = chart5m.slice(-10);
-      const avgVolume = recentCandles.reduce((sum, c) => sum + parseFloat(c[5]), 0) / recentCandles.length;
+      const avgVolume = recentCandles.reduce((sum: number, c: any) => sum + parseFloat(c[5]), 0) / recentCandles.length;
       const lastCandle = recentCandles[recentCandles.length - 1];
       const lastVolume = parseFloat(lastCandle[5]);
 
@@ -2047,13 +2064,20 @@ export const getExitStrategies = async (req: AuthRequest, res: Response): Promis
     console.log(`🚪 Calculating exit strategies for ${normalizedSymbol}`);
 
     // Get required data
-    const [rtAnalysis, marketData, chart1m, chart5m, chart15m] = await Promise.all([
-      aiAnalysisService.generateRealTimeAnalysis(normalizedSymbol),
+    const [marketData, chart1m, chart5m, chart15m, orderBook] = await Promise.all([
       binanceService.getSymbolInfo(normalizedSymbol),
       binanceService.getKlines(normalizedSymbol, '1m', 100),
       binanceService.getKlines(normalizedSymbol, '5m', 50),
-      binanceService.getKlines(normalizedSymbol, '15m', 30)
+      binanceService.getKlines(normalizedSymbol, '15m', 30),
+      binanceService.getOrderBook(normalizedSymbol)
     ]);
+
+    // Generate real-time analysis with proper parameters
+    const rtAnalysis = await aiAnalysisService.generateRealTimeAnalysis(
+      marketData,
+      { '1m': chart1m, '5m': chart5m, '15m': chart15m },
+      orderBook
+    );
 
     const currentPrice = marketData?.price || 0;
     const consensus = rtAnalysis?.consensus || {};
@@ -2275,18 +2299,25 @@ export const getRiskAnalysis = async (req: AuthRequest, res: Response): Promise<
     }
 
     const normalizedSymbol = SymbolConverter.normalize(symbol);
-    const portfolioSymbols = Array.isArray(portfolio) ? portfolio :
+    const portfolioSymbols: string[] = Array.isArray(portfolio) ? portfolio.map((s: any) => String(s)) :
                             typeof portfolio === 'string' ? portfolio.split(',') :
                             ['BTCUSDT', 'ETHUSDT', 'ADAUSDT']; // Default portfolio
 
     console.log(`⚠️ Analyzing risk for ${normalizedSymbol} with portfolio:`, portfolioSymbols);
 
     // Get market data for main symbol and portfolio
-    const [rtAnalysis, marketData, ...portfolioData] = await Promise.all([
-      aiAnalysisService.generateRealTimeAnalysis(normalizedSymbol),
+    const [marketData, orderBook, ...portfolioData] = await Promise.all([
       binanceService.getSymbolInfo(normalizedSymbol),
+      binanceService.getOrderBook(normalizedSymbol),
       ...portfolioSymbols.slice(0, 5).map(sym => binanceService.getSymbolInfo(sym)) // Limit to 5 for performance
     ]);
+
+    // Generate real-time analysis with proper parameters
+    const rtAnalysis = await aiAnalysisService.generateRealTimeAnalysis(
+      marketData,
+      { '1d': [] }, // No short term data needed for risk analysis
+      orderBook
+    );
 
     const consensus = rtAnalysis?.consensus || {};
     const marketConditions = rtAnalysis?.marketConditions || {};
@@ -2483,20 +2514,27 @@ export const getPositionSizing = async (req: AuthRequest, res: Response): Promis
     console.log(`📏 Calculating position sizing for ${normalizedSymbol}`);
 
     // Get market data and volatility info
-    const [rtAnalysis, marketData, chartData] = await Promise.all([
-      aiAnalysisService.generateRealTimeAnalysis(normalizedSymbol),
+    const [marketData, chartData, orderBook] = await Promise.all([
       binanceService.getSymbolInfo(normalizedSymbol),
-      binanceService.getKlines(normalizedSymbol, '15m', 50)
+      binanceService.getKlines(normalizedSymbol, '15m', 50),
+      binanceService.getOrderBook(normalizedSymbol)
     ]);
+
+    // Generate real-time analysis with proper parameters
+    const rtAnalysis = await aiAnalysisService.generateRealTimeAnalysis(
+      marketData,
+      { '15m': chartData },
+      orderBook
+    );
 
     const currentPrice = entryPrice || marketData?.price || 0;
     const consensus = rtAnalysis?.consensus || {};
     const marketConditions = rtAnalysis?.marketConditions || {};
 
     // Calculate volatility from price data
-    const prices = chartData ? chartData.map(c => parseFloat(c[4])) : [];
+    const prices = chartData ? chartData.map((c: any) => parseFloat(c[4])) : [];
     const volatility = prices.length > 1 ?
-      Math.sqrt(prices.slice(1).reduce((sum, price, i) => {
+      Math.sqrt(prices.slice(1).reduce((sum: number, price: number, i: number) => {
         const return_ = Math.log(price / prices[i]);
         return sum + Math.pow(return_, 2);
       }, 0) / (prices.length - 1)) * Math.sqrt(252) : 0.2; // Annualized volatility

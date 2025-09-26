@@ -198,7 +198,7 @@ export default function VaRCalculator({
       // Fetch historical data for all symbols
       const dataPromises = symbols.map(async (symbol) => {
         const chartData = await marketApi.getChartData(symbol, '1d', 252); // 1 year of daily data
-        const klines = safeArray.get(safeObject.get(chartData, 'data.klines', []));
+        const klines = safeArray.getValue(safeObject.get(chartData, 'data.klines', [])) as any[];
         const prices = klines.map((candle: any[]) => parseFloat(candle[4])); // Close prices
 
         // Calculate daily returns

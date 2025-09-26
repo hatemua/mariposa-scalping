@@ -201,7 +201,7 @@ export default function CorrelationMatrix({
       // Fetch historical data for all symbols
       const dataPromises = symbols.map(async (symbol) => {
         const chartData = await marketApi.getChartData(symbol, timeframe, lookbackPeriods);
-        const klines = safeArray.get(safeObject.get(chartData, 'data.klines', []));
+        const klines = safeArray.getValue(safeObject.get(chartData, 'data.klines', [])) as any[];
         const prices = klines.map((candle: any[]) => parseFloat(candle[4])); // Close prices
         return { symbol, prices };
       });
