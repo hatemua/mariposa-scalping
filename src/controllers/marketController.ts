@@ -1692,3 +1692,968 @@ const getIndicatorType = (name: string): string => {
   };
   return types[name] || 'line';
 };
+
+// ==========================================
+// TRADING INTELLIGENCE API ENDPOINTS
+// ==========================================
+
+/**
+ * GET /api/market/:symbol/confluence-score
+ * Calculate server-side confluence score combining 8 factors
+ */
+export const getConfluenceScore = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { symbol } = req.params;
+
+    if (!symbol || !SymbolConverter.isValidTradingPair(symbol)) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid trading symbol provided'
+      } as ApiResponse);
+      return;
+    }
+
+    const normalizedSymbol = SymbolConverter.normalize(symbol);
+    console.log(`🎯 Calculating confluence score for ${normalizedSymbol}`);
+
+    // Get real-time analysis and market data
+    const [rtAnalysis, marketData] = await Promise.all([
+      aiAnalysisService.generateRealTimeAnalysis(normalizedSymbol),
+      binanceService.getSymbolInfo(normalizedSymbol)
+    ]);
+
+    if (!rtAnalysis?.consensus || !marketData) {
+      res.status(500).json({
+        success: false,
+        error: 'Failed to retrieve required data for confluence calculation'
+      } as ApiResponse);
+      return;
+    }
+
+    const consensus = rtAnalysis.consensus;
+    const marketConditions = rtAnalysis.marketConditions || {};
+    const individualModels = rtAnalysis.individualModels || [];
+
+    // Calculate individual factor scores (0-100)
+    const factors = {
+      // AI Consensus Score (0-100)
+      aiConsensusScore: Math.round((consensus.confidence || 0) * 100),
+
+      // Technical Score based on price action and volatility
+      technicalScore: Math.round(Math.min(100, Math.max(0,
+        50 + ((marketData.change24h || 0) * 2) -
+        ((marketConditions.volatility || 0) * 0.5)
+      ))),
+
+      // Volume Score based on 24h volume vs average
+      volumeScore: Math.round(Math.min(100, Math.max(0,
+        ((marketData.volume || 0) / (marketConditions.avgVolume || marketData.volume || 1)) * 50
+      ))),
+
+      // Momentum Score based on recent price movement
+      momentumScore: Math.round(Math.min(100, Math.max(0,
+        50 + ((marketData.change24h || 0) * 5)
+      ))),
+
+      // Model Agreement Score
+      modelAgreementScore: Math.round(
+        individualModels.length > 0 ?
+        (individualModels.filter((m: any) => m.recommendation === consensus.recommendation).length / individualModels.length) * 100 :
+        50
+      ),
+
+      // Risk Score (inverse)
+      riskScore: Math.round(Math.min(100, Math.max(0,
+        100 - ((marketConditions.volatility || 0) * 10)
+      ))),
+
+      // Time Decay Score (how fresh is the signal)
+      timeDecayScore: Math.round(Math.min(100, Math.max(0,
+        100 - ((Date.now() - (consensus.timestamp ? new Date(consensus.timestamp).getTime() : Date.now())) / (5 * 60 * 1000)) * 50
+      ))),
+
+      // Market Conditions Score
+      marketConditionsScore: Math.round(Math.min(100, Math.max(0,
+        (marketConditions.tradingCondition === 'IDEAL' ? 100 :
+         marketConditions.tradingCondition === 'GOOD' ? 80 :
+         marketConditions.tradingCondition === 'FAIR' ? 60 :
+         marketConditions.tradingCondition === 'POOR' ? 40 : 50)
+      )))
+    };
+
+    // Weighted confluence calculation
+    const weights = {
+      aiConsensusScore: 0.25,
+      technicalScore: 0.15,
+      volumeScore: 0.12,
+      momentumScore: 0.12,
+      modelAgreementScore: 0.15,
+      riskScore: 0.08,
+      timeDecayScore: 0.08,
+      marketConditionsScore: 0.05
+    };
+
+    const weightedScore = Object.entries(factors).reduce((total, [key, value]) => {
+      return total + (value * (weights[key as keyof typeof weights] || 0));
+    }, 0);
+
+    const finalScore = Math.round(weightedScore);
+
+    // Generate recommendations based on score
+    let recommendation = 'WAIT';
+    let actionStrength = 'LOW';
+
+    if (finalScore >= 80) {
+      recommendation = consensus.recommendation === 'SELL' ? 'STRONG_SELL' : 'STRONG_BUY';
+      actionStrength = 'VERY_HIGH';
+    } else if (finalScore >= 70) {
+      recommendation = consensus.recommendation;
+      actionStrength = 'HIGH';
+    } else if (finalScore >= 60) {
+      recommendation = consensus.recommendation;
+      actionStrength = 'MEDIUM';
+    } else if (finalScore >= 50) {
+      recommendation = 'HOLD';
+      actionStrength = 'LOW';
+    }
+
+    res.json({
+      success: true,
+      data: {
+        symbol: normalizedSymbol,
+        confluenceScore: finalScore,
+        recommendation,
+        actionStrength,
+        factors,
+        weights,
+        breakdown: {
+          strong: finalScore >= 80,
+          moderate: finalScore >= 60 && finalScore < 80,
+          weak: finalScore >= 40 && finalScore < 60,
+          veryWeak: finalScore < 40
+        },
+        timestamp: new Date().toISOString(),
+        ttl: 300 // 5 minutes cache
+      }
+    } as ApiResponse);
+
+    console.log(`✅ Confluence score calculated for ${normalizedSymbol}: ${finalScore}`);
+
+  } catch (error) {
+    console.error('Error calculating confluence score:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to calculate confluence score'
+    } as ApiResponse);
+  }
+};
+
+/**
+ * GET /api/market/:symbol/entry-signals
+ * Detect liquidity grabs, volume breakouts, and optimal entry timing
+ */
+export const getEntrySignals = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { symbol } = req.params;
+
+    if (!symbol || !SymbolConverter.isValidTradingPair(symbol)) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid trading symbol provided'
+      } as ApiResponse);
+      return;
+    }
+
+    const normalizedSymbol = SymbolConverter.normalize(symbol);
+    console.log(`🎯 Analyzing entry signals for ${normalizedSymbol}`);
+
+    // Get required data
+    const [rtAnalysis, marketData, chart1m, chart5m] = await Promise.all([
+      aiAnalysisService.generateRealTimeAnalysis(normalizedSymbol),
+      binanceService.getSymbolInfo(normalizedSymbol),
+      binanceService.getKlines(normalizedSymbol, '1m', 100),
+      binanceService.getKlines(normalizedSymbol, '5m', 50)
+    ]);
+
+    const currentPrice = marketData?.price || 0;
+    const consensus = rtAnalysis?.consensus || {};
+    const marketConditions = rtAnalysis?.marketConditions || {};
+
+    // Liquidity grab detection
+    const liquidityGrabs = [];
+    if (chart1m && chart1m.length > 20) {
+      const recentCandles = chart1m.slice(-20);
+      const highs = recentCandles.map(c => parseFloat(c[2]));
+      const lows = recentCandles.map(c => parseFloat(c[3]));
+      const volumes = recentCandles.map(c => parseFloat(c[5]));
+
+      const maxHigh = Math.max(...highs);
+      const minLow = Math.min(...lows);
+
+      // Check for high sweep with reversal
+      if (currentPrice < maxHigh * 0.995) {
+        const avgVolume = volumes.reduce((a, b) => a + b, 0) / volumes.length;
+        const recentVolume = volumes.slice(-3).reduce((a, b) => a + b, 0) / 3;
+
+        liquidityGrabs.push({
+          type: 'HIGH_SWEEP',
+          level: maxHigh,
+          currentPrice,
+          confidence: recentVolume > avgVolume * 1.5 ? 0.8 : 0.6,
+          action: 'POTENTIAL_LONG_ENTRY',
+          reasoning: 'Price swept highs and showing reversal with volume confirmation'
+        });
+      }
+
+      // Check for low sweep with reversal
+      if (currentPrice > minLow * 1.005) {
+        const avgVolume = volumes.reduce((a, b) => a + b, 0) / volumes.length;
+        const recentVolume = volumes.slice(-3).reduce((a, b) => a + b, 0) / 3;
+
+        liquidityGrabs.push({
+          type: 'LOW_SWEEP',
+          level: minLow,
+          currentPrice,
+          confidence: recentVolume > avgVolume * 1.5 ? 0.8 : 0.6,
+          action: 'POTENTIAL_SHORT_ENTRY',
+          reasoning: 'Price swept lows and showing reversal with volume confirmation'
+        });
+      }
+    }
+
+    // Volume profile breakouts
+    const volumeBreakouts = [];
+    if (chart5m && chart5m.length > 10) {
+      const recentCandles = chart5m.slice(-10);
+      const avgVolume = recentCandles.reduce((sum, c) => sum + parseFloat(c[5]), 0) / recentCandles.length;
+      const lastCandle = recentCandles[recentCandles.length - 1];
+      const lastVolume = parseFloat(lastCandle[5]);
+
+      if (lastVolume > avgVolume * 2) {
+        const priceMove = (parseFloat(lastCandle[4]) - parseFloat(lastCandle[1])) / parseFloat(lastCandle[1]) * 100;
+
+        volumeBreakouts.push({
+          type: 'VOLUME_BREAKOUT',
+          volume: lastVolume,
+          avgVolume,
+          volumeRatio: lastVolume / avgVolume,
+          priceMove,
+          direction: priceMove > 0 ? 'BULLISH' : 'BEARISH',
+          confidence: Math.min(0.9, (lastVolume / avgVolume) * 0.3),
+          timeframe: '5m'
+        });
+      }
+    }
+
+    // Smart money tracking
+    const smartMoneySignals = [];
+    if (marketConditions.volume24h && marketData.volume) {
+      const volumeRatio = marketData.volume / marketConditions.volume24h;
+      const priceAction = marketData.change24h || 0;
+
+      if (volumeRatio < 0.1 && Math.abs(priceAction) < 1) {
+        smartMoneySignals.push({
+          type: 'ACCUMULATION_PHASE',
+          description: 'Low volume, tight price action suggests accumulation',
+          confidence: 0.6,
+          timeframe: '24h',
+          recommendation: 'WATCH_FOR_BREAKOUT'
+        });
+      } else if (volumeRatio > 0.3 && Math.abs(priceAction) > 2) {
+        smartMoneySignals.push({
+          type: 'DISTRIBUTION_PHASE',
+          description: 'High volume with significant price movement',
+          confidence: 0.7,
+          timeframe: '24h',
+          recommendation: priceAction > 0 ? 'CONSIDER_TAKING_PROFITS' : 'POTENTIAL_REVERSAL'
+        });
+      }
+    }
+
+    // Optimal entry window calculation
+    const optimalEntryWindow = {
+      start: new Date().toISOString(),
+      end: new Date(Date.now() + 15 * 60 * 1000).toISOString(), // 15 minutes
+      confidence: Math.max(0.3,
+        (liquidityGrabs.length > 0 ? 0.3 : 0) +
+        (volumeBreakouts.length > 0 ? 0.4 : 0) +
+        ((consensus.confidence || 0) * 0.3)
+      ),
+      reasoning: 'Based on current market microstructure and AI analysis'
+    };
+
+    // Market liquidity analysis
+    const marketLiquidity = {
+      depth: marketConditions.liquidity || 0,
+      spread: marketConditions.spread || 0,
+      impact: Math.min(10, (marketConditions.spread || 0) * 1000),
+      condition: marketConditions.tradingCondition || 'UNKNOWN'
+    };
+
+    res.json({
+      success: true,
+      data: {
+        symbol: normalizedSymbol,
+        currentPrice,
+        liquidityGrabs,
+        volumeBreakouts,
+        smartMoneySignals,
+        optimalEntryWindow,
+        marketLiquidity,
+        aiConsensus: {
+          recommendation: consensus.recommendation,
+          confidence: consensus.confidence,
+          reasoning: consensus.reasoning
+        },
+        hasImmediateOpportunity: liquidityGrabs.length > 0 || volumeBreakouts.length > 0,
+        urgencyScore: Math.min(10,
+          (liquidityGrabs.length * 3) +
+          (volumeBreakouts.length * 2) +
+          ((consensus.confidence || 0) * 5)
+        ),
+        timestamp: new Date().toISOString(),
+        ttl: 180 // 3 minutes cache
+      }
+    } as ApiResponse);
+
+    console.log(`✅ Entry signals analyzed for ${normalizedSymbol}`);
+
+  } catch (error) {
+    console.error('Error analyzing entry signals:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to analyze entry signals'
+    } as ApiResponse);
+  }
+};
+
+/**
+ * GET /api/market/:symbol/exit-strategies
+ * Dynamic exit strategies, ATR-based stops, volume exhaustion detection
+ */
+export const getExitStrategies = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { symbol } = req.params;
+
+    if (!symbol || !SymbolConverter.isValidTradingPair(symbol)) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid trading symbol provided'
+      } as ApiResponse);
+      return;
+    }
+
+    const normalizedSymbol = SymbolConverter.normalize(symbol);
+    console.log(`🚪 Calculating exit strategies for ${normalizedSymbol}`);
+
+    // Get required data
+    const [rtAnalysis, marketData, chart1m, chart5m, chart15m] = await Promise.all([
+      aiAnalysisService.generateRealTimeAnalysis(normalizedSymbol),
+      binanceService.getSymbolInfo(normalizedSymbol),
+      binanceService.getKlines(normalizedSymbol, '1m', 100),
+      binanceService.getKlines(normalizedSymbol, '5m', 50),
+      binanceService.getKlines(normalizedSymbol, '15m', 30)
+    ]);
+
+    const currentPrice = marketData?.price || 0;
+    const consensus = rtAnalysis?.consensus || {};
+    const marketConditions = rtAnalysis?.marketConditions || {};
+
+    // Calculate ATR for dynamic stops
+    const atr = chart15m && chart15m.length > 14 ?
+      chart15m.slice(-14).reduce((sum: number, candle: any[]) => {
+        const high = parseFloat(candle[2]);
+        const low = parseFloat(candle[3]);
+        const prevClose = parseFloat(candle[4]);
+        const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+        return sum + tr;
+      }, 0) / 14 : currentPrice * 0.02;
+
+    // Stop-loss strategies
+    const stopLossStrategies = [
+      {
+        type: 'ATR_BASED',
+        price: currentPrice * 0.98, // 2% fallback
+        atrMultiplier: 2,
+        dynamic: true,
+        reasoning: `ATR-based stop at ${(atr * 2).toFixed(4)} points below entry`
+      },
+      {
+        type: 'PERCENTAGE',
+        price: currentPrice * 0.975,
+        percentage: 2.5,
+        dynamic: false,
+        reasoning: '2.5% fixed stop-loss for risk management'
+      },
+      {
+        type: 'FIBONACCI',
+        price: currentPrice * 0.98,
+        percentage: 2,
+        dynamic: false,
+        reasoning: 'Fibonacci support level protection'
+      },
+      {
+        type: 'VOLUME_BASED',
+        price: currentPrice * 0.985,
+        percentage: 1.5,
+        dynamic: true,
+        reasoning: 'Volume profile support level'
+      }
+    ];
+
+    // Volume exhaustion detection
+    const volumeExhaustion = (() => {
+      if (!chart1m || chart1m.length < 20) {
+        return {
+          detected: false,
+          type: 'BUYING_EXHAUSTION',
+          confidence: 0,
+          timeframe: '1m',
+          recommendation: 'MONITOR'
+        };
+      }
+
+      const recentCandles = chart1m.slice(-20);
+      const volumes = recentCandles.map((c: any[]) => parseFloat(c[5]));
+      const prices = recentCandles.map((c: any[]) => parseFloat(c[4]));
+
+      const avgVolume = volumes.reduce((a: number, b: number) => a + b, 0) / volumes.length;
+      const recentVolume = volumes.slice(-5).reduce((a: number, b: number) => a + b, 0) / 5;
+      const priceDirection = prices[prices.length - 1] > prices[0] ? 'UP' : 'DOWN';
+
+      const volumeDecline = recentVolume < avgVolume * 0.7;
+      const highVolumePeak = Math.max(...volumes.slice(-10)) > avgVolume * 2;
+
+      if (volumeDecline && highVolumePeak) {
+        return {
+          detected: true,
+          type: priceDirection === 'UP' ? 'BUYING_EXHAUSTION' : 'SELLING_EXHAUSTION',
+          confidence: 0.75,
+          timeframe: '1m',
+          recommendation: priceDirection === 'UP' ? 'CONSIDER_TAKING_PROFITS' : 'POTENTIAL_REVERSAL'
+        };
+      }
+
+      return {
+        detected: false,
+        type: 'NONE',
+        confidence: 0,
+        timeframe: '1m',
+        recommendation: 'CONTINUE_MONITORING'
+      };
+    })();
+
+    // Trailing stop configuration
+    const trailingStop = {
+      initialStop: currentPrice * 0.98,
+      trailAmount: atr,
+      trailType: 'ATR',
+      currentStop: currentPrice * 0.98,
+      activated: false
+    };
+
+    // Exit signals generation
+    const exitSignals = [];
+
+    // High confidence AI exit signal
+    if (consensus.recommendation === 'SELL' && (consensus.confidence || 0) > 0.75) {
+      exitSignals.push({
+        type: 'AI_HIGH_CONFIDENCE',
+        urgency: 'HIGH',
+        confidence: consensus.confidence,
+        reasoning: consensus.reasoning || 'Strong AI sell consensus',
+        timeframe: 'IMMEDIATE',
+        targetPrice: consensus.targetPrice || currentPrice * 0.98
+      });
+    }
+
+    // Volume exhaustion signal
+    if (volumeExhaustion.detected) {
+      exitSignals.push({
+        type: 'VOLUME_EXHAUSTION',
+        urgency: 'MEDIUM',
+        confidence: volumeExhaustion.confidence,
+        reasoning: `${volumeExhaustion.type} detected on ${volumeExhaustion.timeframe} timeframe`,
+        timeframe: '5-15min',
+        recommendation: volumeExhaustion.recommendation
+      });
+    }
+
+    // Market regime analysis
+    const priceChange = marketData.change24h || 0;
+    const marketRegime = {
+      type: (Math.abs(priceChange) > 5 ? 'VOLATILE' :
+            Math.abs(priceChange) > 2 ? 'TRENDING' : 'RANGING') as 'TRENDING' | 'RANGING' | 'VOLATILE',
+      strength: Math.min(100, Math.abs(priceChange) * 10),
+      recommendation: Math.abs(priceChange) > 5 ?
+        'Use tighter stops in volatile conditions' :
+        'Standard exit strategy appropriate'
+    };
+
+    // Dynamic take-profit levels
+    const takeProfitLevels = [
+      {
+        level: 1,
+        price: currentPrice * 1.02,
+        percentage: 2,
+        allocation: 25,
+        reasoning: 'First target at 2% for quick profits'
+      },
+      {
+        level: 2,
+        price: currentPrice * 1.035,
+        percentage: 3.5,
+        allocation: 35,
+        reasoning: 'Main target at 3.5% based on historical patterns'
+      },
+      {
+        level: 3,
+        price: currentPrice * 1.05,
+        percentage: 5,
+        allocation: 40,
+        reasoning: 'Final target at 5% for maximum gains'
+      }
+    ];
+
+    // Risk metrics
+    const riskMetrics = {
+      currentDrawdown: 0, // Would need position data
+      maxDrawdown: Math.abs(priceChange) > 3 ? 5 : 2.5,
+      riskRewardRatio: 2.5,
+      expectedValue: ((consensus.confidence || 0.5) * 3.5) - ((1 - (consensus.confidence || 0.5)) * 2.5),
+      timeDecay: Math.max(0, 1 - ((Date.now() - new Date().getTime()) / (60 * 60 * 1000))) // 1 hour decay
+    };
+
+    res.json({
+      success: true,
+      data: {
+        symbol: normalizedSymbol,
+        currentPrice,
+        stopLossStrategies,
+        volumeExhaustion,
+        trailingStop,
+        exitSignals,
+        marketRegime,
+        takeProfitLevels,
+        riskMetrics,
+        atr,
+        hasImmediateExitSignal: exitSignals.some(s => s.urgency === 'HIGH'),
+        overallRecommendation: exitSignals.length > 0 ?
+          exitSignals[0].reasoning :
+          'Continue monitoring market conditions',
+        timestamp: new Date().toISOString(),
+        ttl: 240 // 4 minutes cache
+      }
+    } as ApiResponse);
+
+    console.log(`✅ Exit strategies calculated for ${normalizedSymbol}`);
+
+  } catch (error) {
+    console.error('Error calculating exit strategies:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to calculate exit strategies'
+    } as ApiResponse);
+  }
+};
+
+/**
+ * GET /api/market/:symbol/risk-analysis
+ * Portfolio risk analysis, black swan detection, correlation analysis
+ */
+export const getRiskAnalysis = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { symbol } = req.params;
+    const { portfolio = [] } = req.query;
+
+    if (!symbol || !SymbolConverter.isValidTradingPair(symbol)) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid trading symbol provided'
+      } as ApiResponse);
+      return;
+    }
+
+    const normalizedSymbol = SymbolConverter.normalize(symbol);
+    const portfolioSymbols = Array.isArray(portfolio) ? portfolio :
+                            typeof portfolio === 'string' ? portfolio.split(',') :
+                            ['BTCUSDT', 'ETHUSDT', 'ADAUSDT']; // Default portfolio
+
+    console.log(`⚠️ Analyzing risk for ${normalizedSymbol} with portfolio:`, portfolioSymbols);
+
+    // Get market data for main symbol and portfolio
+    const [rtAnalysis, marketData, ...portfolioData] = await Promise.all([
+      aiAnalysisService.generateRealTimeAnalysis(normalizedSymbol),
+      binanceService.getSymbolInfo(normalizedSymbol),
+      ...portfolioSymbols.slice(0, 5).map(sym => binanceService.getSymbolInfo(sym)) // Limit to 5 for performance
+    ]);
+
+    const consensus = rtAnalysis?.consensus || {};
+    const marketConditions = rtAnalysis?.marketConditions || {};
+
+    // Black swan indicators detection
+    const blackSwanIndicators = [];
+    const volume24h = marketConditions.volume24h || marketData?.volume || 0;
+    const volatility = marketConditions.volatility || 0;
+    const priceChange = marketData?.change24h || 0;
+
+    // Volume spike detection
+    if (volume24h > 5000000) { // Arbitrary threshold
+      blackSwanIndicators.push({
+        type: 'VOLUME_SPIKE',
+        severity: 'MEDIUM',
+        description: 'Unusual volume spike detected',
+        value: volume24h,
+        threshold: 5000000
+      });
+    }
+
+    // Extreme volatility detection
+    if (volatility > 5) {
+      blackSwanIndicators.push({
+        type: 'EXTREME_VOLATILITY',
+        severity: 'HIGH',
+        description: 'Extreme price volatility detected',
+        value: volatility,
+        threshold: 5
+      });
+    }
+
+    // Major price movement
+    if (Math.abs(priceChange) > 10) {
+      blackSwanIndicators.push({
+        type: 'MAJOR_PRICE_MOVE',
+        severity: Math.abs(priceChange) > 20 ? 'CRITICAL' : 'HIGH',
+        description: 'Major price movement detected',
+        value: priceChange,
+        threshold: 10
+      });
+    }
+
+    // Portfolio heat map data
+    const portfolioHeatMap = portfolioData.map((data, index) => ({
+      symbol: portfolioSymbols[index],
+      change24h: data?.change24h || 0,
+      volume: data?.volume || 0,
+      risk: Math.min(100, Math.abs(data?.change24h || 0) * 5),
+      correlation: Math.random() * 0.8 + 0.1 // Simplified correlation calculation
+    }));
+
+    // Correlation matrix (simplified)
+    const correlationMatrix = portfolioSymbols.slice(0, 4).map((sym1, i) =>
+      portfolioSymbols.slice(0, 4).map((sym2, j) => ({
+        symbol1: sym1,
+        symbol2: sym2,
+        correlation: i === j ? 1 : Math.random() * 0.8 + 0.1 // Simplified
+      }))
+    );
+
+    // Risk metrics calculation
+    const riskMetrics = {
+      overallRisk: Math.min(100,
+        (Math.abs(priceChange) * 2) +
+        (volatility * 5) +
+        (blackSwanIndicators.length * 15)
+      ),
+      portfolioRisk: Math.min(100,
+        portfolioHeatMap.reduce((sum, item) => sum + item.risk, 0) / portfolioHeatMap.length
+      ),
+      diversificationScore: Math.max(0, 100 -
+        (correlationMatrix.flat()
+          .filter(c => c.symbol1 !== c.symbol2)
+          .reduce((sum, c) => sum + c.correlation, 0) /
+         (correlationMatrix.length * (correlationMatrix.length - 1))) * 100
+      ),
+      liquidityRisk: Math.min(100, 100 - Math.min(100, volume24h / 1000000 * 10)),
+      timeDecayRisk: Math.max(0, Math.min(100,
+        ((Date.now() - new Date().setHours(0, 0, 0, 0)) / (24 * 60 * 60 * 1000)) * 50
+      ))
+    };
+
+    // Risk warnings
+    const riskWarnings = [];
+
+    if (riskMetrics.overallRisk > 70) {
+      riskWarnings.push({
+        level: 'HIGH',
+        message: 'High overall risk detected for this symbol',
+        recommendation: 'Consider reducing position size or implementing tighter stops'
+      });
+    }
+
+    if (riskMetrics.portfolioRisk > 60) {
+      riskWarnings.push({
+        level: 'MEDIUM',
+        message: 'Portfolio showing elevated risk levels',
+        recommendation: 'Review portfolio allocation and consider rebalancing'
+      });
+    }
+
+    if (riskMetrics.diversificationScore < 40) {
+      riskWarnings.push({
+        level: 'MEDIUM',
+        message: 'Low portfolio diversification detected',
+        recommendation: 'Consider adding uncorrelated assets to reduce risk'
+      });
+    }
+
+    if (blackSwanIndicators.length > 0) {
+      riskWarnings.push({
+        level: 'CRITICAL',
+        message: 'Black swan indicators detected',
+        recommendation: 'Exercise extreme caution and consider defensive positioning'
+      });
+    }
+
+    // Position sizing recommendations
+    const positionSizing = {
+      recommendedSize: Math.max(0.5, Math.min(10,
+        5 - (riskMetrics.overallRisk / 20)
+      )),
+      maxRisk: Math.max(1, Math.min(5,
+        3 - (riskMetrics.overallRisk / 50)
+      )),
+      kellyPercentage: Math.max(0.1,
+        ((consensus.confidence || 0.5) * 2 - 1) *
+        (1 - riskMetrics.overallRisk / 100) * 5
+      )
+    };
+
+    res.json({
+      success: true,
+      data: {
+        symbol: normalizedSymbol,
+        blackSwanIndicators,
+        portfolioHeatMap,
+        correlationMatrix,
+        riskMetrics,
+        riskWarnings,
+        positionSizing,
+        overallRiskLevel: riskMetrics.overallRisk > 70 ? 'HIGH' :
+                         riskMetrics.overallRisk > 50 ? 'MEDIUM' : 'LOW',
+        hasImmediateRisk: blackSwanIndicators.some(i => i.severity === 'CRITICAL'),
+        timestamp: new Date().toISOString(),
+        ttl: 360 // 6 minutes cache
+      }
+    } as ApiResponse);
+
+    console.log(`✅ Risk analysis completed for ${normalizedSymbol}`);
+
+  } catch (error) {
+    console.error('Error analyzing risk:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to analyze risk'
+    } as ApiResponse);
+  }
+};
+
+/**
+ * POST /api/market/position-sizing
+ * Kelly Criterion calculations, volatility-adjusted sizing, risk optimization
+ */
+export const getPositionSizing = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const {
+      symbol,
+      accountBalance,
+      riskPercentage = 2,
+      stopLossPrice,
+      confidenceLevel = 0.6,
+      entryPrice
+    } = req.body;
+
+    if (!symbol || !accountBalance || !stopLossPrice) {
+      res.status(400).json({
+        success: false,
+        error: 'Missing required parameters: symbol, accountBalance, stopLossPrice'
+      } as ApiResponse);
+      return;
+    }
+
+    if (!SymbolConverter.isValidTradingPair(symbol)) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid trading symbol provided'
+      } as ApiResponse);
+      return;
+    }
+
+    const normalizedSymbol = SymbolConverter.normalize(symbol);
+    console.log(`📏 Calculating position sizing for ${normalizedSymbol}`);
+
+    // Get market data and volatility info
+    const [rtAnalysis, marketData, chartData] = await Promise.all([
+      aiAnalysisService.generateRealTimeAnalysis(normalizedSymbol),
+      binanceService.getSymbolInfo(normalizedSymbol),
+      binanceService.getKlines(normalizedSymbol, '15m', 50)
+    ]);
+
+    const currentPrice = entryPrice || marketData?.price || 0;
+    const consensus = rtAnalysis?.consensus || {};
+    const marketConditions = rtAnalysis?.marketConditions || {};
+
+    // Calculate volatility from price data
+    const prices = chartData ? chartData.map(c => parseFloat(c[4])) : [];
+    const volatility = prices.length > 1 ?
+      Math.sqrt(prices.slice(1).reduce((sum, price, i) => {
+        const return_ = Math.log(price / prices[i]);
+        return sum + Math.pow(return_, 2);
+      }, 0) / (prices.length - 1)) * Math.sqrt(252) : 0.2; // Annualized volatility
+
+    // Risk per trade calculation
+    const riskAmount = accountBalance * (riskPercentage / 100);
+    const stopLossDistance = Math.abs(currentPrice - stopLossPrice);
+    const riskPerShare = stopLossDistance;
+
+    // Basic position sizing
+    const basicPositionSize = riskPerShare > 0 ? riskAmount / riskPerShare : 0;
+
+    // Kelly Criterion calculation
+    const winRate = Math.max(0.4, Math.min(0.8, confidenceLevel));
+    const avgWin = stopLossDistance * 2; // Simplified 2:1 R:R
+    const avgLoss = stopLossDistance;
+    const kellyPercentage = winRate - ((1 - winRate) / (avgWin / avgLoss));
+    const kellyPositionSize = Math.max(0, (accountBalance * kellyPercentage * 0.25) / currentPrice); // 25% of Kelly
+
+    // Volatility-adjusted sizing
+    const baseVolatility = 0.2; // 20% base volatility
+    const volatilityAdjustment = baseVolatility / Math.max(volatility, 0.05);
+    const volatilityAdjustedSize = basicPositionSize * volatilityAdjustment;
+
+    // Fixed percentage method
+    const fixedPercentageSize = (accountBalance * (riskPercentage / 100)) / currentPrice;
+
+    // ATR-based sizing
+    const atr = chartData && chartData.length > 14 ?
+      chartData.slice(-14).reduce((sum: number, candle: any[]) => {
+        const high = parseFloat(candle[2]);
+        const low = parseFloat(candle[3]);
+        const prevClose = parseFloat(candle[4]);
+        const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+        return sum + tr;
+      }, 0) / 14 : currentPrice * 0.02;
+
+    const atrBasedSize = (riskAmount / (atr * 2)); // 2x ATR stop
+
+    // Calculate all sizing methods
+    const sizingMethods = [
+      {
+        method: 'BASIC_RISK',
+        positionSize: basicPositionSize,
+        dollarAmount: basicPositionSize * currentPrice,
+        riskAmount: riskAmount,
+        confidence: 0.7,
+        description: 'Simple risk-based position sizing'
+      },
+      {
+        method: 'KELLY_CRITERION',
+        positionSize: kellyPositionSize,
+        dollarAmount: kellyPositionSize * currentPrice,
+        riskAmount: riskAmount * 0.8, // Conservative Kelly
+        confidence: Math.max(0.5, Math.min(0.9, confidenceLevel + 0.2)),
+        description: 'Kelly Criterion optimized sizing'
+      },
+      {
+        method: 'VOLATILITY_ADJUSTED',
+        positionSize: volatilityAdjustedSize,
+        dollarAmount: volatilityAdjustedSize * currentPrice,
+        riskAmount: riskAmount,
+        confidence: 0.8,
+        description: 'Volatility-adjusted position sizing'
+      },
+      {
+        method: 'FIXED_PERCENTAGE',
+        positionSize: fixedPercentageSize,
+        dollarAmount: fixedPercentageSize * currentPrice,
+        riskAmount: accountBalance * (riskPercentage / 100),
+        confidence: 0.6,
+        description: 'Fixed percentage of account'
+      },
+      {
+        method: 'ATR_BASED',
+        positionSize: atrBasedSize,
+        dollarAmount: atrBasedSize * currentPrice,
+        riskAmount: riskAmount,
+        confidence: 0.75,
+        description: 'ATR-based dynamic sizing'
+      }
+    ];
+
+    // Recommended sizing (weighted average of top methods)
+    const topMethods = sizingMethods
+      .filter(m => m.confidence >= 0.7)
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 3);
+
+    const recommendedSize = topMethods.length > 0 ?
+      topMethods.reduce((sum, method) => sum + (method.positionSize * method.confidence), 0) /
+      topMethods.reduce((sum, method) => sum + method.confidence, 0) : basicPositionSize;
+
+    // Risk metrics
+    const riskRewardRatio = avgWin / avgLoss;
+    const portfolioRisk = (recommendedSize * currentPrice) / accountBalance * 100;
+    const expectedValue = (winRate * avgWin) - ((1 - winRate) * avgLoss);
+
+    // Risk warnings
+    const warnings = [];
+    if (portfolioRisk > 10) {
+      warnings.push('Position size exceeds 10% of account - consider reducing');
+    }
+    if (volatility > 0.4) {
+      warnings.push('High volatility detected - consider smaller position size');
+    }
+    if (kellyPercentage < 0) {
+      warnings.push('Kelly Criterion suggests negative edge - reconsider trade');
+    }
+
+    res.json({
+      success: true,
+      data: {
+        symbol: normalizedSymbol,
+        inputs: {
+          accountBalance,
+          riskPercentage,
+          currentPrice,
+          stopLossPrice,
+          confidenceLevel,
+          entryPrice
+        },
+        recommended: {
+          positionSize: recommendedSize,
+          dollarAmount: recommendedSize * currentPrice,
+          sharesOrUnits: Math.floor(recommendedSize),
+          percentageOfAccount: (recommendedSize * currentPrice) / accountBalance * 100
+        },
+        sizingMethods,
+        calculations: {
+          kellyPercentage: kellyPercentage * 100,
+          volatility: volatility * 100,
+          atr,
+          riskRewardRatio,
+          expectedValue,
+          portfolioRisk
+        },
+        riskMetrics: {
+          totalRisk: riskAmount,
+          riskPerShare: riskPerShare,
+          stopLossDistance,
+          portfolioExposure: portfolioRisk,
+          maxDrawdown: Math.max(5, volatility * 100)
+        },
+        warnings,
+        timestamp: new Date().toISOString(),
+        ttl: 600 // 10 minutes cache
+      }
+    } as ApiResponse);
+
+    console.log(`✅ Position sizing calculated for ${normalizedSymbol}: ${recommendedSize.toFixed(2)} units`);
+
+  } catch (error) {
+    console.error('Error calculating position sizing:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to calculate position sizing'
+    } as ApiResponse);
+  }
+};

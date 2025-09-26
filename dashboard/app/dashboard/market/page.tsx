@@ -32,10 +32,18 @@ import { PageErrorBoundary, SectionErrorBoundary } from '@/components/ErrorBound
 import LLMAnalysisPanel from '@/components/LLMAnalysisPanel';
 import TechnicalIndicatorControls from '@/components/TechnicalIndicatorControls';
 import TokenAnalysisGrid from '@/components/TokenAnalysisGrid';
+import ConfluenceScorePanel from '@/components/trading-intelligence/ConfluenceScorePanel';
+import SmartEntrySignals from '@/components/trading-intelligence/SmartEntrySignals';
+import ExitStrategyPanel from '@/components/trading-intelligence/ExitStrategyPanel';
+import RiskMonitorDashboard from '@/components/trading-intelligence/RiskMonitorDashboard';
+import PositionSizingCalculator from '@/components/trading-intelligence/PositionSizingCalculator';
+import AdvancedRiskManager from '@/components/trading-intelligence/AdvancedRiskManager';
+import PortfolioHeatMap from '@/components/trading-intelligence/PortfolioHeatMap';
+import CorrelationMatrix from '@/components/trading-intelligence/CorrelationMatrix';
 
 export default function MarketPage() {
   const [selectedSymbol, setSelectedSymbol] = useState('BTCUSDT');
-  const [viewMode, setViewMode] = useState<'analysis' | 'grid' | 'chart'>('analysis');
+  const [viewMode, setViewMode] = useState<'analysis' | 'grid' | 'chart' | 'intelligence' | 'risk_manager'>('analysis');
   const [showIndicators, setShowIndicators] = useState(false);
   const [showLLMPanel, setShowLLMPanel] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -126,6 +134,28 @@ export default function MarketPage() {
                   <TrendingUp className="h-4 w-4 mr-1 inline" />
                   Chart
                 </button>
+                <button
+                  onClick={() => setViewMode('intelligence')}
+                  className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                    viewMode === 'intelligence'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  <Brain className="h-4 w-4 mr-1 inline" />
+                  Intelligence
+                </button>
+                <button
+                  onClick={() => setViewMode('risk_manager')}
+                  className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                    viewMode === 'risk_manager'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  <Settings className="h-4 w-4 mr-1 inline" />
+                  Risk Manager
+                </button>
               </div>
 
               {/* Controls */}
@@ -197,6 +227,132 @@ export default function MarketPage() {
                   />
                 </div>
               </SectionErrorBoundary>
+            )}
+
+            {viewMode === 'intelligence' && (
+              <div className="space-y-6">
+                {/* Symbol Selector for Intelligence */}
+                <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Brain className="h-5 w-5 text-purple-600" />
+                      <h3 className="text-lg font-semibold text-gray-900">Trading Intelligence Suite</h3>
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      Current: <span className="font-medium text-purple-600">{selectedSymbol}</span>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-3 md:grid-cols-6 lg:grid-cols-9 gap-2">
+                    {[
+                      'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
+                      'MATICUSDT', 'LINKUSDT', 'UNIUSDT', 'AVAXUSDT', 'DOTUSDT', 'LTCUSDT',
+                      'BNBUSDT', 'XRPUSDT', 'SHIBUSDT', 'ATOMUSDT', 'NEARUSDT', 'FTMUSDT'
+                    ].map(symbol => (
+                      <button
+                        key={symbol}
+                        onClick={() => setSelectedSymbol(symbol)}
+                        className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                          selectedSymbol === symbol
+                            ? 'bg-purple-600 text-white shadow-md'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        {symbol.replace('USDT', '')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Top Row: Confluence Score + Risk Monitor + Position Sizing */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <SectionErrorBoundary>
+                    <ConfluenceScorePanel
+                      symbol={selectedSymbol}
+                      autoRefresh={true}
+                      refreshInterval={30000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+
+                  <SectionErrorBoundary>
+                    <RiskMonitorDashboard
+                      symbol={selectedSymbol}
+                      portfolioSymbols={['BTCUSDT', 'ETHUSDT', 'SOLUSDT']}
+                      autoRefresh={true}
+                      refreshInterval={5000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+
+                  <SectionErrorBoundary>
+                    <PositionSizingCalculator
+                      symbol={selectedSymbol}
+                      accountBalance={10000}
+                      riskPerTrade={2}
+                      autoRefresh={true}
+                      refreshInterval={30000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+                </div>
+
+                {/* Bottom Row: Entry Signals + Exit Strategy */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <SectionErrorBoundary>
+                    <SmartEntrySignals
+                      symbol={selectedSymbol}
+                      autoRefresh={true}
+                      refreshInterval={15000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+
+                  <SectionErrorBoundary>
+                    <ExitStrategyPanel
+                      symbol={selectedSymbol}
+                      position={{
+                        side: 'LONG',
+                        entryPrice: 0, // Would be from actual position data
+                        size: 0,
+                        entryTime: new Date().toISOString()
+                      }}
+                      autoRefresh={true}
+                      refreshInterval={10000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+                </div>
+
+                {/* Info Panel */}
+                <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-xl p-6">
+                  <div className="flex items-center gap-3 mb-4">
+                    <Brain className="h-6 w-6 text-purple-600" />
+                    <h3 className="text-lg font-semibold text-purple-900">Professional Trading Intelligence</h3>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <div className="font-medium text-purple-800">Confluence Scoring</div>
+                      <div className="text-purple-600">Multi-factor analysis for entry confidence</div>
+                    </div>
+                    <div>
+                      <div className="font-medium text-purple-800">Smart Entry Signals</div>
+                      <div className="text-purple-600">Liquidity grabs & volume breakout detection</div>
+                    </div>
+                    <div>
+                      <div className="font-medium text-purple-800">Dynamic Exit Strategy</div>
+                      <div className="text-purple-600">Adaptive take-profits & trailing stops</div>
+                    </div>
+                    <div>
+                      <div className="font-medium text-purple-800">Risk Management</div>
+                      <div className="text-purple-600">Real-time risk monitoring & position sizing</div>
+                    </div>
+                  </div>
+                  <div className="mt-4 text-xs text-purple-700">
+                    ⚡ All components update in real-time • Built for professional crypto traders
+                  </div>
+                </div>
+              </div>
             )}
 
             {viewMode === 'analysis' && (
@@ -298,6 +454,152 @@ export default function MarketPage() {
                       className="w-full"
                     />
                   </SectionErrorBoundary>
+                </div>
+              </div>
+            )}
+
+            {viewMode === 'risk_manager' && (
+              <div className="space-y-6">
+                {/* Symbol Selector for Risk Manager */}
+                <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Settings className="h-5 w-5 text-purple-600" />
+                      <h3 className="text-lg font-semibold text-gray-900">Advanced Risk Management Suite</h3>
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      Primary Asset: <span className="font-medium text-purple-600">{selectedSymbol}</span>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-3 md:grid-cols-6 lg:grid-cols-9 gap-2">
+                    {[
+                      'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
+                      'MATICUSDT', 'LINKUSDT', 'UNIUSDT', 'AVAXUSDT', 'DOTUSDT', 'LTCUSDT',
+                      'BNBUSDT', 'XRPUSDT', 'SHIBUSDT', 'ATOMUSDT', 'NEARUSDT', 'FTMUSDT'
+                    ].map(symbol => (
+                      <button
+                        key={symbol}
+                        onClick={() => setSelectedSymbol(symbol)}
+                        className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                          selectedSymbol === symbol
+                            ? 'bg-purple-600 text-white shadow-md'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        {symbol.replace('USDT', '')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Main Risk Manager Component */}
+                <SectionErrorBoundary>
+                  <AdvancedRiskManager
+                    symbol={selectedSymbol}
+                    portfolioSymbols={[
+                      'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
+                      'MATICUSDT', 'LINKUSDT', 'UNIUSDT'
+                    ]}
+                    autoRefresh={true}
+                    refreshInterval={5000}
+                    className="w-full"
+                  />
+                </SectionErrorBoundary>
+
+                {/* Portfolio Analysis Row */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <SectionErrorBoundary>
+                    <PortfolioHeatMap
+                      symbols={[
+                        'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
+                        'MATICUSDT', 'LINKUSDT', 'UNIUSDT'
+                      ]}
+                      autoRefresh={true}
+                      refreshInterval={10000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+
+                  <SectionErrorBoundary>
+                    <CorrelationMatrix
+                      symbols={[
+                        'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
+                        'MATICUSDT', 'LINKUSDT', 'UNIUSDT'
+                      ]}
+                      timeframe="1h"
+                      lookbackPeriods={100}
+                      autoRefresh={true}
+                      refreshInterval={30000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+                </div>
+
+                {/* Enhanced Risk Monitoring Row */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <SectionErrorBoundary>
+                    <RiskMonitorDashboard
+                      symbol={selectedSymbol}
+                      portfolioSymbols={['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT']}
+                      autoRefresh={true}
+                      refreshInterval={5000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+
+                  <SectionErrorBoundary>
+                    <SmartEntrySignals
+                      symbol={selectedSymbol}
+                      autoRefresh={true}
+                      refreshInterval={15000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+
+                  <SectionErrorBoundary>
+                    <ExitStrategyPanel
+                      symbol={selectedSymbol}
+                      position={{
+                        side: 'LONG',
+                        entryPrice: 0,
+                        size: 0,
+                        entryTime: new Date().toISOString()
+                      }}
+                      autoRefresh={true}
+                      refreshInterval={10000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+                </div>
+
+                {/* Info Panel */}
+                <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-xl p-6">
+                  <div className="flex items-center gap-3 mb-4">
+                    <Settings className="h-6 w-6 text-purple-600" />
+                    <h3 className="text-lg font-semibold text-purple-900">Professional Risk Management</h3>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <div className="font-medium text-purple-800">Advanced Risk Analysis</div>
+                      <div className="text-purple-600">VaR, stress testing, and portfolio optimization</div>
+                    </div>
+                    <div>
+                      <div className="font-medium text-purple-800">Portfolio Heat Map</div>
+                      <div className="text-purple-600">Visual risk distribution and concentration analysis</div>
+                    </div>
+                    <div>
+                      <div className="font-medium text-purple-800">Correlation Matrix</div>
+                      <div className="text-purple-600">Cross-asset correlation and diversification metrics</div>
+                    </div>
+                    <div>
+                      <div className="font-medium text-purple-800">Real-time Monitoring</div>
+                      <div className="text-purple-600">Continuous risk assessment and alert system</div>
+                    </div>
+                  </div>
+                  <div className="mt-4 text-xs text-purple-700">
+                    ⚡ Institutional-grade risk management • Real-time portfolio analysis • Advanced diversification metrics
+                  </div>
                 </div>
               </div>
             )}
