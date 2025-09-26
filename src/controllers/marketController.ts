@@ -6,6 +6,98 @@ import { AuthRequest } from '../middleware/auth';
 import { ApiResponse } from '../types';
 import { SymbolConverter } from '../utils/symbolConverter';
 
+// Enhanced fallback analysis generator using basic technical analysis
+const generateEnhancedFallbackAnalysis = (symbol: string, marketData: any, klineData1m: any[], klineData5m: any[]) => {
+  console.log(`🔧 Generating enhanced technical fallback for ${symbol}...`);
+
+  // Simple technical analysis for fallback
+  const priceChange24h = marketData.change24h;
+  const volatility = ((marketData.high24h - marketData.low24h) / marketData.price) * 100;
+  const volume = marketData.volume;
+
+  // Simple trend detection using recent klines
+  const recentKlines = klineData1m.slice(-20); // Last 20 minutes
+  const priceDirection = recentKlines.length > 1 ?
+    (parseFloat(recentKlines[recentKlines.length - 1][4]) - parseFloat(recentKlines[0][1])) / parseFloat(recentKlines[0][1]) : 0;
+
+  // Simple volume analysis
+  const avgVolume = recentKlines.reduce((sum, k) => sum + parseFloat(k[5]), 0) / recentKlines.length;
+  const recentVolume = parseFloat(recentKlines[recentKlines.length - 1][5]);
+  const volumeRatio = recentVolume / avgVolume;
+
+  // Determine recommendation based on technical factors
+  let recommendation: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
+  let confidence = 0.4;
+  let reasoning = 'Technical analysis fallback: ';
+
+  if (priceChange24h > 3 && priceDirection > 0.001 && volumeRatio > 1.2) {
+    recommendation = 'BUY';
+    confidence = 0.6;
+    reasoning += 'Strong upward momentum with volume confirmation';
+  } else if (priceChange24h < -3 && priceDirection < -0.001 && volumeRatio > 1.2) {
+    recommendation = 'SELL';
+    confidence = 0.6;
+    reasoning += 'Strong downward momentum with volume confirmation';
+  } else if (priceChange24h > 1 && priceDirection > 0) {
+    recommendation = 'BUY';
+    confidence = 0.5;
+    reasoning += 'Moderate bullish signals detected';
+  } else if (priceChange24h < -1 && priceDirection < 0) {
+    recommendation = 'SELL';
+    confidence = 0.5;
+    reasoning += 'Moderate bearish signals detected';
+  } else {
+    reasoning += 'Mixed signals suggest holding position';
+  }
+
+  const urgency = volatility > 5 ? 7 : volatility > 3 ? 5 : 3;
+  const timeToAction = urgency >= 7 ? 'IMMEDIATE (1-5 min)' :
+                      urgency >= 5 ? 'SOON (5-15 min)' :
+                      'MEDIUM TERM (1-4 hours)';
+
+  return {
+    symbol,
+    consensus: {
+      recommendation,
+      confidence,
+      urgency,
+      modelAgreement: 0.8, // Technical consensus
+      timeToAction,
+      reasoning
+    },
+    individualModels: [{
+      model: 'technical-fallback',
+      recommendation,
+      confidence,
+      reasoning: `Technical analysis: ${priceChange24h.toFixed(2)}% 24h, ${volatility.toFixed(2)}% volatility, ${volumeRatio.toFixed(2)}x volume`,
+      urgency,
+      timestamp: new Date()
+    }],
+    marketConditions: {
+      volatility: volatility,
+      spread: 0,
+      liquidity: Math.min(volume / 1000000, 10), // Rough liquidity score
+      volume24h: volume,
+      priceAction: priceChange24h > 0 ? 'BULLISH' : 'BEARISH',
+      tradingCondition: volatility > 8 ? 'HIGH_RISK' : volatility > 4 ? 'MODERATE' : 'STABLE'
+    },
+    immediateSignals: recommendation !== 'HOLD' ? [{
+      type: recommendation === 'BUY' ? 'POTENTIAL_BUY' : 'POTENTIAL_SELL',
+      confidence: confidence,
+      source: 'technical-analysis',
+      reasoning: reasoning
+    }] : [],
+    riskWarnings: [
+      'AI analysis service temporarily unavailable - using technical analysis fallback',
+      ...(volatility > 8 ? ['High volatility detected - trade with caution'] : []),
+      ...(volumeRatio < 0.5 ? ['Low volume - liquidity may be limited'] : [])
+    ],
+    timestamp: new Date(),
+    cached: false,
+    fallback: true
+  };
+};
+
 export const getMarketData = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { symbol } = req.params;
@@ -833,32 +925,8 @@ export const getRealTimeAnalysis = async (req: AuthRequest, res: Response): Prom
     } catch (analysisError) {
       console.error(`❌ AI analysis failed for ${normalizedSymbol}:`, analysisError);
 
-      // Provide fallback analysis
-      realTimeAnalysis = {
-        symbol: normalizedSymbol,
-        consensus: {
-          recommendation: 'HOLD',
-          confidence: 0.3,
-          urgency: 1,
-          modelAgreement: 0,
-          timeToAction: 'MEDIUM TERM (1-4 hours)',
-          reasoning: 'AI analysis temporarily unavailable - using fallback recommendation'
-        },
-        individualModels: [],
-        marketConditions: {
-          volatility: ((marketData.high24h - marketData.low24h) / marketData.price) * 100,
-          spread: 0,
-          liquidity: 0,
-          volume24h: marketData.volume,
-          priceAction: marketData.change24h > 0 ? 'BULLISH' : 'BEARISH',
-          tradingCondition: 'UNKNOWN'
-        },
-        immediateSignals: [],
-        riskWarnings: ['AI analysis service temporarily unavailable'],
-        timestamp: new Date(),
-        cached: false,
-        fallback: true
-      };
+      // Generate enhanced fallback analysis using technical indicators
+      realTimeAnalysis = generateEnhancedFallbackAnalysis(normalizedSymbol, marketData, klineData1m, klineData5m);
     }
 
     console.log(`🎯 Generating trading signals for ${normalizedSymbol}...`);
@@ -875,10 +943,34 @@ export const getRealTimeAnalysis = async (req: AuthRequest, res: Response): Prom
       // Continue with empty signals array
     }
 
+    // Restructure response to match frontend expectations
+    // Frontend expects consensus, individualModels, etc. to be at the top level of data
     const responseData = {
       symbol: normalizedSymbol,
+
+      // Extract and flatten realTimeAnalysis properties to top level
+      consensus: realTimeAnalysis.consensus || {
+        recommendation: 'HOLD',
+        confidence: 0.3,
+        urgency: 1,
+        modelAgreement: 0,
+        timeToAction: 'MEDIUM TERM (1-4 hours)',
+        reasoning: 'Analysis data incomplete'
+      },
+      individualModels: realTimeAnalysis.individualModels || [],
+      marketConditions: realTimeAnalysis.marketConditions || {
+        volatility: ((marketData.high24h - marketData.low24h) / marketData.price) * 100,
+        spread: 0,
+        liquidity: 0,
+        volume24h: marketData.volume,
+        priceAction: marketData.change24h > 0 ? 'BULLISH' : 'BEARISH',
+        tradingCondition: 'POOR'
+      },
+      riskWarnings: realTimeAnalysis.riskWarnings || [],
+      immediateSignals: realTimeAnalysis.immediateSignals || [],
+
+      // Keep other data
       marketData,
-      realTimeAnalysis,
       tradingSignals,
       priceAlerts: [],
       momentum: {},
