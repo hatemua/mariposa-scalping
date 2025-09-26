@@ -150,14 +150,16 @@ export const marketApi = {
   // New enhanced endpoints
   getMultiTimeframeAnalysis: async (symbol: string, timeframes?: string[]): Promise<ApiResponse> => {
     const response = await api.get(`/market/${symbol}/multi-timeframe`, {
-      params: { timeframes: timeframes?.join(',') }
+      params: { timeframes: timeframes?.join(',') },
+      timeout: 60000 // 60 seconds timeout for multi-timeframe analysis
     });
     return response.data;
   },
 
   getRealTimeAnalysis: async (symbol: string, models?: string[]): Promise<ApiResponse> => {
     const response = await api.get(`/market/${symbol}/real-time`, {
-      params: { models: models?.join(',') }
+      params: { models: models?.join(',') },
+      timeout: 45000 // 45 seconds timeout for real-time analysis
     });
     return response.data;
   },
@@ -177,7 +179,19 @@ export const marketApi = {
     sortBy?: string;
     limit?: number;
   }): Promise<ApiResponse> => {
-    const response = await api.post('/market/analysis/bulk', data);
+    const response = await api.post('/market/analysis/bulk', data, {
+      timeout: 90000 // 90 seconds timeout for bulk analysis
+    });
+    return response.data;
+  },
+
+  getMultiTokenAnalysis: async (data: {
+    symbols: string[];
+    timeframes: string[];
+  }): Promise<ApiResponse> => {
+    const response = await api.post('/market/analysis/multi-token', data, {
+      timeout: 120000 // 2 minutes timeout for multi-token analysis
+    });
     return response.data;
   },
 

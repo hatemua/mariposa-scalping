@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { safeArray, safeNumber } from '@/lib/formatters';
-import { TrendingUp, TrendingDown, Activity, Zap, AlertTriangle, Target, DollarSign } from 'lucide-react';
+import { marketApi } from '@/lib/api';
+import { TrendingUp, TrendingDown, Activity, Zap, AlertTriangle, Target, DollarSign, RefreshCw } from 'lucide-react';
 
 interface TokenAnalysis {
   symbol: string;
@@ -54,28 +55,18 @@ export default function MultiTokenGrid({
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [selectedTimeframes, setSelectedTimeframes] = useState(['5m', '15m', '1h']);
+  const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
   const fetchMultiTokenAnalysis = useCallback(async () => {
     if (!safeArray.hasItems(symbols)) return;
 
     try {
-      const response = await fetch('/api/market/analysis/multi-token', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          symbols,
-          timeframes: selectedTimeframes
-        })
+      setError(null);
+      const data = await marketApi.getMultiTokenAnalysis({
+        symbols,
+        timeframes: selectedTimeframes
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch multi-token analysis');
-      }
-
-      const data = await response.json();
 
       if (data.success && data.data.analyses) {
         const newAnalyses: Record<string, TokenAnalysis> = {};
@@ -87,13 +78,26 @@ export default function MultiTokenGrid({
 
         setAnalyses(newAnalyses);
         setLastUpdate(new Date());
+        setRetryCount(0); // Reset retry count on success
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching multi-token analysis:', error);
+
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        setError('Analysis request timed out. The backend may be processing multiple requests.');
+        if (retryCount < 2) { // Auto-retry up to 2 times
+          setTimeout(() => {
+            setRetryCount(prev => prev + 1);
+            fetchMultiTokenAnalysis();
+          }, 5000); // Retry after 5 seconds
+        }
+      } else {
+        setError('Failed to fetch analysis data. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
-  }, [symbols, selectedTimeframes, onAnalysisUpdate]);
+  }, [symbols, selectedTimeframes, onAnalysisUpdate, retryCount]);
 
   useEffect(() => {
     fetchMultiTokenAnalysis();
@@ -165,9 +169,35 @@ export default function MultiTokenGrid({
       <div className="bg-white rounded-lg border border-gray-200 p-4">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-gray-900">Multi-Token Analysis</h3>
-          <div className="flex items-center gap-2 text-sm text-gray-600">
-            <Activity className="h-4 w-4" />
-            {lastUpdate && `Updated ${lastUpdate.toLocaleTimeString()}`}
+          <div className="flex items-center gap-2 text-sm">
+            {error ? (
+              <div className="flex items-center gap-2">
+                <span className="text-red-600 flex items-center gap-1">
+                  <AlertTriangle className="h-4 w-4" />
+                  {error}
+                  {retryCount > 0 && ` (Retry ${retryCount}/2)`}
+                </span>
+                {retryCount >= 2 && (
+                  <button
+                    onClick={() => {
+                      setRetryCount(0);
+                      setError(null);
+                      setLoading(true);
+                      fetchMultiTokenAnalysis();
+                    }}
+                    className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs hover:bg-blue-200 transition-colors flex items-center gap-1"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    Retry
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-gray-600">
+                <Activity className="h-4 w-4" />
+                {lastUpdate ? `Updated ${lastUpdate.toLocaleTimeString()}` : 'Loading...'}
+              </div>
+            )}
           </div>
         </div>
 
