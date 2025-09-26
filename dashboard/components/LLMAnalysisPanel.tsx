@@ -2,8 +2,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { marketApi } from '@/lib/api';
-import { safeNumber } from '@/lib/formatters';
+import { safeNumber, safeArray, safeObject } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
+import { LLMAnalysisSkeleton } from './ui/SkeletonLoaders';
 import {
   Brain,
   TrendingUp,
@@ -110,13 +111,14 @@ export default function LLMAnalysisPanel({
         marketApi.getImmediateTradingSignals(symbol)
       ]);
 
-      if (analysisResponse.success) {
-        setRealTimeAnalysis(analysisResponse.data);
+      if (safeObject.get(analysisResponse, 'success', false)) {
+        setRealTimeAnalysis(safeObject.get(analysisResponse, 'data', null));
         setLastUpdate(new Date());
       }
 
-      if (signalsResponse.success) {
-        setTradingSignals(signalsResponse.data.signals || []);
+      if (safeObject.get(signalsResponse, 'success', false)) {
+        const signals = safeObject.get(signalsResponse, 'data.signals', []);
+        setTradingSignals(Array.isArray(signals) ? signals : []);
       }
     } catch (error) {
       console.error('Error loading real-time analysis:', error);
@@ -223,46 +225,43 @@ export default function LLMAnalysisPanel({
       </div>
 
       {loading && !realTimeAnalysis ? (
-        <div className="p-6 text-center">
-          <Activity className="h-8 w-8 animate-spin text-blue-600 mx-auto mb-2" />
-          <p className="text-gray-600">Loading AI analysis...</p>
-        </div>
-      ) : realTimeAnalysis && realTimeAnalysis.consensus ? (
+        <LLMAnalysisSkeleton />
+      ) : safeObject.has(realTimeAnalysis, 'consensus') ? (
         <div className="p-6 space-y-6">
           {/* Consensus Analysis */}
           <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl p-4 border border-purple-100">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-lg border ${getRecommendationColor(realTimeAnalysis.consensus.recommendation)}`}>
-                  {getRecommendationIcon(realTimeAnalysis.consensus.recommendation)}
+                <div className={`p-2 rounded-lg border ${getRecommendationColor(safeObject.get(realTimeAnalysis, 'consensus.recommendation', ''))}`}>
+                  {getRecommendationIcon(safeObject.get(realTimeAnalysis, 'consensus.recommendation', ''))}
                 </div>
                 <div>
                   <h3 className="font-semibold text-gray-900">
-                    Consensus: {realTimeAnalysis.consensus.recommendation}
+                    Consensus: {safeObject.get(realTimeAnalysis, 'consensus.recommendation', '')}
                   </h3>
                   <p className="text-sm text-gray-600">
-                    {safeNumber.toFixed((realTimeAnalysis.consensus?.confidence ?? 0) * 100, 1)}% confidence
+                    {safeNumber.toFixed((safeObject.get(realTimeAnalysis, 'consensus.confidence', 0)) * 100, 1)}% confidence
                   </p>
                 </div>
               </div>
 
               <div className="text-right">
-                <div className={`px-3 py-1 rounded-lg border text-sm font-medium ${getUrgencyColor(realTimeAnalysis.consensus.urgency)}`}>
-                  Urgency: {realTimeAnalysis.consensus.urgency}/10
+                <div className={`px-3 py-1 rounded-lg border text-sm font-medium ${getUrgencyColor(safeObject.get(realTimeAnalysis, 'consensus.urgency', 0))}`}>
+                  Urgency: {safeObject.get(realTimeAnalysis, 'consensus.urgency', 0)}/10
                 </div>
                 <div className="text-xs text-gray-600 mt-1">
-                  {realTimeAnalysis.consensus.timeToAction}
+                  {safeObject.get(realTimeAnalysis, 'consensus.timeToAction', '')}
                 </div>
               </div>
             </div>
 
             <div className="bg-white rounded-lg p-3 border border-purple-100">
-              <p className="text-sm text-gray-700">{realTimeAnalysis.consensus.reasoning}</p>
+              <p className="text-sm text-gray-700">{safeObject.get(realTimeAnalysis, 'consensus.reasoning', '')}</p>
             </div>
 
             <div className="mt-3 flex items-center justify-between text-sm">
               <div className="text-gray-600">
-                Model Agreement: {safeNumber.toFixed((realTimeAnalysis.consensus?.modelAgreement ?? 0) * 100, 0)}%
+                Model Agreement: {safeNumber.toFixed((safeObject.get(realTimeAnalysis, 'consensus.modelAgreement', 0)) * 100, 0)}%
               </div>
               <div className="text-gray-600">
                 Market Condition: {realTimeAnalysis.marketConditions.tradingCondition}
@@ -295,46 +294,46 @@ export default function LLMAnalysisPanel({
                       )}
                     </div>
 
-                    {signal.reasoning && (
-                      <p className="text-sm text-gray-700 mb-3">{signal.reasoning}</p>
+                    {safeObject.get(signal, 'reasoning') && (
+                      <p className="text-sm text-gray-700 mb-3">{safeObject.get(signal, 'reasoning', '')}</p>
                     )}
 
                     <div className="grid grid-cols-2 gap-4 text-sm">
-                      {signal.targetPrice && (
+                      {safeObject.get(signal, 'targetPrice') && (
                         <div>
                           <span className="text-gray-600">Target Price:</span>
                           <span className="ml-2 font-medium text-green-600">
-                            {safeNumber.price(signal.targetPrice)}
+                            {safeNumber.price(safeObject.get(signal, 'targetPrice', 0))}
                           </span>
                         </div>
                       )}
-                      {signal.stopLoss && (
+                      {safeObject.get(signal, 'stopLoss') && (
                         <div>
                           <span className="text-gray-600">Stop Loss:</span>
                           <span className="ml-2 font-medium text-red-600">
-                            {safeNumber.price(signal.stopLoss)}
+                            {safeNumber.price(safeObject.get(signal, 'stopLoss', 0))}
                           </span>
                         </div>
                       )}
-                      {signal.timeWindow && (
+                      {safeObject.get(signal, 'timeWindow') && (
                         <div>
                           <span className="text-gray-600">Time Window:</span>
-                          <span className="ml-2 font-medium">{signal.timeWindow}</span>
+                          <span className="ml-2 font-medium">{safeObject.get(signal, 'timeWindow', '')}</span>
                         </div>
                       )}
-                      {signal.level && (
+                      {safeObject.get(signal, 'level') && (
                         <div>
                           <span className="text-gray-600">Risk Level:</span>
-                          <span className="ml-2 font-medium">{signal.level}</span>
+                          <span className="ml-2 font-medium">{safeObject.get(signal, 'level', '')}</span>
                         </div>
                       )}
                     </div>
 
-                    {signal.warnings && (
+                    {safeArray.hasItems(safeObject.get(signal, 'warnings', [])) && (
                       <div className="mt-3 pt-3 border-t border-gray-200">
                         <div className="text-sm text-gray-600 mb-2">Warnings:</div>
                         <div className="space-y-1">
-                          {(signal.warnings || []).map((warning: string, idx: number) => (
+                          {safeArray.map(safeObject.get(signal, 'warnings', []), (warning: string, idx: number) => (
                             <div key={idx} className="flex items-center gap-2 text-sm text-orange-700">
                               <AlertTriangle className="h-3 w-3" />
                               {warning}

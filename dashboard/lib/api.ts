@@ -5,7 +5,7 @@ import { storage } from './storage';
 
 const api = axios.create({
   baseURL: config.getBackendUrl(),
-  timeout: 15000,
+  timeout: 30000, // Increased from 15 seconds to 30 seconds
   headers: {
     'Content-Type': 'application/json',
   },

@@ -27,6 +27,8 @@ import {
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import MultiTimeframeChart from '@/components/charts/MultiTimeframeChart';
+import ProgressiveMultiTimeframeChart from '@/components/charts/ProgressiveMultiTimeframeChart';
+import { PageErrorBoundary, SectionErrorBoundary } from '@/components/ErrorBoundaryEnhanced';
 import LLMAnalysisPanel from '@/components/LLMAnalysisPanel';
 import TechnicalIndicatorControls from '@/components/TechnicalIndicatorControls';
 import TokenAnalysisGrid from '@/components/TokenAnalysisGrid';
@@ -76,7 +78,7 @@ export default function MarketPage() {
   }
 
   return (
-    <ErrorBoundary>
+    <PageErrorBoundary>
       <DashboardLayout>
         <div className={`${isFullscreen ? 'fixed inset-0 z-50 bg-white' : 'max-w-full'} px-4 sm:px-6 lg:px-8 py-6`}>
           {/* Header */}
@@ -168,7 +170,8 @@ export default function MarketPage() {
           {/* Content */}
           <div className="space-y-6">
             {viewMode === 'grid' && (
-              <TokenAnalysisGrid
+              <SectionErrorBoundary>
+                <TokenAnalysisGrid
                 defaultTokens={[
                   'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
                   'MATICUSDT', 'LINKUSDT', 'UNIUSDT', 'AVAXUSDT', 'DOTUSDT', 'LTCUSDT',
@@ -180,17 +183,20 @@ export default function MarketPage() {
                 onTokenSelect={handleTokenSelect}
                 className="w-full"
               />
+              </SectionErrorBoundary>
             )}
 
             {viewMode === 'chart' && (
-              <div className="grid grid-cols-1 gap-6">
-                <MultiTimeframeChart
-                  symbol={selectedSymbol}
-                  defaultTimeframes={['1m', '5m', '15m', '1h', '4h', '1d']}
-                  height={600}
-                  className="w-full"
-                />
-              </div>
+              <SectionErrorBoundary>
+                <div className="grid grid-cols-1 gap-6">
+                  <ProgressiveMultiTimeframeChart
+                    symbol={selectedSymbol}
+                    defaultTimeframes={['1m', '5m', '15m', '1h', '4h', '1d']}
+                    height={600}
+                    className="w-full"
+                  />
+                </div>
+              </SectionErrorBoundary>
             )}
 
             {viewMode === 'analysis' && (
@@ -232,32 +238,38 @@ export default function MarketPage() {
                 <div className={`grid gap-6 ${showLLMPanel ? 'grid-cols-1 xl:grid-cols-3' : 'grid-cols-1'}`}>
                   {/* Multi-Timeframe Chart */}
                   <div className={`${showLLMPanel ? 'xl:col-span-2' : 'col-span-1'} space-y-6`}>
-                    <MultiTimeframeChart
-                      symbol={selectedSymbol}
-                      defaultTimeframes={['1m', '5m', '15m', '1h', '4h', '1d']}
-                      height={isFullscreen ? 700 : 500}
-                      className="w-full"
-                    />
+                    <SectionErrorBoundary>
+                      <ProgressiveMultiTimeframeChart
+                        symbol={selectedSymbol}
+                        defaultTimeframes={['1m', '5m', '15m', '1h', '4h', '1d']}
+                        height={isFullscreen ? 700 : 500}
+                        className="w-full"
+                      />
+                    </SectionErrorBoundary>
 
                     {/* Technical Indicators Panel */}
                     {showIndicators && (
-                      <TechnicalIndicatorControls
-                        onIndicatorChange={handleIndicatorChange}
-                        onParameterChange={handleParameterChange}
-                        className="w-full"
-                      />
+                      <SectionErrorBoundary>
+                        <TechnicalIndicatorControls
+                          onIndicatorChange={handleIndicatorChange}
+                          onParameterChange={handleParameterChange}
+                          className="w-full"
+                        />
+                      </SectionErrorBoundary>
                     )}
                   </div>
 
                   {/* LLM Analysis Panel */}
                   {showLLMPanel && (
                     <div className="space-y-6">
-                      <LLMAnalysisPanel
-                        symbol={selectedSymbol}
-                        autoRefresh={true}
-                        refreshInterval={60000}
-                        className="w-full"
-                      />
+                      <SectionErrorBoundary>
+                        <LLMAnalysisPanel
+                          symbol={selectedSymbol}
+                          autoRefresh={true}
+                          refreshInterval={60000}
+                          className="w-full"
+                        />
+                      </SectionErrorBoundary>
                     </div>
                   )}
                 </div>
@@ -277,19 +289,21 @@ export default function MarketPage() {
                     </button>
                   </div>
 
-                  <TokenAnalysisGrid
-                    defaultTokens={['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT']}
-                    maxTokens={6}
-                    autoRefresh={false}
-                    onTokenSelect={handleTokenSelect}
-                    className="w-full"
-                  />
+                  <SectionErrorBoundary>
+                    <TokenAnalysisGrid
+                      defaultTokens={['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT']}
+                      maxTokens={6}
+                      autoRefresh={false}
+                      onTokenSelect={handleTokenSelect}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
                 </div>
               </div>
             )}
           </div>
         </div>
       </DashboardLayout>
-    </ErrorBoundary>
+    </PageErrorBoundary>
   );
 }

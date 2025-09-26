@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { safeArray } from '@/lib/formatters';
+import { TechnicalIndicatorsSkeleton } from './ui/SkeletonLoaders';
 import {
   BarChart3,
   TrendingUp,

@@ -86,6 +86,76 @@ export const safeNumber = {
 };
 
 /**
+ * Safe object utilities for complex nested structures
+ */
+export const safeObject = {
+  /**
+   * Safely get nested property with fallback
+   */
+  get: (obj: any, path: string, fallback: any = undefined) => {
+    if (!obj || typeof obj !== 'object') return fallback;
+
+    const keys = path.split('.');
+    let result = obj;
+
+    for (const key of keys) {
+      if (result === null || result === undefined || typeof result !== 'object') {
+        return fallback;
+      }
+      result = result[key];
+    }
+
+    return result !== undefined ? result : fallback;
+  },
+
+  /**
+   * Check if nested property exists
+   */
+  has: (obj: any, path: string): boolean => {
+    if (!obj || typeof obj !== 'object') return false;
+
+    const keys = path.split('.');
+    let result = obj;
+
+    for (const key of keys) {
+      if (result === null || result === undefined || typeof result !== 'object') {
+        return false;
+      }
+      if (!(key in result)) {
+        return false;
+      }
+      result = result[key];
+    }
+
+    return true;
+  },
+
+  /**
+   * Safely access object keys
+   */
+  keys: (obj: any): string[] => {
+    if (!obj || typeof obj !== 'object') return [];
+    return Object.keys(obj);
+  },
+
+  /**
+   * Safely access object values
+   */
+  values: (obj: any): any[] => {
+    if (!obj || typeof obj !== 'object') return [];
+    return Object.values(obj);
+  },
+
+  /**
+   * Safely access object entries
+   */
+  entries: (obj: any): [string, any][] => {
+    if (!obj || typeof obj !== 'object') return [];
+    return Object.entries(obj);
+  }
+};
+
+/**
  * Safe array utilities to prevent length/map errors on undefined/null arrays
  */
 export const safeArray = {

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { safeArray, safeNumber } from '@/lib/formatters';
+import { safeArray, safeNumber, safeObject } from '@/lib/formatters';
 import {
   ComposedChart,
   XAxis,
@@ -300,7 +300,7 @@ export default function EnhancedTradingChart({
   onAnalysisPointClick
 }: EnhancedTradingChartProps) {
   const [visibleIndicators, setVisibleIndicators] = useState<string[]>(
-    safeArray.map(safeArray.filter(technicalIndicators, (i) => i.visible), (i) => i.name)
+    safeArray.map(safeArray.filter(technicalIndicators, (i) => safeObject.get(i, 'visible', false)), (i) => safeObject.get(i, 'name', ''))
   );
   const [visibleAnalyses, setVisibleAnalyses] = useState<string[]>(['buy', 'sell', 'support', 'resistance']);
   const [showSettings, setShowSettings] = useState(false);
@@ -317,8 +317,10 @@ export default function EnhancedTradingChart({
 
       // Add technical indicator values
       safeArray.forEach(technicalIndicators, (indicator) => {
-        if (safeArray.getValue(indicator.values, [])[index] !== undefined) {
-          enhanced[indicator.name.toLowerCase()] = indicator.values[index];
+        const indicatorValues = safeObject.get(indicator, 'values', []);
+        const indicatorName = safeObject.get(indicator, 'name', '');
+        if (indicatorValues[index] !== undefined && indicatorName) {
+          enhanced[indicatorName.toLowerCase()] = indicatorValues[index];
         }
       });
 
@@ -350,7 +352,7 @@ export default function EnhancedTradingChart({
   // Filter active LLM analyses
   const activeAnalyses = useMemo(() => {
     return safeArray.filter(llmAnalyses, (analysis) =>
-      safeArray.getValue(visibleAnalyses, []).includes(analysis.type) && analysis.active
+      visibleAnalyses.includes(safeObject.get(analysis, 'type', '')) && safeObject.get(analysis, 'active', false)
     );
   }, [llmAnalyses, visibleAnalyses]);
 
@@ -432,28 +434,28 @@ export default function EnhancedTradingChart({
               <Settings className="h-4 w-4" />
             </button>
             <span className="text-xs text-gray-500">
-              {technicalIndicators.filter(i => visibleIndicators.includes(i.name)).length} indicators
+              {safeArray.filter(technicalIndicators, i => visibleIndicators.includes(safeObject.get(i, 'name', ''))).length} indicators
             </span>
             <span className="text-xs text-gray-500">
-              {activeAnalyses.length} AI signals
+              {safeArray.length(activeAnalyses)} AI signals
             </span>
           </div>
         </div>
 
-        {data.length > 0 && (
+        {safeArray.length(data) > 0 && (
           <div className="flex items-center gap-4 text-sm">
             <div className="flex items-center gap-1">
-              {data[data.length - 1].close > data[data.length - 1].open ? (
+              {safeObject.get(data[data.length - 1], 'close', 0) > safeObject.get(data[data.length - 1], 'open', 0) ? (
                 <TrendingUp className="h-4 w-4 text-green-600" />
               ) : (
                 <TrendingDown className="h-4 w-4 text-red-600" />
               )}
-              <span className="font-medium">${data[data.length - 1].close.toFixed(4)}</span>
+              <span className="font-medium">${safeNumber.toFixed(safeObject.get(data[data.length - 1], 'close', 0), 4)}</span>
             </div>
             <span className={`font-medium ${
-              data[data.length - 1].close > data[data.length - 1].open ? 'text-green-600' : 'text-red-600'
+              safeObject.get(data[data.length - 1], 'close', 0) > safeObject.get(data[data.length - 1], 'open', 0) ? 'text-green-600' : 'text-red-600'
             }`}>
-              {(((data[data.length - 1].close - data[data.length - 1].open) / data[data.length - 1].open) * 100).toFixed(2)}%
+              {safeNumber.toFixed(((safeObject.get(data[data.length - 1], 'close', 0) - safeObject.get(data[data.length - 1], 'open', 0)) / safeObject.get(data[data.length - 1], 'open', 1)) * 100, 2)}%
             </span>
           </div>
         )}
@@ -470,16 +472,16 @@ export default function EnhancedTradingChart({
                 Technical Indicators
               </h4>
               <div className="space-y-2">
-                {technicalIndicators.map(indicator => (
-                  <label key={indicator.name} className="flex items-center gap-2 text-sm">
+                {safeArray.map(technicalIndicators, indicator => (
+                  <label key={safeObject.get(indicator, 'name', '')} className="flex items-center gap-2 text-sm">
                     <input
                       type="checkbox"
-                      checked={visibleIndicators.includes(indicator.name)}
-                      onChange={() => toggleIndicator(indicator.name)}
+                      checked={visibleIndicators.includes(safeObject.get(indicator, 'name', ''))}
+                      onChange={() => toggleIndicator(safeObject.get(indicator, 'name', ''))}
                       className="rounded border-gray-300"
                     />
-                    <div className="w-3 h-3 rounded" style={{ backgroundColor: indicator.color }}></div>
-                    <span>{indicator.name}</span>
+                    <div className="w-3 h-3 rounded" style={{ backgroundColor: safeObject.get(indicator, 'color', '#666') }}></div>
+                    <span>{safeObject.get(indicator, 'name', '')}</span>
                   </label>
                 ))}
               </div>
@@ -502,7 +504,7 @@ export default function EnhancedTradingChart({
                     />
                     <span className="capitalize">{type} Signals</span>
                     <span className="text-xs text-gray-500">
-                      ({llmAnalyses.filter(a => a.type === type && a.active).length})
+                      ({safeArray.filter(llmAnalyses, a => safeObject.get(a, 'type', '') === type && safeObject.get(a, 'active', false)).length})
                     </span>
                   </label>
                 ))}
@@ -549,7 +551,7 @@ export default function EnhancedTradingChart({
             <Tooltip
               content={
                 <EnhancedTooltip
-                  technicalIndicators={technicalIndicators.filter(i => visibleIndicators.includes(i.name))}
+                  technicalIndicators={safeArray.filter(technicalIndicators, i => visibleIndicators.includes(safeObject.get(i, 'name', '')))}
                   llmAnalyses={activeAnalyses}
                 />
               }
@@ -564,30 +566,34 @@ export default function EnhancedTradingChart({
             />
 
             {/* Technical Indicators */}
-            {technicalIndicators
-              .filter(indicator => visibleIndicators.includes(indicator.name))
+            {safeArray
+              .filter(technicalIndicators, indicator => visibleIndicators.includes(safeObject.get(indicator, 'name', '')))
               .map((indicator) => {
-                if (indicator.type === 'line') {
+                const indicatorType = safeObject.get(indicator, 'type', '');
+                const indicatorName = safeObject.get(indicator, 'name', '');
+                const indicatorColor = safeObject.get(indicator, 'color', '#666');
+
+                if (indicatorType === 'line') {
                   return (
                     <Line
-                      key={indicator.name}
+                      key={indicatorName}
                       type="monotone"
-                      dataKey={indicator.name.toLowerCase()}
-                      stroke={indicator.color}
+                      dataKey={indicatorName.toLowerCase()}
+                      stroke={indicatorColor}
                       strokeWidth={2}
                       dot={false}
                       connectNulls={false}
                     />
                   );
                 }
-                if (indicator.type === 'area') {
+                if (indicatorType === 'area') {
                   return (
                     <Area
-                      key={indicator.name}
+                      key={indicatorName}
                       type="monotone"
-                      dataKey={indicator.name.toLowerCase()}
-                      stroke={indicator.color}
-                      fill={indicator.color}
+                      dataKey={indicatorName.toLowerCase()}
+                      stroke={indicatorColor}
+                      fill={indicatorColor}
                       fillOpacity={0.1}
                     />
                   );
@@ -596,26 +602,33 @@ export default function EnhancedTradingChart({
               })}
 
             {/* LLM Analysis Reference Lines */}
-            {activeAnalyses.map((analysis, index) => (
-              <ReferenceLine
-                key={`${analysis.timestamp}-${index}`}
-                y={analysis.price}
-                stroke={
-                  analysis.type === 'buy' ? '#10b981' :
-                  analysis.type === 'sell' ? '#ef4444' :
-                  analysis.type === 'support' ? '#3b82f6' :
-                  analysis.type === 'resistance' ? '#f59e0b' :
-                  analysis.type === 'target' ? '#8b5cf6' : '#ef4444'
-                }
-                strokeWidth={analysis.type === 'target' || analysis.type === 'stop' ? 2 : 1}
-                strokeDasharray={analysis.type === 'support' || analysis.type === 'resistance' ? '8 4' : '0'}
-                label={{
-                  value: `${analysis.type.toUpperCase()} (${(analysis.confidence * 100).toFixed(0)}%)`,
-                  position: 'insideTopRight',
-                  fontSize: 10
-                }}
-              />
-            ))}
+            {safeArray.map(activeAnalyses, (analysis, index) => {
+              const analysisType = safeObject.get(analysis, 'type', '');
+              const analysisPrice = safeObject.get(analysis, 'price', 0);
+              const analysisTimestamp = safeObject.get(analysis, 'timestamp', 0);
+              const analysisConfidence = safeObject.get(analysis, 'confidence', 0);
+
+              return (
+                <ReferenceLine
+                  key={`${analysisTimestamp}-${index}`}
+                  y={analysisPrice}
+                  stroke={
+                    analysisType === 'buy' ? '#10b981' :
+                    analysisType === 'sell' ? '#ef4444' :
+                    analysisType === 'support' ? '#3b82f6' :
+                    analysisType === 'resistance' ? '#f59e0b' :
+                    analysisType === 'target' ? '#8b5cf6' : '#ef4444'
+                  }
+                  strokeWidth={analysisType === 'target' || analysisType === 'stop' ? 2 : 1}
+                  strokeDasharray={analysisType === 'support' || analysisType === 'resistance' ? '8 4' : '0'}
+                  label={{
+                    value: `${analysisType.toUpperCase()} (${safeNumber.toFixed(analysisConfidence * 100, 0)}%)`,
+                    position: 'insideTopRight',
+                    fontSize: 10
+                  }}
+                />
+              );
+            })}
           </ComposedChart>
         </ResponsiveContainer>
       </div>

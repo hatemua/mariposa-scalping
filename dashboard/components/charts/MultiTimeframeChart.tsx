@@ -1,11 +1,13 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { marketApi } from '@/lib/api';
-import { safeArray } from '@/lib/formatters';
+import { safeArray, safeObject } from '@/lib/formatters';
+import { debounce, memoize, apiCache } from '@/lib/performance';
 import { toast } from 'react-hot-toast';
 import { Clock, TrendingUp, TrendingDown, Activity, AlertTriangle, Target, Shield } from 'lucide-react';
 import EnhancedTradingChart from './EnhancedTradingChart';
+import { MultiTimeframeChartSkeleton } from '../ui/SkeletonLoaders';
 
 interface TimeframeData {
   timeframe: string;
@@ -69,33 +71,82 @@ export default function MultiTimeframeChart({
   const [loading, setLoading] = useState(false);
   const [realTimeMode, setRealTimeMode] = useState(false);
 
-  // Load multi-timeframe data
-  const loadTimeframeData = async () => {
+  // Memoized and cached data loading function
+  const loadTimeframeData = useCallback(async () => {
     if (!symbol || selectedTimeframes.length === 0) return;
+
+    // Create cache key
+    const cacheKey = `timeframe-${symbol}-${selectedTimeframes.sort().join(',')}`;
+    const cachedData = apiCache.get(cacheKey);
+
+    if (cachedData) {
+      console.log('Using cached timeframe data');
+      setTimeframeData(cachedData.timeframeData);
+      if (cachedData.consolidatedAnalysis) {
+        setConsolidatedAnalysis(cachedData.consolidatedAnalysis);
+      }
+      return;
+    }
 
     setLoading(true);
     try {
       const response = await marketApi.getMultiTimeframeAnalysis(symbol, selectedTimeframes);
 
-      if (response.success) {
+      if (response?.success && response?.data) {
         const newTimeframeData: Record<string, TimeframeData> = {};
 
-        response.data.timeframes.forEach((tf: TimeframeData) => {
-          newTimeframeData[tf.timeframe] = tf;
-        });
+        // Safely access timeframes array using safeObject and safeArray utilities
+        const timeframes = safeObject.get(response, 'data.timeframes', []);
 
-        setTimeframeData(newTimeframeData);
-        setConsolidatedAnalysis(response.data.consolidatedAnalysis);
+        if (safeArray.hasItems(timeframes)) {
+          safeArray.forEach(timeframes, (tf: TimeframeData) => {
+            if (tf?.timeframe) {
+              newTimeframeData[tf.timeframe] = tf;
+            }
+          });
+
+          setTimeframeData(newTimeframeData);
+
+          // Safely set consolidated analysis
+          const consolidatedAnalysis = safeObject.get(response, 'data.consolidatedAnalysis');
+          if (consolidatedAnalysis) {
+            setConsolidatedAnalysis(consolidatedAnalysis);
+          }
+
+          // Cache the response for 2 minutes
+          apiCache.set(cacheKey, {
+            timeframeData: newTimeframeData,
+            consolidatedAnalysis
+          }, 120000);
+        } else {
+          console.warn('No timeframe data received from API');
+          toast.error('No timeframe data available');
+        }
       } else {
-        toast.error('Failed to load timeframe data');
+        const errorMsg = safeObject.get(response, 'error.message', 'Failed to load timeframe data');
+        toast.error(errorMsg);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading timeframe data:', error);
-      toast.error('Error loading market analysis');
+
+      // More specific error handling
+      if (error?.code === 'ECONNABORTED' || error?.message?.includes('timeout')) {
+        toast.error('Request timed out. Please try again.');
+      } else if (error?.response?.status === 429) {
+        toast.error('Too many requests. Please wait a moment.');
+      } else {
+        toast.error('Error loading market analysis. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [symbol, selectedTimeframes]);
+
+  // Debounced version of loadTimeframeData to prevent excessive API calls
+  const debouncedLoadData = useCallback(
+    debounce(loadTimeframeData, 500),
+    [loadTimeframeData]
+  );
 
   // Load real-time analysis for short timeframes
   const loadRealTimeAnalysis = async () => {
@@ -125,8 +176,8 @@ export default function MultiTimeframeChart({
   };
 
   useEffect(() => {
-    loadTimeframeData();
-  }, [symbol, selectedTimeframes]);
+    debouncedLoadData();
+  }, [debouncedLoadData]);
 
   useEffect(() => {
     if (realTimeMode) {
@@ -135,20 +186,26 @@ export default function MultiTimeframeChart({
     }
   }, [realTimeMode, symbol]);
 
-  // Process chart data for active timeframe
+  // Memoized chart data processing with performance optimization
   const chartData = useMemo(() => {
     const activeData = timeframeData[activeTimeframe];
     if (!activeData) return [];
 
-    return safeArray.map(activeData.klineData, (candle: any) => ({
+    const klineData = safeObject.get(activeData, 'klineData', []);
+    if (!safeArray.hasItems(klineData)) return [];
+
+    // Use memoized function for candle processing
+    const processCandle = memoize((candle: any[]) => ({
       timestamp: candle[0],
       time: new Date(candle[0]).toISOString(),
-      open: parseFloat(candle[1]),
-      high: parseFloat(candle[2]),
-      low: parseFloat(candle[3]),
-      close: parseFloat(candle[4]),
-      volume: parseFloat(candle[5])
+      open: parseFloat(candle[1] || 0),
+      high: parseFloat(candle[2] || 0),
+      low: parseFloat(candle[3] || 0),
+      close: parseFloat(candle[4] || 0),
+      volume: parseFloat(candle[5] || 0)
     }));
+
+    return safeArray.map(klineData, processCandle);
   }, [timeframeData, activeTimeframe]);
 
   // Process technical indicators for active timeframe
@@ -349,9 +406,11 @@ export default function MultiTimeframeChart({
       {/* Content */}
       <div className="p-6">
         {loading ? (
+          <MultiTimeframeChartSkeleton height={height} />
+        ) : safeObject.keys(timeframeData).length === 0 ? (
           <div className="flex items-center justify-center py-12">
             <div className="text-center">
-              <Activity className="h-8 w-8 animate-spin text-blue-600 mx-auto mb-2" />
+              <AlertTriangle className="h-8 w-8 text-gray-400 mx-auto mb-2" />
               <p className="text-gray-600">Loading multi-timeframe analysis...</p>
             </div>
           </div>

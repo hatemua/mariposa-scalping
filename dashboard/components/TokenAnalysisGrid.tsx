@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { marketApi } from '@/lib/api';
 import { safeNumber, safeArray } from '@/lib/formatters';
+import { TokenAnalysisGridSkeleton } from './ui/SkeletonLoaders';
 import { toast } from 'react-hot-toast';
 import {
   Grid3X3,
@@ -105,8 +106,9 @@ export default function TokenAnalysisGrid({
         limit: maxTokens
       });
 
-      if (response.success) {
-        setTokens(response.data.tokens);
+      if (safeObject.get(response, 'success', false)) {
+        const tokens = safeObject.get(response, 'data.tokens', []);
+        setTokens(Array.isArray(tokens) ? tokens : []);
         setLastUpdate(new Date());
       } else {
         toast.error('Failed to load token analysis');
@@ -136,15 +138,15 @@ export default function TokenAnalysisGrid({
 
     // Filter by recommendation
     if (filterRecommendation !== 'all') {
-      filtered = filtered.filter(token =>
-        token.analysis?.recommendation === filterRecommendation
+      filtered = safeArray.filter(filtered, token =>
+        safeObject.get(token, 'analysis.recommendation', '') === filterRecommendation
       );
     }
 
     // Filter by confidence
     if (minConfidence > 0) {
-      filtered = filtered.filter(token =>
-        (token.analysis?.confidence || 0) >= minConfidence / 100
+      filtered = safeArray.filter(filtered, token =>
+        (safeObject.get(token, 'analysis.confidence', 0)) >= minConfidence / 100
       );
     }
 
@@ -281,16 +283,11 @@ export default function TokenAnalysisGrid({
 
       {/* Token Grid */}
       <div className="p-6">
-        {loading && tokens.length === 0 ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="text-center">
-              <Activity className="h-8 w-8 animate-spin text-blue-600 mx-auto mb-2" />
-              <p className="text-gray-600">Loading token analysis...</p>
-            </div>
-          </div>
+        {loading && safeArray.length(tokens) === 0 ? (
+          <TokenAnalysisGridSkeleton count={maxTokens || 6} />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {filteredTokens.map((token) => (
+            {safeArray.map(filteredTokens, (token) => (
               <div
                 key={token.symbol}
                 onClick={() => onTokenSelect?.(token.symbol)}
@@ -300,17 +297,17 @@ export default function TokenAnalysisGrid({
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <span className="font-semibold text-gray-900">
-                      {token.symbol.replace('USDT', '')}
+                      {safeObject.get(token, 'symbol', '').replace('USDT', '')}
                     </span>
                     <span className="text-xs text-gray-500 bg-gray-100 px-1 rounded">
-                      #{token.rank}
+                      #{safeObject.get(token, 'rank', 0)}
                     </span>
                   </div>
 
-                  {token.analysis && (
-                    <div className={`px-2 py-1 rounded border text-xs font-medium ${getRecommendationColor(token.analysis.recommendation)}`}>
-                      {getRecommendationIcon(token.analysis.recommendation)}
-                      <span className="ml-1">{token.analysis.recommendation}</span>
+                  {safeObject.get(token, 'analysis') && (
+                    <div className={`px-2 py-1 rounded border text-xs font-medium ${getRecommendationColor(safeObject.get(token, 'analysis.recommendation', ''))}`}>
+                      {getRecommendationIcon(safeObject.get(token, 'analysis.recommendation', ''))}
+                      <span className="ml-1">{safeObject.get(token, 'analysis.recommendation', '')}</span>
                     </div>
                   )}
                 </div>
@@ -319,45 +316,45 @@ export default function TokenAnalysisGrid({
                 <div className="mb-3">
                   <div className="flex items-center justify-between">
                     <span className="text-lg font-semibold text-gray-900">
-                      {safeNumber.price(token.marketData?.price)}
+                      {safeNumber.price(safeObject.get(token, 'marketData.price', 0))}
                     </span>
                     <span className={`text-sm font-medium ${
-                      (token.marketData?.change24h ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                      safeObject.get(token, 'marketData.change24h', 0) >= 0 ? 'text-green-600' : 'text-red-600'
                     }`}>
-                      {(token.marketData?.change24h ?? 0) >= 0 ? '+' : ''}{safeNumber.toFixed(token.marketData?.change24h, 2)}%
+                      {safeObject.get(token, 'marketData.change24h', 0) >= 0 ? '+' : ''}{safeNumber.toFixed(safeObject.get(token, 'marketData.change24h', 0), 2)}%
                     </span>
                   </div>
                   <div className="text-xs text-gray-600">
-                    Vol: ${safeNumber.toFixed((token.marketData?.volume ?? 0) / 1000000, 1)}M
+                    Vol: ${safeNumber.toFixed((safeObject.get(token, 'marketData.volume', 0)) / 1000000, 1)}M
                   </div>
                 </div>
 
                 {/* AI Analysis */}
-                {token.analysis && (
+                {safeObject.get(token, 'analysis') && (
                   <div className="mb-3 p-2 bg-gray-50 rounded">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs text-gray-600">AI Confidence</span>
                       <span className="text-xs font-medium">
-                        {safeNumber.toFixed((token.analysis?.confidence ?? 0) * 100, 0)}%
+                        {safeNumber.toFixed(safeObject.get(token, 'analysis.confidence', 0) * 100, 0)}%
                       </span>
                     </div>
-                    <ScoreBar score={(token.analysis?.confidence ?? 0) * 10} />
+                    <ScoreBar score={safeObject.get(token, 'analysis.confidence', 0) * 10} />
 
-                    {(token.analysis.targetPrice || token.analysis.stopLoss) && (
+                    {(safeObject.get(token, 'analysis.targetPrice') || safeObject.get(token, 'analysis.stopLoss')) && (
                       <div className="mt-2 text-xs space-y-1">
-                        {token.analysis.targetPrice && (
+                        {safeObject.get(token, 'analysis.targetPrice') && (
                           <div className="flex justify-between">
                             <span className="text-gray-600">Target:</span>
                             <span className="font-medium text-green-600">
-                              {safeNumber.price(token.analysis?.targetPrice)}
+                              {safeNumber.price(safeObject.get(token, 'analysis.targetPrice', 0))}
                             </span>
                           </div>
                         )}
-                        {token.analysis.stopLoss && (
+                        {safeObject.get(token, 'analysis.stopLoss') && (
                           <div className="flex justify-between">
                             <span className="text-gray-600">Stop:</span>
                             <span className="font-medium text-red-600">
-                              {safeNumber.price(token.analysis?.stopLoss)}
+                              {safeNumber.price(safeObject.get(token, 'analysis.stopLoss', 0))}
                             </span>
                           </div>
                         )}
@@ -371,54 +368,54 @@ export default function TokenAnalysisGrid({
                   <div>
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-gray-600">Profit Potential</span>
-                      <span className={`font-medium ${getScoreColor(token.metrics?.profitPotential ?? 0)}`}>
-                        {safeNumber.toFixed(token.metrics?.profitPotential, 1)}/10
+                      <span className={`font-medium ${getScoreColor(safeObject.get(token, 'metrics.profitPotential', 0))}`}>
+                        {safeNumber.toFixed(safeObject.get(token, 'metrics.profitPotential', 0), 1)}/10
                       </span>
                     </div>
-                    <ScoreBar score={token.metrics?.profitPotential ?? 0} />
+                    <ScoreBar score={safeObject.get(token, 'metrics.profitPotential', 0)} />
                   </div>
 
                   <div>
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-gray-600">Risk Score</span>
-                      <span className={`font-medium ${getScoreColor(token.metrics?.riskScore ?? 0, true)}`}>
-                        {safeNumber.toFixed(token.metrics?.riskScore, 1)}/10
+                      <span className={`font-medium ${getScoreColor(safeObject.get(token, 'metrics.riskScore', 0), true)}`}>
+                        {safeNumber.toFixed(safeObject.get(token, 'metrics.riskScore', 0), 1)}/10
                       </span>
                     </div>
-                    <ScoreBar score={token.metrics?.riskScore ?? 0} invert />
+                    <ScoreBar score={safeObject.get(token, 'metrics.riskScore', 0)} invert />
                   </div>
 
                   <div>
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-gray-600">Momentum</span>
-                      <span className={`font-medium ${getScoreColor(token.metrics?.momentumScore ?? 0)}`}>
-                        {safeNumber.toFixed(token.metrics?.momentumScore, 1)}/10
+                      <span className={`font-medium ${getScoreColor(safeObject.get(token, 'metrics.momentumScore', 0))}`}>
+                        {safeNumber.toFixed(safeObject.get(token, 'metrics.momentumScore', 0), 1)}/10
                       </span>
                     </div>
-                    <ScoreBar score={token.metrics?.momentumScore ?? 0} />
+                    <ScoreBar score={safeObject.get(token, 'metrics.momentumScore', 0)} />
                   </div>
                 </div>
 
                 {/* Signals */}
-                {token.signals.length > 0 && (
+                {safeArray.hasItems(safeObject.get(token, 'signals', [])) && (
                   <div className="mt-3 pt-3 border-t border-gray-100">
                     <div className="text-xs text-gray-600 mb-1">Signals:</div>
                     <div className="flex flex-wrap gap-1">
-                      {token.signals.slice(0, 3).map((signal, idx) => (
+                      {safeArray.map(safeArray.slice(safeObject.get(token, 'signals', []), 0, 3), (signal, idx) => (
                         <span
                           key={idx}
                           className={`px-2 py-1 rounded text-xs font-medium ${
-                            signal.type === 'buy' ? 'bg-green-100 text-green-700' :
-                            signal.type === 'sell' ? 'bg-red-100 text-red-700' :
+                            safeObject.get(signal, 'type', '') === 'buy' ? 'bg-green-100 text-green-700' :
+                            safeObject.get(signal, 'type', '') === 'sell' ? 'bg-red-100 text-red-700' :
                             'bg-blue-100 text-blue-700'
                           }`}
                         >
-                          {signal.type.toUpperCase()}
+                          {safeObject.get(signal, 'type', '').toUpperCase()}
                         </span>
                       ))}
-                      {safeArray.length(token.signals) > 3 && (
+                      {safeArray.length(safeObject.get(token, 'signals', [])) > 3 && (
                         <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs">
-                          +{safeArray.length(token.signals) - 3}
+                          +{safeArray.length(safeObject.get(token, 'signals', [])) - 3}
                         </span>
                       )}
                     </div>
@@ -430,31 +427,32 @@ export default function TokenAnalysisGrid({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      setShowDetails(showDetails === token.symbol ? null : token.symbol);
+                      const tokenSymbol = safeObject.get(token, 'symbol', '');
+                      setShowDetails(showDetails === tokenSymbol ? null : tokenSymbol);
                     }}
                     className="w-full flex items-center justify-center gap-1 text-xs text-blue-600 hover:text-blue-700"
                   >
                     <Eye className="h-3 w-3" />
-                    {showDetails === token.symbol ? 'Hide Details' : 'Show Details'}
+                    {showDetails === safeObject.get(token, 'symbol', '') ? 'Hide Details' : 'Show Details'}
                   </button>
 
-                  {showDetails === token.symbol && (
+                  {showDetails === safeObject.get(token, 'symbol', '') && (
                     <div className="mt-2 text-xs space-y-1 bg-blue-50 p-2 rounded">
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <span className="text-gray-600">Volatility:</span>
-                          <span className="ml-1 font-medium">{safeNumber.toFixed(token.metrics?.volatility, 1)}%</span>
+                          <span className="ml-1 font-medium">{safeNumber.toFixed(safeObject.get(token, 'metrics.volatility', 0), 1)}%</span>
                         </div>
                         <div>
                           <span className="text-gray-600">Liquidity:</span>
-                          <span className="ml-1 font-medium">{safeNumber.toFixed(token.metrics?.liquidityScore, 1)}/10</span>
+                          <span className="ml-1 font-medium">{safeNumber.toFixed(safeObject.get(token, 'metrics.liquidityScore', 0), 1)}/10</span>
                         </div>
                       </div>
-                      {token.analysis?.reasoning && (
+                      {safeObject.get(token, 'analysis.reasoning') && (
                         <div className="mt-2">
                           <span className="text-gray-600">Analysis:</span>
                           <p className="text-gray-700 mt-1 line-clamp-3">
-                            {token.analysis.reasoning}
+                            {safeObject.get(token, 'analysis.reasoning', '')}
                           </p>
                         </div>
                       )}
