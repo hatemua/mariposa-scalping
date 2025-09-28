@@ -97,10 +97,10 @@ export default function MarketPage() {
       <DashboardLayout>
         <div className={`${isFullscreen ? 'fixed inset-0 z-50 bg-white' : 'max-w-full'} px-4 sm:px-6 lg:px-8 py-6`}>
           {/* Header */}
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between mb-4">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">Enhanced Market Analysis</h1>
-              <p className="text-gray-600">
+              <h1 className="text-2xl font-bold text-gray-900">Enhanced Market Analysis</h1>
+              <p className="text-sm text-gray-600 mt-1">
                 Deep technical analysis with AI insights across multiple timeframes
               </p>
             </div>
@@ -625,21 +625,21 @@ export default function MarketPage() {
             {viewMode === 'professional' && (
               <div className="space-y-6">
                 {/* Symbol Selector for Professional Suite */}
-                <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <Eye className="h-5 w-5 text-emerald-600" />
-                      <h3 className="text-lg font-semibold text-gray-900">Professional Trading Suite</h3>
-                      <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs font-medium rounded-full">
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-3">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Eye className="h-4 w-4 text-emerald-600" />
+                      <h3 className="text-base font-semibold text-gray-900">Professional Trading Suite</h3>
+                      <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs font-medium rounded-full">
                         INSTITUTIONAL GRADE
                       </span>
                     </div>
-                    <div className="text-sm text-gray-600">
-                      Active Symbol: <span className="font-medium text-emerald-600">{selectedSymbol}</span>
+                    <div className="text-xs text-gray-600">
+                      Active: <span className="font-medium text-emerald-600">{selectedSymbol}</span>
                     </div>
                   </div>
 
-                  <div className="mt-4 grid grid-cols-3 md:grid-cols-6 lg:grid-cols-9 gap-2">
+                  <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-9 gap-2">
                     {[
                       'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
                       'MATICUSDT', 'LINKUSDT', 'UNIUSDT', 'AVAXUSDT', 'DOTUSDT', 'LTCUSDT',
@@ -648,9 +648,9 @@ export default function MarketPage() {
                       <button
                         key={symbol}
                         onClick={() => setSelectedSymbol(symbol)}
-                        className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        className={`px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
                           selectedSymbol === symbol
-                            ? 'bg-emerald-600 text-white shadow-md'
+                            ? 'bg-emerald-600 text-white shadow-sm'
                             : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                         }`}
                       >
@@ -661,7 +661,7 @@ export default function MarketPage() {
                 </div>
 
                 {/* Opportunity & Agent Monitoring Row */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <SectionErrorBoundary>
                     <OpportunityScanner
                       symbols={[
@@ -687,7 +687,7 @@ export default function MarketPage() {
                 </div>
 
                 {/* Whale Activity & Professional Signals Row */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <SectionErrorBoundary>
                     <WhaleActivityMonitor
                       symbols={[selectedSymbol, 'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT']}
@@ -715,7 +715,7 @@ export default function MarketPage() {
                 </div>
 
                 {/* Advanced Analytics Row */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                   <SectionErrorBoundary>
                     <VaRCalculator
                       symbols={[selectedSymbol, 'BTCUSDT', 'ETHUSDT']}
@@ -746,7 +746,7 @@ export default function MarketPage() {
                 </div>
 
                 {/* Professional Intelligence Row */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <SectionErrorBoundary>
                     <SmartEntrySignals
                       symbol={selectedSymbol}
@@ -767,7 +767,7 @@ export default function MarketPage() {
                 </div>
 
                 {/* Risk & Portfolio Management Row */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                   <SectionErrorBoundary>
                     <RiskMonitorDashboard
                       symbol={selectedSymbol}
@@ -806,7 +806,7 @@ export default function MarketPage() {
                 </div>
 
                 {/* Advanced Portfolio Analysis */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <SectionErrorBoundary>
                     <PortfolioHeatMap
                       symbols={[
@@ -835,15 +835,15 @@ export default function MarketPage() {
                 </div>
 
                 {/* Professional Suite Info Panel */}
-                <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-6">
-                  <div className="flex items-center gap-3 mb-4">
-                    <Eye className="h-6 w-6 text-emerald-600" />
-                    <h3 className="text-lg font-semibold text-emerald-900">Professional Trading Intelligence</h3>
-                    <span className="px-2 py-1 bg-emerald-600 text-white text-xs font-medium rounded-full">
+                <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Eye className="h-5 w-5 text-emerald-600" />
+                    <h3 className="text-base font-semibold text-emerald-900">Professional Trading Intelligence</h3>
+                    <span className="px-2 py-0.5 bg-emerald-600 text-white text-xs font-medium rounded-full">
                       LIVE DATA
                     </span>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 text-sm">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 text-sm">
                     <div>
                       <div className="font-medium text-emerald-800">Opportunity Scanner</div>
                       <div className="text-emerald-600">Real-time profit opportunities with risk-adjusted scoring</div>
@@ -869,7 +869,7 @@ export default function MarketPage() {
                       <div className="text-emerald-600">Portfolio optimization and position sizing tools</div>
                     </div>
                   </div>
-                  <div className="mt-4 text-xs text-emerald-700">
+                  <div className="mt-3 text-xs text-emerald-700">
                     🚀 Complete professional trading suite • Out-of-the-box opportunities • Whale detection • AI-powered signals • Risk optimization
                   </div>
                 </div>

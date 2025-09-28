@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { marketApi } from '@/lib/api';
+import { enhancedMarketApi } from '@/lib/enhancedApi';
 import { safeNumber, safeObject, safeArray } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
 import {
@@ -197,18 +197,29 @@ export default function OpportunityScanner({
       setLoading(true);
       setError(null);
 
-      // Fetch real market data for opportunity analysis
-      const realOpportunities: OpportunityData[] = [];
+      let realOpportunities: OpportunityData[] = [];
 
-      // Process symbols in batches to avoid API rate limits
-      const batchSize = 6;
-      for (let i = 0; i < symbols.length; i += batchSize) {
-        const batch = symbols.slice(i, i + batchSize);
+      try {
+        // Try to use enhanced opportunity scanner API first
+        const opportunityResponse = await enhancedMarketApi.getOpportunityScanner(symbols, minScore);
+        if (opportunityResponse.success && Array.isArray(opportunityResponse.data)) {
+          realOpportunities = opportunityResponse.data;
+        } else {
+          throw new Error('Opportunity scanner API returned invalid data');
+        }
+      } catch (apiError) {
+        console.warn('Enhanced opportunity API failed, falling back to market analysis:', apiError);
+
+        // Fallback: Fetch real market data for opportunity analysis
+        // Process symbols in batches to avoid API rate limits
+        const batchSize = 6;
+        for (let i = 0; i < symbols.length; i += batchSize) {
+          const batch = symbols.slice(i, i + batchSize);
 
         const batchPromises = batch.map(async (symbol) => {
           try {
-            // Get real market data from API
-            const marketResponse = await marketApi.getMarketData(symbol);
+            // Get real market data from enhanced API with fallback
+            const marketResponse = await enhancedMarketApi.getMarketData(symbol);
 
             if (!marketResponse.success) {
               return null;
@@ -219,7 +230,7 @@ export default function OpportunityScanner({
             // Try to get real-time analysis for confluence data, fallback to generated
             let confluenceData;
             try {
-              const realTimeResponse = await marketApi.getRealTimeAnalysis(symbol);
+              const realTimeResponse = await enhancedMarketApi.getRealTimeAnalysis(symbol);
               if (realTimeResponse.success && realTimeResponse.data?.consensus) {
                 confluenceData = {
                   score: (realTimeResponse.data.consensus.confidence || 0.5) * 100,
@@ -290,9 +301,10 @@ export default function OpportunityScanner({
         const validOpportunities = batchResults.filter(Boolean) as OpportunityData[];
         realOpportunities.push(...validOpportunities);
 
-        // Small delay between batches to respect API rate limits
-        if (i + batchSize < symbols.length) {
-          await new Promise(resolve => setTimeout(resolve, 100));
+          // Small delay between batches to respect API rate limits
+          if (i + batchSize < symbols.length) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
         }
       }
 

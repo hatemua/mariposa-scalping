@@ -1,9 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { marketApi } from '@/lib/api';
+import { enhancedMarketApi } from '@/lib/enhancedApi';
 import { safeNumber, safeObject, safeArray } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
+import { SignalFeedSkeleton } from '@/components/ui/LoadingSkeleton';
+import TradingErrorBoundary from '@/components/ui/TradingErrorBoundary';
 import {
   Zap,
   TrendingUp,
@@ -93,7 +95,7 @@ const CATEGORY_ICONS = {
   AI_PREDICTION: Brain
 };
 
-export default function ProfessionalSignalFeed({
+function ProfessionalSignalFeed({
   symbols = [
     'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
     'MATICUSDT', 'LINKUSDT', 'UNIUSDT', 'AVAXUSDT', 'DOTUSDT', 'LTCUSDT'
@@ -124,10 +126,10 @@ export default function ProfessionalSignalFeed({
 
         const batchPromises = batch.map(async (symbol) => {
           try {
-            // Get real market data and technical analysis
+            // Get real market data and technical analysis with fallback
             const [marketResponse, confluenceResponse] = await Promise.all([
-              marketApi.getMarketData(symbol),
-              marketApi.getRealTimeAnalysis(symbol)
+              enhancedMarketApi.getMarketData(symbol),
+              enhancedMarketApi.getRealTimeAnalysis(symbol)
             ]);
 
             if (!marketResponse.success || !confluenceResponse.success) {
@@ -448,7 +450,22 @@ export default function ProfessionalSignalFeed({
       setLoading(true);
       setError(null);
 
-      const newSignals = await generateRealTradingSignals();
+      let newSignals: TradingSignal[] = [];
+
+      try {
+        // Try to use enhanced professional signals API first
+        const signalsResponse = await enhancedMarketApi.getProfessionalSignals(symbols, minStrength);
+        if (signalsResponse.success && Array.isArray(signalsResponse.data)) {
+          newSignals = signalsResponse.data;
+        } else {
+          throw new Error('Professional signals API returned invalid data');
+        }
+      } catch (apiError) {
+        console.warn('Enhanced signals API failed, falling back to real-time analysis:', apiError);
+        // Fallback: Generate signals from real-time analysis
+        newSignals = await generateRealTradingSignals();
+      }
+
       setSignals(newSignals);
 
       // Show notifications for critical signals
@@ -504,13 +521,13 @@ export default function ProfessionalSignalFeed({
   return (
     <div className={`bg-white rounded-xl shadow-lg border border-gray-200 ${className}`}>
       {/* Header */}
-      <div className="p-6 border-b border-gray-200">
+      <div className="p-4 border-b border-gray-200">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Zap className="h-6 w-6 text-blue-600" />
+          <div className="flex items-center gap-2">
+            <Zap className="h-5 w-5 text-blue-600" />
             <div>
-              <h3 className="text-lg font-semibold text-gray-900">Professional Signal Feed</h3>
-              <p className="text-sm text-gray-600">
+              <h3 className="text-base font-semibold text-gray-900">Professional Signal Feed</h3>
+              <p className="text-xs text-gray-600 mt-0.5">
                 {filteredSignals.length} active signals • Real-time analysis
               </p>
             </div>
@@ -544,12 +561,12 @@ export default function ProfessionalSignalFeed({
         </div>
 
         {/* Filters */}
-        <div className="mt-4 flex flex-wrap items-center gap-3">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <Filter className="h-4 w-4 text-gray-400" />
           <select
             value={selectedCategory || ''}
             onChange={(e) => setSelectedCategory(e.target.value || null)}
-            className="text-sm border border-gray-300 rounded-lg px-3 py-1 bg-white"
+            className="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white"
           >
             <option value="">All Categories</option>
             <option value="BREAKOUT">Breakout</option>
@@ -563,7 +580,7 @@ export default function ProfessionalSignalFeed({
           <select
             value={selectedPriority || ''}
             onChange={(e) => setSelectedPriority(e.target.value || null)}
-            className="text-sm border border-gray-300 rounded-lg px-3 py-1 bg-white"
+            className="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white"
           >
             <option value="">All Priorities</option>
             <option value="CRITICAL">Critical</option>
@@ -575,7 +592,7 @@ export default function ProfessionalSignalFeed({
       </div>
 
       {/* Content */}
-      <div className="p-6">
+      <div className="p-4">
         {error && (
           <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-lg mb-4">
             <AlertTriangle className="h-5 w-5 text-red-600" />
@@ -583,10 +600,32 @@ export default function ProfessionalSignalFeed({
           </div>
         )}
 
-        {loading ? (
-          <div className="flex items-center justify-center py-8">
-            <RefreshCw className="h-6 w-6 text-blue-600 animate-spin mr-2" />
-            <span className="text-gray-600">Generating signals...</span>
+        {loading && signals.length === 0 ? (
+          <div className="animate-pulse space-y-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="border border-gray-200 rounded-lg p-3">
+                <div className="flex justify-between items-start mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-5 h-5 bg-gray-200 rounded"></div>
+                    <div className="w-16 h-4 bg-gray-200 rounded"></div>
+                    <div className="w-12 h-4 bg-gray-200 rounded-full"></div>
+                  </div>
+                  <div className="w-20 h-4 bg-gray-200 rounded"></div>
+                </div>
+                <div className="space-y-2 mb-3">
+                  <div className="w-full h-3 bg-gray-200 rounded"></div>
+                  <div className="w-3/4 h-3 bg-gray-200 rounded"></div>
+                </div>
+                <div className="grid grid-cols-4 gap-3">
+                  {Array.from({ length: 4 }).map((_, j) => (
+                    <div key={j} className="space-y-1">
+                      <div className="w-full h-3 bg-gray-200 rounded"></div>
+                      <div className="w-3/4 h-4 bg-gray-200 rounded"></div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         ) : filteredSignals.length === 0 ? (
           <div className="text-center py-8 text-gray-500">
@@ -681,5 +720,17 @@ export default function ProfessionalSignalFeed({
         )}
       </div>
     </div>
+  );
+}
+
+// Wrap component with error boundary
+export default function ProfessionalSignalFeedWithErrorBoundary(props: ProfessionalSignalFeedProps) {
+  return (
+    <TradingErrorBoundary
+      componentName="Professional Signal Feed"
+      fallbackComponent="compact"
+    >
+      <ProfessionalSignalFeed {...props} />
+    </TradingErrorBoundary>
   );
 }

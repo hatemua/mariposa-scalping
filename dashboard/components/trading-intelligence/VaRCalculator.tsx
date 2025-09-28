@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { marketApi } from '@/lib/api';
+import { enhancedVaRApi, enhancedMarketApi } from '@/lib/enhancedApi';
 import { safeNumber, safeObject, safeArray } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
 import {
@@ -195,9 +195,9 @@ export default function VaRCalculator({
   // Generate comprehensive VaR analysis
   const calculateVaRAnalysis = async (): Promise<VaRData> => {
     try {
-      // Fetch historical data for all symbols
+      // Fetch historical data for all symbols using enhanced API
       const dataPromises = symbols.map(async (symbol) => {
-        const chartData = await marketApi.getChartData(symbol, '1d', 252); // 1 year of daily data
+        const chartData = await enhancedMarketApi.getChartData(symbol, '1d', 252); // 1 year of daily data
         const klines = safeArray.getValue(safeObject.get(chartData, 'data.klines', [])) as any[];
         const prices = klines.map((candle: any[]) => parseFloat(candle[4])); // Close prices
 
@@ -447,7 +447,22 @@ export default function VaRCalculator({
     setError(null);
 
     try {
-      const data = await calculateVaRAnalysis();
+      let data: VaRData;
+
+      try {
+        // Try to use enhanced VaR API first
+        const varResponse = await enhancedVaRApi.calculateVaR(symbols, selectedConfidence, selectedTimeHorizon);
+        if (varResponse.success) {
+          data = varResponse.data;
+        } else {
+          throw new Error('VaR API returned invalid data');
+        }
+      } catch (apiError) {
+        console.warn('Enhanced VaR API failed, falling back to local calculation:', apiError);
+        // Fallback: Calculate VaR locally
+        data = await calculateVaRAnalysis();
+      }
+
       setVarData(data);
     } catch (error: any) {
       console.error('Error fetching VaR data:', error);

@@ -1,9 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { marketApi } from '@/lib/api';
+import { enhancedMarketApi } from '@/lib/enhancedApi';
 import { safeNumber, safeObject, safeArray } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
+import { WhaleActivitySkeleton } from '@/components/ui/LoadingSkeleton';
+import TradingErrorBoundary from '@/components/ui/TradingErrorBoundary';
 import {
   Eye,
   TrendingUp,
@@ -84,7 +86,7 @@ const ALERT_COLORS = {
   CRITICAL: 'text-red-600 bg-red-50 border-red-200'
 };
 
-export default function WhaleActivityMonitor({
+function WhaleActivityMonitor({
   symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT'],
   minWhaleSize = 100000, // $100k minimum
   autoRefresh = true,
@@ -107,8 +109,8 @@ export default function WhaleActivityMonitor({
       // Analyze each symbol for whale activity using real market data
       for (const symbol of symbols) {
         try {
-          // Get real market data and analysis
-          const marketResponse = await marketApi.getMarketData(symbol);
+          // Get real market data and analysis with fallback
+          const marketResponse = await enhancedMarketApi.getMarketData(symbol);
           if (!marketResponse.success) {
             continue;
           }
@@ -284,10 +286,23 @@ export default function WhaleActivityMonitor({
       setLoading(true);
       setError(null);
 
-      // Analyze real whale activity from market data
-      const activities = await analyzeRealWhaleActivity();
-      const newAlerts = generateAlerts(activities);
+      let activities: WhaleActivity[] = [];
 
+      try {
+        // Try to use enhanced whale activity API first
+        const whaleResponse = await enhancedMarketApi.getWhaleActivity(symbols, minWhaleSize);
+        if (whaleResponse.success && Array.isArray(whaleResponse.data)) {
+          activities = whaleResponse.data;
+        } else {
+          throw new Error('Whale activity API returned invalid data');
+        }
+      } catch (apiError) {
+        console.warn('Enhanced whale API failed, falling back to market analysis:', apiError);
+        // Fallback: Analyze real whale activity from market data
+        activities = await analyzeRealWhaleActivity();
+      }
+
+      const newAlerts = generateAlerts(activities);
       setWhaleActivities(activities);
 
       if (alertsEnabled) {
@@ -344,13 +359,13 @@ export default function WhaleActivityMonitor({
   return (
     <div className={`bg-white rounded-xl shadow-lg border border-gray-200 ${className}`}>
       {/* Header */}
-      <div className="p-6 border-b border-gray-200">
+      <div className="p-4 border-b border-gray-200">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Eye className="h-6 w-6 text-purple-600" />
+          <div className="flex items-center gap-2">
+            <Eye className="h-5 w-5 text-purple-600" />
             <div>
-              <h3 className="text-lg font-semibold text-gray-900">Whale Activity Monitor</h3>
-              <p className="text-sm text-gray-600">
+              <h3 className="text-base font-semibold text-gray-900">Whale Activity Monitor</h3>
+              <p className="text-xs text-gray-600 mt-0.5">
                 {filteredActivities.length} whale activities • {alerts.length} active alerts
               </p>
             </div>
@@ -370,8 +385,8 @@ export default function WhaleActivityMonitor({
             <button
               onClick={fetchWhaleActivity}
               disabled={loading}
-              className="p-2 text-gray-600 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
-              title="Refresh Activity"
+              className="p-2 text-gray-600 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors disabled:opacity-50"
+              title={loading ? 'Updating...' : 'Refresh Activity'}
             >
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
@@ -384,12 +399,12 @@ export default function WhaleActivityMonitor({
         </div>
 
         {/* Controls */}
-        <div className="mt-4 flex items-center gap-3">
+        <div className="mt-3 flex items-center gap-2">
           <Filter className="h-4 w-4 text-gray-400" />
           <select
             value={selectedSymbol || ''}
             onChange={(e) => setSelectedSymbol(e.target.value || null)}
-            className="text-sm border border-gray-300 rounded-lg px-3 py-1 bg-white"
+            className="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white"
           >
             <option value="">All Symbols</option>
             {symbols.map(symbol => (
@@ -421,7 +436,7 @@ export default function WhaleActivityMonitor({
       )}
 
       {/* Content */}
-      <div className="p-6">
+      <div className="p-4">
         {error && (
           <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-lg mb-4">
             <AlertTriangle className="h-5 w-5 text-red-600" />
@@ -429,10 +444,23 @@ export default function WhaleActivityMonitor({
           </div>
         )}
 
-        {loading ? (
-          <div className="flex items-center justify-center py-8">
-            <RefreshCw className="h-6 w-6 text-purple-600 animate-spin mr-2" />
-            <span className="text-gray-600">Monitoring whale activity...</span>
+        {loading && whaleActivities.length === 0 ? (
+          <div className="animate-pulse space-y-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-gray-200 rounded"></div>
+                  <div className="space-y-2">
+                    <div className="w-16 h-4 bg-gray-200 rounded"></div>
+                    <div className="w-32 h-3 bg-gray-200 rounded"></div>
+                  </div>
+                </div>
+                <div className="text-right space-y-2">
+                  <div className="w-20 h-4 bg-gray-200 rounded"></div>
+                  <div className="w-16 h-3 bg-gray-200 rounded"></div>
+                </div>
+              </div>
+            ))}
           </div>
         ) : filteredActivities.length === 0 ? (
           <div className="text-center py-8 text-gray-500">
@@ -519,5 +547,17 @@ export default function WhaleActivityMonitor({
         )}
       </div>
     </div>
+  );
+}
+
+// Wrap component with error boundary
+export default function WhaleActivityMonitorWithErrorBoundary(props: WhaleActivityMonitorProps) {
+  return (
+    <TradingErrorBoundary
+      componentName="Whale Activity Monitor"
+      fallbackComponent="compact"
+    >
+      <WhaleActivityMonitor {...props} />
+    </TradingErrorBoundary>
   );
 }
