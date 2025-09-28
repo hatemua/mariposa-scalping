@@ -451,6 +451,12 @@ function ProfessionalSignalFeed({
   };
 
   const fetchSignals = async () => {
+    // Prevent refresh during active AI analysis
+    if (isAIProcessing) {
+      console.log('🔒 Analysis protection: Skipping refresh during AI processing');
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
@@ -497,17 +503,38 @@ function ProfessionalSignalFeed({
     }
   };
 
-  // Smart refresh integration
+  // Analysis-aware refresh function
+  const protectedFetchSignals = async () => {
+    // Skip refresh if analysis is in progress
+    if (isAIProcessing) {
+      console.log('🔒 Analysis protection: Skipping refresh during AI processing');
+      return;
+    }
+
+    // Check if analysis timed out (more than 3 minutes)
+    if (processingStartTime) {
+      const elapsedTime = Date.now() - processingStartTime.getTime();
+      if (elapsedTime > 180000) { // 3 minutes timeout
+        console.log('⏰ Analysis timeout detected, resetting...');
+        setIsAIProcessing(false);
+        setProcessingStartTime(null);
+      }
+    }
+
+    await fetchSignals();
+  };
+
+  // Smart refresh integration with analysis protection
   const { enabled: refreshEnabled, interval: effectiveInterval, refreshFn } = useComponentRefresh(
     'ProfessionalSignalFeed',
     refreshInterval,
-    fetchSignals
+    protectedFetchSignals
   );
 
   const smartRefresh = useSmartRefresh({
-    refreshFn,
+    refreshFn: protectedFetchSignals,
     interval: effectiveInterval,
-    enabled: autoRefresh && refreshEnabled,
+    enabled: autoRefresh && refreshEnabled && !isAIProcessing, // Disable during analysis
     pauseOnHover: true,
     pauseOnFocus: true,
     pauseOnInteraction: true,
@@ -529,8 +556,37 @@ function ProfessionalSignalFeed({
 
   // Initial fetch when dependencies change
   useEffect(() => {
-    smartRefresh.manualRefresh();
-  }, [symbols, minStrength, smartRefresh.manualRefresh]);
+    // Only trigger if not currently processing
+    if (!isAIProcessing) {
+      protectedFetchSignals();
+    }
+  }, [symbols, minStrength]);
+
+  // Timeout protection for stuck analysis
+  useEffect(() => {
+    if (!isAIProcessing || !processingStartTime) return;
+
+    const timeoutId = setTimeout(() => {
+      const elapsedTime = Date.now() - processingStartTime.getTime();
+      if (elapsedTime > 180000 && isAIProcessing) { // 3 minutes timeout
+        console.log('⏰ Analysis timeout: Resetting after 3 minutes');
+        setIsAIProcessing(false);
+        setProcessingStartTime(null);
+        setError('Analysis timed out - please try again');
+      }
+    }, 180000); // 3 minutes
+
+    return () => clearTimeout(timeoutId);
+  }, [isAIProcessing, processingStartTime]);
+
+  // Manual refresh with protection
+  const handleManualRefresh = () => {
+    if (isAIProcessing) {
+      console.log('⚠️ Manual refresh blocked - Analysis in progress');
+      return;
+    }
+    protectedFetchSignals();
+  };
 
   const filteredSignals = signals.filter(signal => {
     if (selectedCategory && signal.category !== selectedCategory) return false;
@@ -548,7 +604,14 @@ function ProfessionalSignalFeed({
             <div>
               <h3 className="text-base font-semibold text-gray-900">Professional Signal Feed</h3>
               <p className="text-xs text-gray-600 mt-0.5">
-                {filteredSignals.length} active signals • Real-time analysis
+                {filteredSignals.length} active signals •
+                {isAIProcessing ? (
+                  <span className="text-orange-600 font-medium">
+                    🔒 Analysis protected from refresh
+                  </span>
+                ) : (
+                  'Real-time analysis'
+                )}
               </p>
             </div>
           </div>
@@ -565,14 +628,22 @@ function ProfessionalSignalFeed({
               {notificationsEnabled ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
             </button>
             <button
-              onClick={smartRefresh.manualRefresh}
-              disabled={smartRefresh.isRefreshing}
+              onClick={handleManualRefresh}
+              disabled={smartRefresh.isRefreshing || isAIProcessing}
               className={`p-2 rounded-lg transition-colors ${
-                smartRefresh.isPaused
+                isAIProcessing
+                  ? 'text-orange-600 bg-orange-50 cursor-not-allowed'
+                  : smartRefresh.isPaused
                   ? 'text-yellow-600 bg-yellow-50 hover:bg-yellow-100'
                   : 'text-gray-600 hover:text-blue-600 hover:bg-blue-50'
               }`}
-              title={smartRefresh.isPaused ? 'Refresh Paused (Interacting)' : 'Manual Refresh'}
+              title={
+                isAIProcessing
+                  ? 'Refresh blocked - Analysis in progress'
+                  : smartRefresh.isPaused
+                  ? 'Refresh Paused (Interacting)'
+                  : 'Manual Refresh'
+              }
             >
               <RefreshCw className={`h-4 w-4 ${smartRefresh.isRefreshing ? 'animate-spin' : ''}`} />
             </button>
@@ -628,7 +699,13 @@ function ProfessionalSignalFeed({
         )}
 
         {isAIProcessing && processingStartTime && (
-          <div className="mb-4">
+          <div className="mb-4 bg-orange-50 border-l-4 border-orange-400 p-4 rounded">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-3 h-3 bg-orange-400 rounded-full animate-pulse"></div>
+              <span className="text-orange-800 font-medium text-sm">
+                🔒 Analysis Protected - Refresh temporarily disabled
+              </span>
+            </div>
             <AIProcessingIndicator
               operation="Professional Signal Analysis"
               symbol={symbols.length > 1 ? `${symbols.length} symbols` : symbols[0]}
@@ -637,6 +714,9 @@ function ProfessionalSignalFeed({
               showProgress={true}
               className=""
             />
+            <div className="text-xs text-orange-700 mt-2">
+              Analysis will complete without interruption. Auto-refresh will resume afterwards.
+            </div>
           </div>
         )}
 
