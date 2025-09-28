@@ -40,10 +40,17 @@ import PositionSizingCalculator from '@/components/trading-intelligence/Position
 import AdvancedRiskManager from '@/components/trading-intelligence/AdvancedRiskManager';
 import PortfolioHeatMap from '@/components/trading-intelligence/PortfolioHeatMap';
 import CorrelationMatrix from '@/components/trading-intelligence/CorrelationMatrix';
+import VaRCalculator from '@/components/trading-intelligence/VaRCalculator';
+import MultiTimeframeConfluence from '@/components/trading-intelligence/MultiTimeframeConfluence';
+import OrderBookAnalyzer from '@/components/trading-intelligence/OrderBookAnalyzer';
+import OpportunityScanner from '@/components/trading-intelligence/OpportunityScanner';
+import TradingAgentDashboard from '@/components/trading-intelligence/TradingAgentDashboard';
+import WhaleActivityMonitor from '@/components/trading-intelligence/WhaleActivityMonitor';
+import ProfessionalSignalFeed from '@/components/trading-intelligence/ProfessionalSignalFeed';
 
 export default function MarketPage() {
   const [selectedSymbol, setSelectedSymbol] = useState('BTCUSDT');
-  const [viewMode, setViewMode] = useState<'analysis' | 'grid' | 'chart' | 'intelligence' | 'risk_manager'>('analysis');
+  const [viewMode, setViewMode] = useState<'analysis' | 'grid' | 'chart' | 'intelligence' | 'risk_manager' | 'professional'>('analysis');
   const [showIndicators, setShowIndicators] = useState(false);
   const [showLLMPanel, setShowLLMPanel] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -155,6 +162,17 @@ export default function MarketPage() {
                 >
                   <Settings className="h-4 w-4 mr-1 inline" />
                   Risk Manager
+                </button>
+                <button
+                  onClick={() => setViewMode('professional')}
+                  className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                    viewMode === 'professional'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  <Eye className="h-4 w-4 mr-1 inline" />
+                  Pro Suite
                 </button>
               </div>
 
@@ -599,6 +617,260 @@ export default function MarketPage() {
                   </div>
                   <div className="mt-4 text-xs text-purple-700">
                     ⚡ Institutional-grade risk management • Real-time portfolio analysis • Advanced diversification metrics
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {viewMode === 'professional' && (
+              <div className="space-y-6">
+                {/* Symbol Selector for Professional Suite */}
+                <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Eye className="h-5 w-5 text-emerald-600" />
+                      <h3 className="text-lg font-semibold text-gray-900">Professional Trading Suite</h3>
+                      <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs font-medium rounded-full">
+                        INSTITUTIONAL GRADE
+                      </span>
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      Active Symbol: <span className="font-medium text-emerald-600">{selectedSymbol}</span>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-3 md:grid-cols-6 lg:grid-cols-9 gap-2">
+                    {[
+                      'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
+                      'MATICUSDT', 'LINKUSDT', 'UNIUSDT', 'AVAXUSDT', 'DOTUSDT', 'LTCUSDT',
+                      'BNBUSDT', 'XRPUSDT', 'SHIBUSDT', 'ATOMUSDT', 'NEARUSDT', 'FTMUSDT'
+                    ].map(symbol => (
+                      <button
+                        key={symbol}
+                        onClick={() => setSelectedSymbol(symbol)}
+                        className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                          selectedSymbol === symbol
+                            ? 'bg-emerald-600 text-white shadow-md'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        {symbol.replace('USDT', '')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Opportunity & Agent Monitoring Row */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <SectionErrorBoundary>
+                    <OpportunityScanner
+                      symbols={[
+                        'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
+                        'MATICUSDT', 'LINKUSDT', 'UNIUSDT', 'AVAXUSDT', 'DOTUSDT', 'LTCUSDT'
+                      ]}
+                      maxOpportunities={8}
+                      minScore={70}
+                      autoRefresh={true}
+                      refreshInterval={30000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+
+                  <SectionErrorBoundary>
+                    <TradingAgentDashboard
+                      maxAgents={6}
+                      autoRefresh={true}
+                      refreshInterval={15000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+                </div>
+
+                {/* Whale Activity & Professional Signals Row */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <SectionErrorBoundary>
+                    <WhaleActivityMonitor
+                      symbols={[selectedSymbol, 'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT']}
+                      minWhaleSize={50000}
+                      autoRefresh={true}
+                      refreshInterval={10000}
+                      enableAlerts={true}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+
+                  <SectionErrorBoundary>
+                    <ProfessionalSignalFeed
+                      symbols={[
+                        selectedSymbol, 'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT'
+                      ]}
+                      maxSignals={12}
+                      minStrength={65}
+                      autoRefresh={true}
+                      refreshInterval={15000}
+                      enableNotifications={true}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+                </div>
+
+                {/* Advanced Analytics Row */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <SectionErrorBoundary>
+                    <VaRCalculator
+                      symbols={[selectedSymbol, 'BTCUSDT', 'ETHUSDT']}
+                      autoRefresh={true}
+                      refreshInterval={30000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+
+                  <SectionErrorBoundary>
+                    <MultiTimeframeConfluence
+                      symbol={selectedSymbol}
+                      timeframes={['1m', '5m', '15m', '1h', '4h']}
+                      autoRefresh={true}
+                      refreshInterval={15000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+
+                  <SectionErrorBoundary>
+                    <OrderBookAnalyzer
+                      symbol={selectedSymbol}
+                      autoRefresh={true}
+                      refreshInterval={5000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+                </div>
+
+                {/* Professional Intelligence Row */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <SectionErrorBoundary>
+                    <SmartEntrySignals
+                      symbol={selectedSymbol}
+                      autoRefresh={true}
+                      refreshInterval={10000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+
+                  <SectionErrorBoundary>
+                    <ConfluenceScorePanel
+                      symbol={selectedSymbol}
+                      autoRefresh={true}
+                      refreshInterval={15000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+                </div>
+
+                {/* Risk & Portfolio Management Row */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <SectionErrorBoundary>
+                    <RiskMonitorDashboard
+                      symbol={selectedSymbol}
+                      portfolioSymbols={['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT']}
+                      autoRefresh={true}
+                      refreshInterval={5000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+
+                  <SectionErrorBoundary>
+                    <PositionSizingCalculator
+                      symbol={selectedSymbol}
+                      accountBalance={100000}
+                      riskPerTrade={2}
+                      autoRefresh={true}
+                      refreshInterval={20000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+
+                  <SectionErrorBoundary>
+                    <ExitStrategyPanel
+                      symbol={selectedSymbol}
+                      position={{
+                        side: 'LONG',
+                        entryPrice: 0,
+                        size: 0,
+                        entryTime: new Date().toISOString()
+                      }}
+                      autoRefresh={true}
+                      refreshInterval={10000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+                </div>
+
+                {/* Advanced Portfolio Analysis */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <SectionErrorBoundary>
+                    <PortfolioHeatMap
+                      symbols={[
+                        'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
+                        'MATICUSDT', 'LINKUSDT', 'UNIUSDT'
+                      ]}
+                      autoRefresh={true}
+                      refreshInterval={15000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+
+                  <SectionErrorBoundary>
+                    <CorrelationMatrix
+                      symbols={[
+                        'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
+                        'MATICUSDT', 'LINKUSDT', 'UNIUSDT'
+                      ]}
+                      timeframe="1h"
+                      lookbackPeriods={100}
+                      autoRefresh={true}
+                      refreshInterval={30000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+                </div>
+
+                {/* Professional Suite Info Panel */}
+                <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-6">
+                  <div className="flex items-center gap-3 mb-4">
+                    <Eye className="h-6 w-6 text-emerald-600" />
+                    <h3 className="text-lg font-semibold text-emerald-900">Professional Trading Intelligence</h3>
+                    <span className="px-2 py-1 bg-emerald-600 text-white text-xs font-medium rounded-full">
+                      LIVE DATA
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 text-sm">
+                    <div>
+                      <div className="font-medium text-emerald-800">Opportunity Scanner</div>
+                      <div className="text-emerald-600">Real-time profit opportunities with risk-adjusted scoring</div>
+                    </div>
+                    <div>
+                      <div className="font-medium text-emerald-800">Trading Agents</div>
+                      <div className="text-emerald-600">Autonomous trading bots with performance monitoring</div>
+                    </div>
+                    <div>
+                      <div className="font-medium text-emerald-800">Whale Activity Monitor</div>
+                      <div className="text-emerald-600">Large order detection and institutional flow analysis</div>
+                    </div>
+                    <div>
+                      <div className="font-medium text-emerald-800">Professional Signal Feed</div>
+                      <div className="text-emerald-600">AI-powered signals with entry/exit recommendations</div>
+                    </div>
+                    <div>
+                      <div className="font-medium text-emerald-800">Advanced Analytics</div>
+                      <div className="text-emerald-600">VaR calculations, confluence analysis, order book intelligence</div>
+                    </div>
+                    <div>
+                      <div className="font-medium text-emerald-800">Risk Management</div>
+                      <div className="text-emerald-600">Portfolio optimization and position sizing tools</div>
+                    </div>
+                  </div>
+                  <div className="mt-4 text-xs text-emerald-700">
+                    🚀 Complete professional trading suite • Out-of-the-box opportunities • Whale detection • AI-powered signals • Risk optimization
                   </div>
                 </div>
               </div>
