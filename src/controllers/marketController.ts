@@ -859,19 +859,19 @@ export const getRealTimeAnalysis = async (req: AuthRequest, res: Response): Prom
       [symbolInfo, klineData1m, klineData5m, orderBook] = await Promise.all([
         Promise.race([
           binanceService.getSymbolInfo(normalizedSymbol),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Symbol info timeout')), 10000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Symbol info timeout')), 30000))
         ]),
         Promise.race([
           binanceService.getKlineData(normalizedSymbol, '1m', 100),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('1m kline timeout')), 10000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('1m kline timeout')), 30000))
         ]),
         Promise.race([
           binanceService.getKlineData(normalizedSymbol, '5m', 100),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('5m kline timeout')), 10000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('5m kline timeout')), 30000))
         ]),
         Promise.race([
           binanceService.getOrderBook(normalizedSymbol, 50),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Order book timeout')), 10000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Order book timeout')), 30000))
         ])
       ]);
       console.log(`✅ Market data fetched successfully in ${Date.now() - startTime}ms`);

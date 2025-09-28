@@ -25,6 +25,10 @@ interface Config {
   EMAIL_SECURE: boolean;
   EMAIL_USER: string;
   EMAIL_PASS: string;
+  AI_ANALYSIS_TIMEOUT: number;
+  MARKET_DATA_TIMEOUT: number;
+  BULK_ANALYSIS_TIMEOUT: number;
+  SERVER_TIMEOUT: number;
 }
 
 const requiredEnvVars = [
@@ -69,5 +73,9 @@ export const config: Config = {
   EMAIL_PORT: parseInt(process.env.EMAIL_PORT || '465', 10),
   EMAIL_SECURE: process.env.EMAIL_SECURE === 'true',
   EMAIL_USER: process.env.EMAIL_USER!,
-  EMAIL_PASS: process.env.EMAIL_PASS!
+  EMAIL_PASS: process.env.EMAIL_PASS!,
+  AI_ANALYSIS_TIMEOUT: parseInt(process.env.AI_ANALYSIS_TIMEOUT || '120000', 10),
+  MARKET_DATA_TIMEOUT: parseInt(process.env.MARKET_DATA_TIMEOUT || '30000', 10),
+  BULK_ANALYSIS_TIMEOUT: parseInt(process.env.BULK_ANALYSIS_TIMEOUT || '300000', 10),
+  SERVER_TIMEOUT: parseInt(process.env.SERVER_TIMEOUT || '600000', 10)
 };

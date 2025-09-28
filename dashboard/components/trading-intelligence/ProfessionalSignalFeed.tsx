@@ -6,6 +6,7 @@ import { safeNumber, safeObject, safeArray } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
 import { SignalFeedSkeleton } from '@/components/ui/LoadingSkeleton';
 import TradingErrorBoundary from '@/components/ui/TradingErrorBoundary';
+import AIProcessingIndicator from '@/components/ui/AIProcessingIndicator';
 import {
   Zap,
   TrendingUp,
@@ -114,6 +115,8 @@ function ProfessionalSignalFeed({
   const [selectedPriority, setSelectedPriority] = useState<string | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(enableNotifications);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [isAIProcessing, setIsAIProcessing] = useState(false);
+  const [processingStartTime, setProcessingStartTime] = useState<Date | null>(null);
 
   const generateRealTradingSignals = async (): Promise<TradingSignal[]> => {
     const generatedSignals: TradingSignal[] = [];
@@ -449,6 +452,8 @@ function ProfessionalSignalFeed({
     try {
       setLoading(true);
       setError(null);
+      setIsAIProcessing(true);
+      setProcessingStartTime(new Date());
 
       let newSignals: TradingSignal[] = [];
 
@@ -485,6 +490,8 @@ function ProfessionalSignalFeed({
       toast.error('Failed to fetch trading signals');
     } finally {
       setLoading(false);
+      setIsAIProcessing(false);
+      setProcessingStartTime(null);
     }
   };
 
@@ -597,6 +604,19 @@ function ProfessionalSignalFeed({
           <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-lg mb-4">
             <AlertTriangle className="h-5 w-5 text-red-600" />
             <span className="text-red-700">{error}</span>
+          </div>
+        )}
+
+        {isAIProcessing && processingStartTime && (
+          <div className="mb-4">
+            <AIProcessingIndicator
+              operation="Professional Signal Analysis"
+              symbol={symbols.length > 1 ? `${symbols.length} symbols` : symbols[0]}
+              estimatedTime={120}
+              stage="analyzing"
+              showProgress={true}
+              className=""
+            />
           </div>
         )}
 

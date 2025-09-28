@@ -34,7 +34,7 @@ export class AIAnalysisService {
   private createHttpClient(): AxiosInstance {
     const client = axios.create({
       baseURL: this.baseURL,
-      timeout: 45000, // 45 seconds
+      timeout: 120000, // 2 minutes for AI model processing
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',
@@ -50,7 +50,7 @@ export class AIAnalysisService {
         keepAliveMsecs: 30000,
         maxSockets: 10,
         maxFreeSockets: 5,
-        timeout: 45000,
+        timeout: 120000,
         freeSocketTimeout: 15000,
         socketActiveTTL: 60000
       }),
@@ -59,7 +59,7 @@ export class AIAnalysisService {
         keepAliveMsecs: 30000,
         maxSockets: 10,
         maxFreeSockets: 5,
-        timeout: 45000,
+        timeout: 120000,
         freeSocketTimeout: 15000,
         socketActiveTTL: 60000,
         rejectUnauthorized: true

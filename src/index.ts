@@ -46,6 +46,25 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Configure request timeout middleware
+app.use((req, res, next) => {
+  // Set different timeouts based on endpoint
+  if (req.path.includes('/real-time') || req.path.includes('/professional-signals')) {
+    // Long timeout for AI analysis endpoints
+    req.setTimeout(config.AI_ANALYSIS_TIMEOUT);
+    res.setTimeout(config.AI_ANALYSIS_TIMEOUT);
+  } else if (req.path.includes('/bulk') || req.path.includes('/multi-token')) {
+    // Extra long timeout for bulk operations
+    req.setTimeout(config.BULK_ANALYSIS_TIMEOUT);
+    res.setTimeout(config.BULK_ANALYSIS_TIMEOUT);
+  } else {
+    // Standard timeout for other endpoints
+    req.setTimeout(config.MARKET_DATA_TIMEOUT);
+    res.setTimeout(config.MARKET_DATA_TIMEOUT);
+  }
+  next();
+});
+
 // Apply rate limiting after CORS
 app.use(rateLimitMiddleware);
 
@@ -83,6 +102,10 @@ const startServer = async (): Promise<void> => {
 
     initializeWebSocketService(server);
     console.log('✅ WebSocket service initialized');
+
+    // Set server timeout for long-running AI operations
+    server.timeout = config.SERVER_TIMEOUT;
+    console.log(`⏱️  Server timeout set to ${config.SERVER_TIMEOUT / 1000} seconds`);
 
     server.listen(config.PORT, () => {
       console.log(`🚀 Server running on port ${config.PORT} in ${config.NODE_ENV} mode`);

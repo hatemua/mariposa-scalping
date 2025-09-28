@@ -46,7 +46,7 @@ function classifyError(error: Error): ErrorType {
   const message = error.message.toLowerCase();
   const stack = error.stack?.toLowerCase() || '';
 
-  if (message.includes('timeout') || message.includes('30000ms')) {
+  if (message.includes('timeout') || message.includes('30000ms') || message.includes('45000ms') || message.includes('120000ms') || message.includes('180000ms') || message.includes('300000ms') || message.includes('360000ms')) {
     return ErrorType.TIMEOUT;
   }
   if (message.includes('network') || message.includes('fetch') || message.includes('connection')) {
