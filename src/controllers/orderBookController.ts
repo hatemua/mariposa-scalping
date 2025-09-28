@@ -6,16 +6,17 @@ export class OrderBookController {
   /**
    * Get real-time order book analysis for a symbol
    */
-  async getOrderBookAnalysis(req: Request, res: Response) {
+  async getOrderBookAnalysis(req: Request, res: Response): Promise<void> {
     try {
       const symbol = safeString.getValue(req.query.symbol as string, '');
       const levels = safeNumber.getValue(req.query.levels as string, 20);
 
       if (!symbol) {
-        return res.status(400).json({
+        res.status(400).json({
           success: false,
           error: 'Symbol parameter is required'
         });
+        return;
       }
 
       console.log(`📊 Getting order book analysis for ${symbol} with ${levels} levels`);
@@ -42,16 +43,17 @@ export class OrderBookController {
   /**
    * Subscribe to real-time order book updates for a symbol
    */
-  async subscribeToOrderBook(req: Request, res: Response) {
+  async subscribeToOrderBook(req: Request, res: Response): Promise<void> {
     try {
       const symbol = safeString.getValue(req.body.symbol as string, '');
       const levels = safeNumber.getValue(req.body.levels as string, 20);
 
       if (!symbol) {
-        return res.status(400).json({
+        res.status(400).json({
           success: false,
           error: 'Symbol parameter is required'
         });
+        return;
       }
 
       console.log(`🔄 Subscribing to order book updates for ${symbol}`);
@@ -78,16 +80,17 @@ export class OrderBookController {
   /**
    * Get current order book state without analysis
    */
-  async getOrderBook(req: Request, res: Response) {
+  async getOrderBook(req: Request, res: Response): Promise<void> {
     try {
       const symbol = safeString.getValue(req.query.symbol as string, '');
       const limit = safeNumber.getValue(req.query.limit as string, 100);
 
       if (!symbol) {
-        return res.status(400).json({
+        res.status(400).json({
           success: false,
           error: 'Symbol parameter is required'
         });
+        return;
       }
 
       // This would call binanceService.getOrderBook directly
