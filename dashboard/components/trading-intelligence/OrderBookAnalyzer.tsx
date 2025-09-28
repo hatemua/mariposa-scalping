@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { marketApi } from '@/lib/api';
+import { marketApi, orderBookApi } from '@/lib/api';
 import { safeNumber, safeObject, safeArray } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
 import {
@@ -128,296 +128,89 @@ export default function OrderBookAnalyzer({
   const [selectedLevel, setSelectedLevel] = useState<OrderBookLevel | null>(null);
   const [viewMode, setViewMode] = useState<'book' | 'analysis' | 'flow' | 'signals'>('book');
 
-  // Simulate order book data (in production, this would come from WebSocket feeds)
+  // Get real order book data from Binance API via WebSocket
   const generateOrderBookData = async (symbol: string): Promise<OrderBookData> => {
     try {
-      // Get current market data
-      const marketData = await marketApi.getMarketData(symbol);
-      const mData = safeObject.get(marketData, 'data', {});
-      const currentPrice = safeNumber.getValue(safeObject.get(mData, 'price', 0));
+      // Call the backend API to get real order book analysis
+      const response = await orderBookApi.getAnalysis(symbol, levels);
 
-      if (!currentPrice) {
-        throw new Error('No price data available');
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to fetch order book data');
       }
 
-      // Generate realistic order book levels
-      const spread = currentPrice * 0.001; // 0.1% spread
-      const midPrice = currentPrice;
-      const bidPrice = midPrice - spread / 2;
-      const askPrice = midPrice + spread / 2;
-
-      const bids: OrderBookLevel[] = [];
-      const asks: OrderBookLevel[] = [];
-
-      let bidTotal = 0;
-      let askTotal = 0;
-
-      // Generate bid levels (below current price)
-      for (let i = 0; i < levels; i++) {
-        const priceLevel = bidPrice - (i * spread * 0.1);
-        const baseSize = 1000 + Math.random() * 9000;
-        const sizeMultiplier = Math.exp(-i * 0.1); // Exponential decay
-        const size = baseSize * sizeMultiplier;
-        bidTotal += size;
-
-        bids.push({
-          price: priceLevel,
-          size: size,
-          total: bidTotal,
-          percentage: 0, // Will be calculated later
-          orders: Math.floor(size / (100 + Math.random() * 200))
-        });
-      }
-
-      // Generate ask levels (above current price)
-      for (let i = 0; i < levels; i++) {
-        const priceLevel = askPrice + (i * spread * 0.1);
-        const baseSize = 1000 + Math.random() * 9000;
-        const sizeMultiplier = Math.exp(-i * 0.1); // Exponential decay
-        const size = baseSize * sizeMultiplier;
-        askTotal += size;
-
-        asks.push({
-          price: priceLevel,
-          size: size,
-          total: askTotal,
-          percentage: 0, // Will be calculated later
-          orders: Math.floor(size / (100 + Math.random() * 200))
-        });
-      }
-
-      // Calculate percentages
-      const maxBidTotal = bids[bids.length - 1].total;
-      const maxAskTotal = asks[asks.length - 1].total;
-
-      bids.forEach(bid => {
-        bid.percentage = (bid.total / maxBidTotal) * 100;
-      });
-
-      asks.forEach(ask => {
-        ask.percentage = (ask.total / maxAskTotal) * 100;
-      });
-
-      // Calculate order book imbalance
-      const bidSum = bids.slice(0, 10).reduce((sum, bid) => sum + bid.size, 0);
-      const askSum = asks.slice(0, 10).reduce((sum, ask) => sum + ask.size, 0);
-      const bidAskRatio = bidSum / (askSum + bidSum);
-      const bidPressure = Math.max(0, bidAskRatio - 0.5) * 2;
-      const askPressure = Math.max(0, 0.5 - bidAskRatio) * 2;
-
-      const imbalanceStrength = bidAskRatio > 0.7 || bidAskRatio < 0.3 ? 'EXTREME' :
-                               bidAskRatio > 0.6 || bidAskRatio < 0.4 ? 'STRONG' :
-                               bidAskRatio > 0.55 || bidAskRatio < 0.45 ? 'MODERATE' : 'WEAK';
-
-      const direction = bidAskRatio > 0.52 ? 'BULLISH' :
-                       bidAskRatio < 0.48 ? 'BEARISH' : 'NEUTRAL';
-
-      const imbalance: OrderBookImbalance = {
-        bidAskRatio,
-        bidPressure,
-        askPressure,
-        imbalanceStrength,
-        direction,
-        confidence: Math.abs(bidAskRatio - 0.5) * 2
-      };
-
-      // Calculate liquidity analysis
-      const bidLiquidity = bidSum;
-      const askLiquidity = askSum;
-      const totalLiquidity = bidLiquidity + askLiquidity;
-      const liquidityRatio = bidLiquidity / askLiquidity;
-
-      // Calculate depth at different percentages
-      const depthAtPercentage: { [key: string]: { bid: number; ask: number } } = {};
-      const percentages = ['0.1', '0.5', '1.0', '2.0'];
-
-      percentages.forEach(pct => {
-        const pctValue = parseFloat(pct) / 100;
-        const bidDepth = bids.filter(bid => bid.price >= midPrice * (1 - pctValue))
-                             .reduce((sum, bid) => sum + bid.size, 0);
-        const askDepth = asks.filter(ask => ask.price <= midPrice * (1 + pctValue))
-                             .reduce((sum, ask) => sum + ask.size, 0);
-
-        depthAtPercentage[pct] = { bid: bidDepth, ask: askDepth };
-      });
-
-      // Detect liquidity gaps
-      const liquidityGaps: { price: number; side: 'BID' | 'ASK'; size: number }[] = [];
-      const avgBidSize = bidSum / bids.length;
-      const avgAskSize = askSum / asks.length;
-
-      bids.forEach(bid => {
-        if (bid.size < avgBidSize * 0.3) {
-          liquidityGaps.push({ price: bid.price, side: 'BID', size: bid.size });
-        }
-      });
-
-      asks.forEach(ask => {
-        if (ask.size < avgAskSize * 0.3) {
-          liquidityGaps.push({ price: ask.price, side: 'ASK', size: ask.size });
-        }
-      });
-
-      const liquidity: LiquidityAnalysis = {
-        bidLiquidity,
-        askLiquidity,
-        totalLiquidity,
-        liquidityRatio,
-        depthAtPercentage,
-        liquidityGaps
-      };
-
-      // Calculate market microstructure
-      const spreadValue = askPrice - bidPrice;
-      const spreadPercentage = (spreadValue / midPrice) * 100;
-      const weightedBidPrice = bids.slice(0, 5).reduce((sum, bid, i) =>
-        sum + (bid.price * bid.size), 0) / bids.slice(0, 5).reduce((sum, bid) => sum + bid.size, 0);
-      const weightedAskPrice = asks.slice(0, 5).reduce((sum, ask, i) =>
-        sum + (ask.price * ask.size), 0) / asks.slice(0, 5).reduce((sum, ask) => sum + ask.size, 0);
-      const weightedMidPrice = (weightedBidPrice + weightedAskPrice) / 2;
-
-      // Calculate price impact for different order sizes
-      const priceImpact: { [size: string]: { buy: number; sell: number } } = {};
-      const orderSizes = ['1000', '5000', '10000', '25000'];
-
-      orderSizes.forEach(size => {
-        const orderSize = parseFloat(size);
-
-        // Calculate buy impact (eating through asks)
-        let remainingSize = orderSize;
-        let totalCost = 0;
-        for (const ask of asks) {
-          if (remainingSize <= 0) break;
-          const sizeToTake = Math.min(remainingSize, ask.size);
-          totalCost += sizeToTake * ask.price;
-          remainingSize -= sizeToTake;
-        }
-        const avgBuyPrice = totalCost / orderSize;
-        const buyImpact = ((avgBuyPrice - midPrice) / midPrice) * 100;
-
-        // Calculate sell impact (eating through bids)
-        remainingSize = orderSize;
-        totalCost = 0;
-        for (const bid of bids) {
-          if (remainingSize <= 0) break;
-          const sizeToTake = Math.min(remainingSize, bid.size);
-          totalCost += sizeToTake * bid.price;
-          remainingSize -= sizeToTake;
-        }
-        const avgSellPrice = totalCost / orderSize;
-        const sellImpact = ((midPrice - avgSellPrice) / midPrice) * 100;
-
-        priceImpact[size] = { buy: buyImpact, sell: sellImpact };
-      });
-
-      const marketDepth = Math.min(bidLiquidity, askLiquidity);
-      const resilience = 1 / Math.max(priceImpact['10000'].buy, priceImpact['10000'].sell);
-      const efficiency = 1 / spreadPercentage;
-
-      const microstructure: MarketMicrostructure = {
-        spread: spreadValue,
-        spreadPercentage,
-        midPrice,
-        weightedMidPrice,
-        priceImpact,
-        marketDepth,
-        resilience,
-        efficiency
-      };
-
-      // Simulate order flow analysis
-      const aggressiveBuys = Math.random() * 100000;
-      const aggressiveSells = Math.random() * 100000;
-      const passiveBuys = Math.random() * 50000;
-      const passiveSells = Math.random() * 50000;
-
-      const totalBuyFlow = aggressiveBuys + passiveBuys;
-      const totalSellFlow = aggressiveSells + passiveSells;
-      const flowRatio = totalBuyFlow / (totalBuyFlow + totalSellFlow);
-
-      const institutionalFlow = (aggressiveBuys + aggressiveSells) * 0.7; // Assume 70% of aggressive flow is institutional
-      const retailFlow = (passiveBuys + passiveSells) * 0.8; // Assume 80% of passive flow is retail
-
-      const flowTrend = flowRatio > 0.55 ? 'BUYING_PRESSURE' :
-                       flowRatio < 0.45 ? 'SELLING_PRESSURE' : 'BALANCED';
-
-      const flow: FlowAnalysis = {
-        aggressiveBuys,
-        aggressiveSells,
-        passiveBuys,
-        passiveSells,
-        flowRatio,
-        institutionalFlow,
-        retailFlow,
-        flowTrend
-      };
-
-      // Detect trading signals
-      const liquidityGrab = {
-        detected: Math.random() > 0.8, // 20% chance
-        side: Math.random() > 0.5 ? 'BID' as const : 'ASK' as const,
-        strength: Math.random()
-      };
-
-      const sweepAlert = {
-        detected: Math.random() > 0.9, // 10% chance
-        levels: Math.floor(Math.random() * 5) + 1,
-        impact: Math.random() * 2
-      };
-
-      const whaleActivity = {
-        detected: Math.random() > 0.85, // 15% chance
-        size: Math.random() * 100000 + 50000,
-        side: Math.random() > 0.5 ? 'BUY' as const : 'SELL' as const
-      };
-
-      const algorithmicActivity = {
-        detected: Math.random() > 0.7, // 30% chance
-        pattern: ['ICEBERG', 'TWAP', 'VWAP', 'STEALTH'][Math.floor(Math.random() * 4)],
-        confidence: Math.random()
-      };
-
-      const signals = {
-        liquidityGrab,
-        sweepAlert,
-        whaleActivity,
-        algorithmicActivity
-      };
-
-      // Generate recommendations
-      const recommendations = {
-        execution: imbalance.imbalanceStrength === 'EXTREME' ?
-                  'Use smaller order sizes and split execution' :
-                  'Normal execution strategy acceptable',
-        timing: flow.flowTrend === 'BUYING_PRESSURE' ?
-               'Consider waiting for selling pressure to enter long' :
-               flow.flowTrend === 'SELLING_PRESSURE' ?
-               'Consider waiting for buying pressure to enter short' :
-               'Balanced flow - good timing for execution',
-        risk: spreadPercentage > 0.1 ?
-             'High spread risk - monitor for liquidity issues' :
-             'Normal liquidity conditions',
-        opportunity: liquidityGrab.detected ?
-                    `Liquidity grab detected on ${liquidityGrab.side} side - potential reversal` :
-                    'No immediate liquidity opportunities detected'
-      };
-
-      return {
-        symbol,
-        timestamp: new Date().toISOString(),
-        bids: bids.reverse(), // Highest price first
-        asks,
-        imbalance,
-        liquidity,
-        microstructure,
-        flow,
-        signals,
-        recommendations
-      };
+      return response.data;
 
     } catch (error) {
-      console.error('Error generating order book data:', error);
-      throw error;
+      console.error('Error fetching real order book data:', error);
+      // Fallback to market API if direct order book fails
+      try {
+        const marketData = await marketApi.getMarketData(symbol);
+        const mData = safeObject.get(marketData, 'data', {});
+        const currentPrice = safeNumber.getValue(safeObject.get(mData, 'price', 0));
+
+        if (!currentPrice) {
+          throw new Error('No market data available');
+        }
+
+        // Generate basic analysis from market data
+        return {
+          symbol,
+          timestamp: new Date().toISOString(),
+          bids: [],
+          asks: [],
+          imbalance: {
+            bidAskRatio: 0.5,
+            bidPressure: 0,
+            askPressure: 0,
+            imbalanceStrength: 'WEAK' as const,
+            direction: 'NEUTRAL' as const,
+            confidence: 0
+          },
+          liquidity: {
+            bidLiquidity: 0,
+            askLiquidity: 0,
+            totalLiquidity: 0,
+            liquidityRatio: 1,
+            depthAtPercentage: {},
+            liquidityGaps: []
+          },
+          microstructure: {
+            spread: currentPrice * 0.001,
+            spreadPercentage: 0.1,
+            midPrice: currentPrice,
+            weightedMidPrice: currentPrice,
+            priceImpact: {},
+            marketDepth: 0,
+            resilience: 0,
+            efficiency: 0
+          },
+          flow: {
+            aggressiveBuys: 0,
+            aggressiveSells: 0,
+            passiveBuys: 0,
+            passiveSells: 0,
+            flowRatio: 0.5,
+            institutionalFlow: 0,
+            retailFlow: 0,
+            flowTrend: 'BALANCED' as const
+          },
+          signals: {
+            liquidityGrab: { detected: false, side: null, strength: 0 },
+            sweepAlert: { detected: false, levels: 0, impact: 0 },
+            whaleActivity: { detected: false, size: 0, side: null },
+            algorithmicActivity: { detected: false, pattern: 'NONE', confidence: 0 }
+          },
+          recommendations: {
+            execution: 'Normal execution strategy acceptable',
+            timing: 'Waiting for real order book connection',
+            risk: 'Real-time data unavailable - use caution',
+            opportunity: 'Connect to WebSocket for live opportunities'
+          }
+        };
+      } catch (fallbackError) {
+        console.error('Error in fallback market data:', fallbackError);
+        throw error;
+      }
     }
   };
 
@@ -440,6 +233,17 @@ export default function OrderBookAnalyzer({
   };
 
   useEffect(() => {
+    // Subscribe to real-time order book updates
+    const subscribeToOrderBook = async () => {
+      try {
+        await orderBookApi.subscribe(symbol, levels);
+        console.log(`📊 Subscribed to order book updates for ${symbol}`);
+      } catch (error) {
+        console.error('Failed to subscribe to order book:', error);
+      }
+    };
+
+    subscribeToOrderBook();
     fetchOrderBookData();
   }, [symbol]);
 

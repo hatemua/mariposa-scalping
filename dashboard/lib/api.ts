@@ -121,6 +121,11 @@ export const agentApi = {
     return response.data;
   },
 
+  pauseAgent: async (agentId: string): Promise<ApiResponse> => {
+    const response = await api.post(`/agents/${agentId}/pause`);
+    return response.data;
+  },
+
   getAgentTrades: async (agentId: string, page = 1, limit = 50): Promise<ApiResponse> => {
     const response = await api.get(`/agents/${agentId}/trades`, {
       params: { page, limit }
@@ -270,6 +275,27 @@ export const marketApi = {
 
   getSymbols: async (): Promise<ApiResponse> => {
     const response = await api.get('/market/symbols');
+    return response.data;
+  },
+};
+
+export const orderBookApi = {
+  getAnalysis: async (symbol: string, levels = 20): Promise<ApiResponse> => {
+    const response = await api.get('/orderbook/analyze', {
+      params: { symbol, levels }
+    });
+    return response.data;
+  },
+
+  subscribe: async (symbol: string, levels = 20): Promise<ApiResponse> => {
+    const response = await api.post('/orderbook/subscribe', { symbol, levels });
+    return response.data;
+  },
+
+  getRawOrderBook: async (symbol: string, limit = 100): Promise<ApiResponse> => {
+    const response = await api.get('/orderbook/raw', {
+      params: { symbol, limit }
+    });
     return response.data;
   },
 };

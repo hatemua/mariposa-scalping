@@ -7,6 +7,7 @@ import {
   deleteAgent,
   startAgent,
   stopAgent,
+  pauseAgent,
   getAgentTrades
 } from '../controllers/agentController';
 import { authenticate } from '../middleware/auth';
@@ -22,6 +23,7 @@ router.put('/:agentId', updateAgent);
 router.delete('/:agentId', deleteAgent);
 router.post('/:agentId/start', startAgent);
 router.post('/:agentId/stop', stopAgent);
+router.post('/:agentId/pause', pauseAgent);
 router.get('/:agentId/trades', getAgentTrades);
 
 export default router;

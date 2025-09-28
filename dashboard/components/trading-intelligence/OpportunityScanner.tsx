@@ -71,6 +71,74 @@ const RISK_COLORS = {
   HIGH: 'text-red-600 bg-red-50 border-red-200'
 };
 
+// Helper functions for real market analysis
+const calculateRealOpportunityScore = (marketData: any, confluenceData: any): number => {
+  let score = 0;
+
+  // Base score from confluence
+  score += (confluenceData.score || 0) * 0.4;
+
+  // Volume factor (higher volume = more reliable)
+  const volumeScore = Math.min((marketData.volume || 0) / 10000000, 10) * 5; // Scale to 0-50
+  score += volumeScore;
+
+  // Price change momentum
+  const priceChangeScore = Math.min(Math.abs(marketData.change24h || 0), 10) * 2;
+  score += priceChangeScore;
+
+  // Volatility consideration (moderate volatility is preferred)
+  const volatility = Math.abs(marketData.change24h || 0);
+  const volatilityScore = volatility > 2 && volatility < 8 ? 10 : 5;
+  score += volatilityScore;
+
+  return Math.min(100, Math.max(0, score));
+};
+
+const determineOpportunityCategory = (marketData: any, confluenceData: any): OpportunityData['category'] => {
+  const priceChange = marketData.change24h || 0;
+  const volume = marketData.volume || 0;
+  const score = confluenceData.score || 0;
+
+  if (volume > 50000000) return 'VOLUME_SURGE';
+  if (Math.abs(priceChange) > 5) return 'BREAKOUT';
+  if (score > 80) return 'CONFLUENCE';
+  if (priceChange > 2) return 'MOMENTUM';
+  if (priceChange < -2) return 'REVERSAL';
+  return 'ARBITRAGE';
+};
+
+const calculateExpectedReturn = (marketData: any, confluenceData: any): number => {
+  const baseReturn = (confluenceData.score || 50) / 20; // 2.5-5% base
+  const momentumBonus = Math.min(Math.abs(marketData.change24h || 0) * 0.2, 2);
+  const volumeBonus = (marketData.volume || 0) > 20000000 ? 1 : 0;
+
+  return Math.min(12, Math.max(0.5, baseReturn + momentumBonus + volumeBonus));
+};
+
+const determineRiskLevel = (score: number, marketData: any): 'LOW' | 'MEDIUM' | 'HIGH' => {
+  const volatility = Math.abs(marketData.change24h || 0);
+
+  if (score > 85 && volatility < 5) return 'LOW';
+  if (score > 70 && volatility < 8) return 'MEDIUM';
+  return 'HIGH';
+};
+
+const calculateStopLossPercentage = (marketData: any, confluenceData: any): number => {
+  const baseStop = 0.02; // 2% base
+  const volatilityAdjustment = Math.abs(marketData.change24h || 0) * 0.001;
+  const confidenceAdjustment = (1 - (confluenceData.confidence || 0.5)) * 0.01;
+
+  return Math.min(0.06, Math.max(0.01, baseStop + volatilityAdjustment + confidenceAdjustment));
+};
+
+const calculateVolatility = (marketData: any): number => {
+  const high = marketData.high24h || marketData.price;
+  const low = marketData.low24h || marketData.price;
+  const price = marketData.price || 1;
+
+  return ((high - low) / price) * 100;
+};
+
 export default function OpportunityScanner({
   symbols = [
     'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
@@ -95,57 +163,92 @@ export default function OpportunityScanner({
       setLoading(true);
       setError(null);
 
-      // Generate mock opportunities with realistic data
-      const mockOpportunities: OpportunityData[] = [];
+      // Fetch real market data for opportunity analysis
+      const realOpportunities: OpportunityData[] = [];
 
-      for (const symbol of symbols.slice(0, 12)) {
-        // Simulate profit scoring service logic
-        const score = Math.floor(Math.random() * 40) + 60; // 60-100 range
-        const confidence = Math.random() * 0.4 + 0.6; // 0.6-1.0 range
-        const expectedReturn = Math.random() * 8 + 1; // 1-9% range
-        const riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' =
-          score > 85 ? 'LOW' : score > 70 ? 'MEDIUM' : 'HIGH';
+      // Process symbols in batches to avoid API rate limits
+      const batchSize = 6;
+      for (let i = 0; i < symbols.length; i += batchSize) {
+        const batch = symbols.slice(i, i + batchSize);
 
-        const categories: OpportunityData['category'][] = [
-          'BREAKOUT', 'REVERSAL', 'MOMENTUM', 'ARBITRAGE', 'VOLUME_SURGE', 'WHALE_ACTIVITY'
-        ];
-        const category = categories[Math.floor(Math.random() * categories.length)];
+        const batchPromises = batch.map(async (symbol) => {
+          try {
+            // Get real market data from API
+            const marketResponse = await marketApi.getMarketData(symbol);
+            const confluenceResponse = await marketApi.getConfluenceScore(symbol);
 
-        const basePrice = Math.random() * 1000 + 1;
-        const entry = basePrice;
-        const target = entry * (1 + expectedReturn / 100);
-        const stopLoss = entry * (1 - Math.random() * 0.05 - 0.01); // 1-6% stop
-        const riskReward = (target - entry) / (entry - stopLoss);
+            if (!marketResponse.success || !confluenceResponse.success) {
+              return null;
+            }
 
-        if (score >= minScore && riskReward > 1.5) {
-          mockOpportunities.push({
-            symbol,
-            score,
-            confidence,
-            category,
-            timeframe: ['1m', '5m', '15m', '1h'][Math.floor(Math.random() * 4)],
-            expectedReturn,
-            riskLevel,
-            entry,
-            target,
-            stopLoss,
-            riskReward,
-            volume24h: Math.random() * 1000000000,
-            priceChange: (Math.random() - 0.5) * 10,
-            reasoning: getOpportunityReasoning(category, score),
-            indicators: {
-              rsi: Math.random() * 100,
-              volume_ratio: Math.random() * 3 + 0.5,
-              volatility: Math.random() * 8 + 1,
-              momentum: (Math.random() - 0.5) * 10
-            },
-            timestamp: new Date().toISOString()
-          });
+            const marketData = marketResponse.data;
+            const confluenceData = confluenceResponse.data;
+
+            // Calculate real opportunity score based on market conditions
+            const score = calculateRealOpportunityScore(marketData, confluenceData);
+            const confidence = confluenceData.confidence || 0.5;
+
+            if (score < minScore) {
+              return null; // Skip low-scoring opportunities
+            }
+
+            // Determine category based on real market conditions
+            const category = determineOpportunityCategory(marketData, confluenceData);
+
+            // Calculate real expected return based on technical analysis
+            const expectedReturn = calculateExpectedReturn(marketData, confluenceData);
+            const riskLevel = determineRiskLevel(score, marketData);
+
+            const entry = marketData.price;
+            const target = entry * (1 + expectedReturn / 100);
+            const stopLoss = entry * (1 - calculateStopLossPercentage(marketData, confluenceData));
+            const riskReward = Math.abs(target - entry) / Math.abs(entry - stopLoss);
+
+            if (riskReward > 1.5) { // Only include good risk/reward opportunities
+              return {
+                symbol,
+                score,
+                confidence,
+                category,
+                timeframe: confluenceData.strongestTimeframe || '1h',
+                expectedReturn,
+                riskLevel,
+                entry,
+                target,
+                stopLoss,
+                riskReward,
+                volume24h: marketData.volume || 0,
+                priceChange: marketData.change24h || 0,
+                reasoning: getOpportunityReasoning(category, score),
+                indicators: {
+                  rsi: confluenceData.factors?.rsi || 50,
+                  volume_ratio: confluenceData.factors?.volumeScore || 1,
+                  volatility: calculateVolatility(marketData),
+                  momentum: confluenceData.factors?.momentumScore || 0
+                },
+                timestamp: new Date().toISOString()
+              };
+            }
+
+            return null;
+          } catch (error) {
+            console.warn(`Failed to analyze ${symbol}:`, error);
+            return null;
+          }
+        });
+
+        const batchResults = await Promise.all(batchPromises);
+        const validOpportunities = batchResults.filter(Boolean) as OpportunityData[];
+        realOpportunities.push(...validOpportunities);
+
+        // Small delay between batches to respect API rate limits
+        if (i + batchSize < symbols.length) {
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
 
       // Sort opportunities by selected criteria
-      mockOpportunities.sort((a, b) => {
+      realOpportunities.sort((a, b) => {
         switch (sortBy) {
           case 'expectedReturn':
             return b.expectedReturn - a.expectedReturn;
@@ -156,7 +259,7 @@ export default function OpportunityScanner({
         }
       });
 
-      setOpportunities(mockOpportunities.slice(0, maxOpportunities));
+      setOpportunities(realOpportunities.slice(0, maxOpportunities));
       setLastUpdate(new Date());
     } catch (err) {
       console.error('Error scanning opportunities:', err);

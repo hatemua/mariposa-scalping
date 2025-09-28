@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { marketApi } from '@/lib/api';
+import { marketApi, agentApi } from '@/lib/api';
 import { safeNumber, safeObject, safeArray } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
 import {
@@ -106,124 +106,51 @@ export default function TradingAgentDashboard({
       setLoading(true);
       setError(null);
 
-      // Generate mock agent data - in real implementation, this would fetch from the backend
-      const mockAgents: AgentData[] = [
-        {
-          id: 'agent-1',
-          name: 'BTC Scalper Pro',
-          symbol: 'BTCUSDT',
-          status: 'RUNNING',
-          strategy: 'Mean Reversion Scalping',
-          timeframe: '1m',
-          performance: {
-            totalPnL: 2847.56,
-            winRate: 68.5,
-            totalTrades: 127,
-            winningTrades: 87,
-            losingTrades: 40,
-            maxDrawdown: -156.23,
-            sharpeRatio: 2.34,
-            avgWin: 78.45,
-            avgLoss: -45.23
-          },
-          currentPosition: {
-            side: 'LONG',
-            size: 0.0245,
-            entryPrice: 97234.50,
-            unrealizedPnL: 123.45,
-            entryTime: new Date(Date.now() - 25 * 60 * 1000).toISOString()
-          },
-          lastSignal: {
-            type: 'BUY',
-            confidence: 0.78,
-            timestamp: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-            reasoning: 'Strong support bounce with volume confirmation'
-          },
-          config: {
-            maxPosition: 1000,
-            stopLoss: 2.5,
-            takeProfit: 1.8,
-            riskPerTrade: 2.0
-          },
-          createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-          lastUpdate: new Date().toISOString()
-        },
-        {
-          id: 'agent-2',
-          name: 'ETH Momentum',
-          symbol: 'ETHUSDT',
-          status: 'RUNNING',
-          strategy: 'Momentum Breakout',
-          timeframe: '5m',
-          performance: {
-            totalPnL: 1523.89,
-            winRate: 72.3,
-            totalTrades: 89,
-            winningTrades: 64,
-            losingTrades: 25,
-            maxDrawdown: -98.67,
-            sharpeRatio: 1.89,
-            avgWin: 95.67,
-            avgLoss: -52.34
-          },
-          currentPosition: null,
-          lastSignal: {
-            type: 'HOLD',
-            confidence: 0.45,
-            timestamp: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
-            reasoning: 'Waiting for clearer momentum signal'
-          },
-          config: {
-            maxPosition: 500,
-            stopLoss: 3.0,
-            takeProfit: 2.2,
-            riskPerTrade: 1.5
-          },
-          createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-          lastUpdate: new Date().toISOString()
-        },
-        {
-          id: 'agent-3',
-          name: 'SOL Arbitrage',
-          symbol: 'SOLUSDT',
-          status: 'PAUSED',
-          strategy: 'Cross-Exchange Arbitrage',
-          timeframe: '1m',
-          performance: {
-            totalPnL: 456.23,
-            winRate: 85.7,
-            totalTrades: 42,
-            winningTrades: 36,
-            losingTrades: 6,
-            maxDrawdown: -23.45,
-            sharpeRatio: 3.12,
-            avgWin: 34.56,
-            avgLoss: -18.90
-          },
-          currentPosition: null,
-          lastSignal: {
-            type: 'HOLD',
-            confidence: 0.23,
-            timestamp: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-            reasoning: 'Insufficient arbitrage spread'
-          },
-          config: {
-            maxPosition: 200,
-            stopLoss: 1.0,
-            takeProfit: 0.8,
-            riskPerTrade: 1.0
-          },
-          createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-          lastUpdate: new Date().toISOString()
-        }
-      ];
+      // Fetch real agents from the backend API
+      const response = await agentApi.getAgents();
 
-      setAgents(mockAgents);
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to fetch agents');
+      }
+
+      const agentsData = safeArray.getValue(response.data, []);
+      const formattedAgents: AgentData[] = agentsData.map((agent: any) => ({
+        id: safeObject.get(agent, 'id', ''),
+        name: safeObject.get(agent, 'name', 'Unnamed Agent'),
+        symbol: safeObject.get(agent, 'symbol', ''),
+        status: safeObject.get(agent, 'status', 'STOPPED'),
+        strategy: safeObject.get(agent, 'strategy', 'Custom Strategy'),
+        timeframe: safeObject.get(agent, 'timeframe', '5m'),
+        performance: {
+          totalPnL: safeNumber.getValue(safeObject.get(agent, 'performance.totalPnL', 0)),
+          winRate: safeNumber.getValue(safeObject.get(agent, 'performance.winRate', 0)),
+          totalTrades: safeNumber.getValue(safeObject.get(agent, 'performance.totalTrades', 0)),
+          winningTrades: safeNumber.getValue(safeObject.get(agent, 'performance.winningTrades', 0)),
+          losingTrades: safeNumber.getValue(safeObject.get(agent, 'performance.losingTrades', 0)),
+          maxDrawdown: safeNumber.getValue(safeObject.get(agent, 'performance.maxDrawdown', 0)),
+          sharpeRatio: safeNumber.getValue(safeObject.get(agent, 'performance.sharpeRatio', 0)),
+          avgWin: safeNumber.getValue(safeObject.get(agent, 'performance.avgWin', 0)),
+          avgLoss: safeNumber.getValue(safeObject.get(agent, 'performance.avgLoss', 0))
+        },
+        currentPosition: safeObject.get(agent, 'currentPosition', null),
+        lastSignal: safeObject.get(agent, 'lastSignal', null),
+        config: {
+          maxPosition: safeNumber.getValue(safeObject.get(agent, 'config.maxPosition', 0)),
+          stopLoss: safeNumber.getValue(safeObject.get(agent, 'config.stopLoss', 0)),
+          takeProfit: safeNumber.getValue(safeObject.get(agent, 'config.takeProfit', 0)),
+          riskPerTrade: safeNumber.getValue(safeObject.get(agent, 'config.riskPerTrade', 0))
+        },
+        createdAt: safeObject.get(agent, 'createdAt', new Date().toISOString()),
+        lastUpdate: safeObject.get(agent, 'lastUpdate', new Date().toISOString())
+      }));
+
+      setAgents(formattedAgents);
       setLastUpdate(new Date());
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching agents:', err);
-      setError('Failed to fetch trading agents');
-      toast.error('Failed to fetch trading agents');
+      const errorMessage = err?.response?.data?.error || err?.message || 'Failed to fetch trading agents';
+      setError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -231,7 +158,22 @@ export default function TradingAgentDashboard({
 
   const toggleAgentStatus = async (agentId: string, newStatus: 'RUNNING' | 'STOPPED' | 'PAUSED') => {
     try {
-      // In real implementation, this would call the backend API
+      let response;
+
+      // Call the appropriate API endpoint based on the new status
+      if (newStatus === 'RUNNING') {
+        response = await agentApi.startAgent(agentId);
+      } else if (newStatus === 'STOPPED') {
+        response = await agentApi.stopAgent(agentId);
+      } else if (newStatus === 'PAUSED') {
+        response = await agentApi.pauseAgent(agentId);
+      }
+
+      if (!response?.success) {
+        throw new Error(response?.error || `Failed to ${newStatus.toLowerCase()} agent`);
+      }
+
+      // Update the local state
       setAgents(prev => prev.map(agent =>
         agent.id === agentId
           ? { ...agent, status: newStatus, lastUpdate: new Date().toISOString() }
@@ -241,9 +183,10 @@ export default function TradingAgentDashboard({
       const action = newStatus === 'RUNNING' ? 'started' :
                     newStatus === 'STOPPED' ? 'stopped' : 'paused';
       toast.success(`Agent ${action} successfully`);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error updating agent status:', err);
-      toast.error('Failed to update agent status');
+      const errorMessage = err?.response?.data?.error || err?.message || 'Failed to update agent status';
+      toast.error(errorMessage);
     }
   };
 

@@ -113,100 +113,219 @@ export default function ProfessionalSignalFeed({
   const [notificationsEnabled, setNotificationsEnabled] = useState(enableNotifications);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
-  const generateTradingSignals = (): TradingSignal[] => {
-    const signalTypes: TradingSignal['category'][] = [
-      'BREAKOUT', 'REVERSAL', 'MOMENTUM', 'CONFLUENCE', 'WHALE', 'AI_PREDICTION'
-    ];
-    const timeframes = ['1m', '5m', '15m', '1h', '4h'];
-    const sources: TradingSignal['source'][] = [
-      'AI_ANALYSIS', 'TECHNICAL_SCAN', 'WHALE_DETECTION', 'CONFLUENCE_SCORE', 'MULTI_TF'
-    ];
-
+  const generateRealTradingSignals = async (): Promise<TradingSignal[]> => {
     const generatedSignals: TradingSignal[] = [];
 
-    symbols.forEach(symbol => {
-      // Generate 1-2 signals per symbol
-      const count = Math.floor(Math.random() * 2) + 1;
+    try {
+      // Process symbols in batches to avoid API rate limits
+      const batchSize = 4;
+      for (let i = 0; i < symbols.length; i += batchSize) {
+        const batch = symbols.slice(i, i + batchSize);
 
-      for (let i = 0; i < count; i++) {
-        const type: TradingSignal['type'] =
-          Math.random() > 0.7 ? 'HOLD' :
-          Math.random() > 0.5 ? 'BUY' : 'SELL';
+        const batchPromises = batch.map(async (symbol) => {
+          try {
+            // Get real market data and technical analysis
+            const [marketResponse, confluenceResponse, entrySignalsResponse] = await Promise.all([
+              marketApi.getMarketData(symbol),
+              marketApi.getConfluenceScore(symbol),
+              marketApi.getEntrySignals(symbol)
+            ]);
 
-        const strength = Math.floor(Math.random() * 40) + minStrength; // minStrength to 100
-        const confidence = Math.random() * 0.4 + 0.6; // 0.6 to 1.0
-        const entry = Math.random() * 1000 + 100; // $100-1100
-        const expectedReturn = Math.random() * 8 + 1; // 1-9%
+            if (!marketResponse.success || !confluenceResponse.success) {
+              return [];
+            }
 
-        let target, stopLoss;
-        if (type === 'BUY') {
-          target = entry * (1 + expectedReturn / 100);
-          stopLoss = entry * (1 - Math.random() * 0.05 - 0.01); // 1-6% stop
-        } else if (type === 'SELL') {
-          target = entry * (1 - expectedReturn / 100);
-          stopLoss = entry * (1 + Math.random() * 0.05 + 0.01); // 1-6% stop
-        } else {
-          target = entry;
-          stopLoss = entry * 0.98; // 2% protective stop
+            const marketData = marketResponse.data;
+            const confluenceData = confluenceResponse.data;
+            const entrySignalsData = entrySignalsResponse.success ? entrySignalsResponse.data : null;
+
+            return generateSignalsFromRealData(symbol, marketData, confluenceData, entrySignalsData);
+
+          } catch (error) {
+            console.warn(`Failed to generate signals for ${symbol}:`, error);
+            return [];
+          }
+        });
+
+        const batchResults = await Promise.all(batchPromises);
+        batchResults.forEach(signals => generatedSignals.push(...signals));
+
+        // Small delay between batches
+        if (i + batchSize < symbols.length) {
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
+      }
 
-        const riskReward = Math.abs(target - entry) / Math.abs(entry - stopLoss);
-        const category = signalTypes[Math.floor(Math.random() * signalTypes.length)];
-        const timeframe = timeframes[Math.floor(Math.random() * timeframes.length)];
-        const source = sources[Math.floor(Math.random() * sources.length)];
+      return generatedSignals
+        .filter(signal => signal.strength >= minStrength)
+        .sort((a, b) => {
+          const priorityOrder = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
+          if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
+            return priorityOrder[b.priority] - priorityOrder[a.priority];
+          }
+          return b.strength - a.strength;
+        })
+        .slice(0, maxSignals);
 
+    } catch (error) {
+      console.error('Error generating real trading signals:', error);
+      return [];
+    }
+  };
+
+  const generateSignalsFromRealData = (
+    symbol: string,
+    marketData: any,
+    confluenceData: any,
+    entrySignalsData: any
+  ): TradingSignal[] => {
+    const signals: TradingSignal[] = [];
+
+    const price = marketData.price || 0;
+    const change24h = marketData.change24h || 0;
+    const volume24h = marketData.volume || 0;
+    const score = confluenceData.score || 0;
+
+    // Generate signal based on confluence analysis
+    if (score >= minStrength) {
+      const signalType = determineSignalType(confluenceData, marketData);
+      const category = determineSignalCategory(confluenceData, marketData);
+      const strength = Math.min(100, score);
+      const confidence = confluenceData.confidence || 0.5;
+
+      const expectedReturn = calculateRealExpectedReturn(confluenceData, marketData);
+      const entry = price;
+
+      let target, stopLoss;
+      if (signalType === 'BUY') {
+        target = entry * (1 + expectedReturn / 100);
+        stopLoss = entry * (1 - calculateRealStopLoss(confluenceData, marketData));
+      } else if (signalType === 'SELL') {
+        target = entry * (1 - expectedReturn / 100);
+        stopLoss = entry * (1 + calculateRealStopLoss(confluenceData, marketData));
+      } else {
+        target = entry;
+        stopLoss = entry * 0.98;
+      }
+
+      const riskReward = Math.abs(target - entry) / Math.abs(entry - stopLoss);
+
+      if (riskReward > 1.2) { // Accept slightly lower R:R for real signals
         const priority: TradingSignal['priority'] =
           strength > 90 ? 'CRITICAL' :
           strength > 80 ? 'HIGH' :
           strength > 70 ? 'MEDIUM' : 'LOW';
 
-        if (riskReward > 1.5) { // Only include signals with good R:R
-          generatedSignals.push({
-            id: `signal-${symbol}-${Date.now()}-${i}`,
-            symbol,
-            type,
-            strength,
-            confidence,
-            timeframe,
-            entry,
-            target,
-            stopLoss,
-            riskReward,
-            expectedReturn,
-            category,
-            indicators: {
-              rsi: Math.random() * 100,
-              macd: ['BULLISH', 'BEARISH', 'NEUTRAL'][Math.floor(Math.random() * 3)] as any,
-              ema: ['BULLISH', 'BEARISH', 'NEUTRAL'][Math.floor(Math.random() * 3)] as any,
-              volume: ['HIGH', 'MEDIUM', 'LOW'][Math.floor(Math.random() * 3)] as any,
-              support: Math.random() > 0.5,
-              resistance: Math.random() > 0.5
-            },
-            reasoning: generateSignalReasoning(category, type, strength),
-            timestamp: new Date(Date.now() - Math.random() * 1800000).toISOString(), // Last 30min
-            priority,
-            source,
-            marketCondition: ['TRENDING', 'RANGING', 'VOLATILE', 'CONSOLIDATING'][Math.floor(Math.random() * 4)] as any,
-            followUp: {
-              checkIn: `${Math.floor(Math.random() * 30) + 5} minutes`,
-              exitStrategy: getExitStrategy(type, expectedReturn),
-              riskManagement: `Stop at ${Math.abs((stopLoss - entry) / entry * 100).toFixed(1)}%`
-            }
-          });
-        }
+        signals.push({
+          id: `real-signal-${symbol}-${Date.now()}`,
+          symbol,
+          type: signalType,
+          strength,
+          confidence,
+          timeframe: confluenceData.strongestTimeframe || '1h',
+          entry,
+          target,
+          stopLoss,
+          riskReward,
+          expectedReturn,
+          category,
+          indicators: {
+            rsi: confluenceData.factors?.rsi || 50,
+            macd: determineIndicatorSignal(confluenceData.factors?.macdScore || 0),
+            ema: determineIndicatorSignal(confluenceData.factors?.trendScore || 0),
+            volume: volume24h > 20000000 ? 'HIGH' : volume24h > 5000000 ? 'MEDIUM' : 'LOW',
+            support: confluenceData.factors?.supportResistance > 0,
+            resistance: confluenceData.factors?.supportResistance < 0
+          },
+          reasoning: generateRealSignalReasoning(category, signalType, confluenceData),
+          timestamp: new Date().toISOString(),
+          priority,
+          source: 'CONFLUENCE_SCORE',
+          marketCondition: determineMarketCondition(marketData),
+          followUp: {
+            checkIn: priority === 'CRITICAL' ? '5 minutes' : priority === 'HIGH' ? '15 minutes' : '30 minutes',
+            exitStrategy: getExitStrategy(signalType, expectedReturn),
+            riskManagement: `Stop at ${Math.abs((stopLoss - entry) / entry * 100).toFixed(1)}%`
+          }
+        });
       }
-    });
+    }
 
-    return generatedSignals
-      .sort((a, b) => {
-        // Sort by priority first, then by strength
-        const priorityOrder = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
-        if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
-          return priorityOrder[b.priority] - priorityOrder[a.priority];
-        }
-        return b.strength - a.strength;
-      })
-      .slice(0, maxSignals);
+    return signals;
+  };
+
+  const determineSignalType = (confluenceData: any, marketData: any): TradingSignal['type'] => {
+    const score = confluenceData.score || 0;
+    const trend = confluenceData.factors?.trendScore || 0;
+
+    if (score > 75 && trend > 0) return 'BUY';
+    if (score > 75 && trend < 0) return 'SELL';
+    return 'HOLD';
+  };
+
+  const determineSignalCategory = (confluenceData: any, marketData: any): TradingSignal['category'] => {
+    const volume24h = marketData.volume || 0;
+    const change24h = marketData.change24h || 0;
+    const score = confluenceData.score || 0;
+
+    if (volume24h > 50000000) return 'WHALE';
+    if (Math.abs(change24h) > 5) return 'BREAKOUT';
+    if (score > 85) return 'CONFLUENCE';
+    if (Math.abs(change24h) > 2) return 'MOMENTUM';
+    if (change24h < 0) return 'REVERSAL';
+    return 'AI_PREDICTION';
+  };
+
+  const calculateRealExpectedReturn = (confluenceData: any, marketData: any): number => {
+    const baseReturn = (confluenceData.score || 50) / 25; // 2-4% base
+    const momentumBonus = Math.min(Math.abs(marketData.change24h || 0) * 0.3, 3);
+    const volumeBonus = (marketData.volume || 0) > 30000000 ? 1.5 : 0;
+
+    return Math.min(10, Math.max(1, baseReturn + momentumBonus + volumeBonus));
+  };
+
+  const calculateRealStopLoss = (confluenceData: any, marketData: any): number => {
+    const baseStop = 0.025; // 2.5% base
+    const volatilityAdjustment = Math.abs(marketData.change24h || 0) * 0.002;
+    const confidenceAdjustment = (1 - (confluenceData.confidence || 0.5)) * 0.015;
+
+    return Math.min(0.08, Math.max(0.015, baseStop + volatilityAdjustment + confidenceAdjustment));
+  };
+
+  const determineIndicatorSignal = (score: number): 'BULLISH' | 'BEARISH' | 'NEUTRAL' => {
+    if (score > 0.6) return 'BULLISH';
+    if (score < -0.6) return 'BEARISH';
+    return 'NEUTRAL';
+  };
+
+  const determineMarketCondition = (marketData: any): TradingSignal['marketCondition'] => {
+    const change24h = Math.abs(marketData.change24h || 0);
+    const volume = marketData.volume || 0;
+
+    if (change24h > 8) return 'VOLATILE';
+    if (change24h < 1 && volume < 10000000) return 'CONSOLIDATING';
+    if (change24h > 3) return 'TRENDING';
+    return 'RANGING';
+  };
+
+  const generateRealSignalReasoning = (
+    category: TradingSignal['category'],
+    type: TradingSignal['type'],
+    confluenceData: any
+  ): string => {
+    const score = confluenceData.score || 0;
+    const confidence = (confluenceData.confidence || 0.5) * 100;
+
+    const baseReasons = {
+      CONFLUENCE: `Strong confluence detected with ${score.toFixed(0)}% score`,
+      BREAKOUT: `Technical breakout pattern confirmed`,
+      MOMENTUM: `Momentum signals aligned across timeframes`,
+      REVERSAL: `Reversal pattern identified at key level`,
+      WHALE: `Large volume activity detected`,
+      AI_PREDICTION: `AI analysis indicates ${type.toLowerCase()} opportunity`
+    };
+
+    return `${baseReasons[category]} • ${confidence.toFixed(0)}% confidence • Multiple factors converging`;
   };
 
   const generateSignalReasoning = (
@@ -331,7 +450,7 @@ export default function ProfessionalSignalFeed({
       setLoading(true);
       setError(null);
 
-      const newSignals = generateTradingSignals();
+      const newSignals = await generateRealTradingSignals();
       setSignals(newSignals);
 
       // Show notifications for critical signals

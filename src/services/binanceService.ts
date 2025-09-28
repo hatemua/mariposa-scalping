@@ -16,6 +16,19 @@ export class BinanceService extends EventEmitter {
 
   constructor() {
     super();
+    this.initializeCommonSymbols();
+  }
+
+  private initializeCommonSymbols() {
+    // Subscribe to most common trading pairs immediately to ensure volume data
+    const commonSymbols = [
+      'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
+      'MATICUSDT', 'LINKUSDT', 'UNIUSDT', 'AVAXUSDT', 'DOTUSDT', 'LTCUSDT',
+      'BNBUSDT', 'XRPUSDT', 'SHIBUSDT', 'ATOMUSDT', 'NEARUSDT', 'FTMUSDT'
+    ];
+
+    console.log('🚀 Initializing ticker subscriptions for common symbols:', commonSymbols);
+    this.subscribeToTicker(commonSymbols);
   }
 
   async getSymbolInfo(symbol: string) {
@@ -114,6 +127,26 @@ export class BinanceService extends EventEmitter {
     const binanceSymbols = symbols.map(symbol => SymbolConverter.toBinanceFormat(symbol));
     const streams = binanceSymbols.map(symbol =>
       `${symbol.toLowerCase()}@kline_${interval}`
+    ).join('/');
+
+    this.connectWebSocket(streams);
+    binanceSymbols.forEach(symbol => this.subscribedSymbols.add(symbol));
+  }
+
+  subscribeToOrderBook(symbols: string[], levels: number = 20) {
+    const binanceSymbols = symbols.map(symbol => SymbolConverter.toBinanceFormat(symbol));
+    const streams = binanceSymbols.map(symbol =>
+      `${symbol.toLowerCase()}@depth${levels}`
+    ).join('/');
+
+    this.connectWebSocket(streams);
+    binanceSymbols.forEach(symbol => this.subscribedSymbols.add(symbol));
+  }
+
+  subscribeToTrades(symbols: string[]) {
+    const binanceSymbols = symbols.map(symbol => SymbolConverter.toBinanceFormat(symbol));
+    const streams = binanceSymbols.map(symbol =>
+      `${symbol.toLowerCase()}@trade`
     ).join('/');
 
     this.connectWebSocket(streams);
@@ -237,6 +270,51 @@ export class BinanceService extends EventEmitter {
       await redisService.publish(`kline:${message.s}:${message.k.i}`, {
         type: 'kline',
         data: klineData
+      });
+
+    } else if (message.e === 'depthUpdate') {
+      const orderBookData = {
+        symbol: message.s,
+        updateId: message.u,
+        bids: message.b.map((bid: string[]) => ({
+          price: parseFloat(bid[0]),
+          quantity: parseFloat(bid[1])
+        })),
+        asks: message.a.map((ask: string[]) => ({
+          price: parseFloat(ask[0]),
+          quantity: parseFloat(ask[1])
+        })),
+        timestamp: new Date(message.E)
+      };
+
+      // Cache the order book update in Redis
+      await redisService.cacheOrderBook(message.s, orderBookData);
+
+      this.emit('orderBook', orderBookData);
+
+      // Publish to Redis for WebSocket clients
+      await redisService.publish(`orderbook:${message.s}`, {
+        type: 'orderBook',
+        data: orderBookData
+      });
+
+    } else if (message.e === 'trade') {
+      const tradeData = {
+        symbol: message.s,
+        price: parseFloat(message.p),
+        quantity: parseFloat(message.q),
+        timestamp: new Date(message.T),
+        tradeId: message.t,
+        buyerMaker: message.m,
+        isBuyerMaker: message.m
+      };
+
+      this.emit('trade', tradeData);
+
+      // Publish to Redis for WebSocket clients
+      await redisService.publish(`trades:${message.s}`, {
+        type: 'trade',
+        data: tradeData
       });
     }
   }
