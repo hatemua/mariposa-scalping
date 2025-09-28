@@ -714,8 +714,20 @@ export default function MarketPage() {
                   </SectionErrorBoundary>
                 </div>
 
+                {/* Order Book Analyzer - Full Width */}
+                <div className="w-full">
+                  <SectionErrorBoundary>
+                    <OrderBookAnalyzer
+                      symbol={selectedSymbol}
+                      autoRefresh={true}
+                      refreshInterval={45000}
+                      className="w-full"
+                    />
+                  </SectionErrorBoundary>
+                </div>
+
                 {/* Advanced Analytics Row */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <SectionErrorBoundary>
                     <VaRCalculator
                       symbols={[selectedSymbol, 'BTCUSDT', 'ETHUSDT']}
@@ -731,15 +743,6 @@ export default function MarketPage() {
                       timeframes={['1m', '5m', '15m', '1h', '4h']}
                       autoRefresh={true}
                       refreshInterval={15000}
-                      className="w-full"
-                    />
-                  </SectionErrorBoundary>
-
-                  <SectionErrorBoundary>
-                    <OrderBookAnalyzer
-                      symbol={selectedSymbol}
-                      autoRefresh={true}
-                      refreshInterval={5000}
                       className="w-full"
                     />
                   </SectionErrorBoundary>

@@ -4,6 +4,8 @@ import React, { useState, useEffect } from 'react';
 import { enhancedMarketApi, enhancedOrderBookApi } from '@/lib/enhancedApi';
 import { safeNumber, safeObject, safeArray } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
+import { useSmartRefresh } from '@/hooks/useSmartRefresh';
+import { useComponentRefresh } from '@/contexts/RefreshContext';
 import {
   BarChart3,
   TrendingUp,
@@ -232,6 +234,17 @@ export default function OrderBookAnalyzer({
     }
   };
 
+  // Smart refresh integration
+  const smartRefresh = useSmartRefresh({
+    refreshFn: fetchOrderBookData,
+    interval: refreshInterval,
+    pauseOnInteraction: true,
+    interactionPauseDuration: 10000 // 10 seconds pause when user interacts
+  });
+
+  // Component refresh integration
+  useComponentRefresh('order-book-analyzer', refreshInterval, fetchOrderBookData);
+
   useEffect(() => {
     // Subscribe to real-time order book updates
     const subscribeToOrderBook = async () => {
@@ -247,12 +260,7 @@ export default function OrderBookAnalyzer({
     fetchOrderBookData();
   }, [symbol]);
 
-  useEffect(() => {
-    if (!autoRefresh) return;
-
-    const interval = setInterval(fetchOrderBookData, refreshInterval);
-    return () => clearInterval(interval);
-  }, [autoRefresh, refreshInterval, symbol]);
+  // Removed manual interval - now using smart refresh system
 
   const formatSize = (size: number): string => {
     if (size >= 1000000) return `${(size / 1000000).toFixed(1)}M`;
@@ -276,29 +284,50 @@ export default function OrderBookAnalyzer({
   }
 
   return (
-    <div className={`bg-white rounded-xl shadow-lg border border-gray-200 p-6 ${className}`}>
+    <div ref={smartRefresh.elementRef} className={`bg-white rounded-xl shadow-lg border border-gray-200 p-8 ${className}`}>
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-8">
         <div className="flex items-center gap-3">
           <BarChart3 className="h-6 w-6 text-indigo-600" />
           <div>
-            <h3 className="text-lg font-semibold text-gray-900">Order Book Analyzer</h3>
-            <p className="text-sm text-gray-600">{symbol} • Market Microstructure</p>
+            <h3 className="text-xl font-bold text-gray-900">Order Book Analyzer</h3>
+            <p className="text-base text-gray-600">{symbol} • Market Microstructure Analysis</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          {/* Smart Refresh Status */}
+          <div className="flex items-center gap-2 text-sm text-gray-500">
+            <div className={`h-2 w-2 rounded-full ${
+              smartRefresh.isPaused ? 'bg-yellow-400' : 'bg-green-400'
+            }`} />
+            <span>{smartRefresh.isPaused ? 'Paused' : 'Live'}</span>
+          </div>
+
+          {/* Manual Refresh */}
           <button
-            onClick={fetchOrderBookData}
+            onClick={() => {
+              smartRefresh.manualRefresh();
+            }}
             disabled={loading}
-            className="p-2 text-gray-600 hover:text-gray-900 transition-colors"
+            className="p-2 text-gray-600 hover:text-gray-900 transition-colors rounded-lg hover:bg-gray-100"
+            title="Manual refresh"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+
+          {/* Pause/Resume Smart Refresh */}
+          <button
+            onClick={smartRefresh.isPaused ? smartRefresh.resume : smartRefresh.pause}
+            className="px-3 py-1 text-xs font-medium rounded-lg border transition-colors"
+            title={smartRefresh.isPaused ? 'Resume auto-refresh' : 'Pause auto-refresh'}
+          >
+            {smartRefresh.isPaused ? 'Resume' : 'Pause'}
           </button>
         </div>
       </div>
 
       {/* View Mode Selector */}
-      <div className="flex items-center bg-gray-100 rounded-lg p-1 mb-6">
+      <div className="flex items-center bg-gray-100 rounded-lg p-2 mb-8">
         {[
           { id: 'book', label: 'Order Book', icon: Layers },
           { id: 'analysis', label: 'Analysis', icon: BarChart3 },
@@ -308,7 +337,7 @@ export default function OrderBookAnalyzer({
           <button
             key={id}
             onClick={() => setViewMode(id as any)}
-            className={`px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2 ${
+            className={`px-4 py-3 rounded-md text-base font-medium transition-colors flex items-center gap-2 ${
               viewMode === id
                 ? 'bg-white text-gray-900 shadow-sm'
                 : 'text-gray-600 hover:text-gray-900'
@@ -326,44 +355,50 @@ export default function OrderBookAnalyzer({
           <span className="ml-2 text-gray-600">Loading order book...</span>
         </div>
       ) : orderBookData ? (
-        <div className="space-y-6">
+        <div className="space-y-8">
           {viewMode === 'book' && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Order Book Display */}
-              <div className="space-y-4">
+              <div className="space-y-6">
                 {/* Asks (Sell Orders) */}
                 <div>
-                  <h4 className="font-medium text-red-600 mb-2 flex items-center gap-2">
-                    <TrendingDown className="h-4 w-4" />
+                  <h4 className="font-semibold text-red-600 mb-4 flex items-center gap-3 text-lg">
+                    <TrendingDown className="h-5 w-5" />
                     Asks (Sell Orders)
                   </h4>
-                  <div className="space-y-1">
+                  {/* Column Headers */}
+                  <div className="grid grid-cols-3 gap-4 text-sm font-semibold text-gray-700 py-2 px-4 bg-gray-50 rounded-lg mb-3">
+                    <div>Price</div>
+                    <div className="text-right">Size</div>
+                    <div className="text-right">Total</div>
+                  </div>
+                  <div className="space-y-2">
                     {orderBookData.asks.slice(0, 10).reverse().map((ask, index) => (
                       <div
                         key={index}
-                        className="grid grid-cols-3 gap-2 text-sm py-1 px-2 hover:bg-red-50 cursor-pointer relative"
+                        className="grid grid-cols-3 gap-4 text-base py-3 px-4 hover:bg-red-50 cursor-pointer relative border-b border-gray-100 transition-colors"
                         onClick={() => setSelectedLevel(ask)}
                       >
                         <div
                           className="absolute right-0 top-0 bottom-0 bg-red-100 opacity-50"
                           style={{ width: getBarWidth(ask.percentage) }}
                         />
-                        <div className="text-red-600 font-medium relative z-10">
+                        <div className="text-red-600 font-semibold relative z-10">
                           ${ask.price.toFixed(4)}
                         </div>
-                        <div className="text-right relative z-10">{formatSize(ask.size)}</div>
-                        <div className="text-right text-gray-600 relative z-10">{formatSize(ask.total)}</div>
+                        <div className="text-right relative z-10 font-medium">{formatSize(ask.size)}</div>
+                        <div className="text-right text-gray-600 relative z-10 font-medium">{formatSize(ask.total)}</div>
                       </div>
                     ))}
                   </div>
                 </div>
 
                 {/* Spread */}
-                <div className="bg-gray-100 rounded-lg p-3 text-center">
-                  <div className="text-sm text-gray-600">Spread</div>
-                  <div className="font-bold">
+                <div className="bg-gray-100 rounded-lg p-5 text-center my-6">
+                  <div className="text-base text-gray-600 mb-2">Spread</div>
+                  <div className="font-bold text-lg">
                     ${orderBookData.microstructure.spread.toFixed(4)}
-                    <span className="text-sm text-gray-600 ml-2">
+                    <span className="text-base text-gray-600 ml-2">
                       ({orderBookData.microstructure.spreadPercentage.toFixed(3)}%)
                     </span>
                   </div>
@@ -371,26 +406,32 @@ export default function OrderBookAnalyzer({
 
                 {/* Bids (Buy Orders) */}
                 <div>
-                  <h4 className="font-medium text-green-600 mb-2 flex items-center gap-2">
-                    <TrendingUp className="h-4 w-4" />
+                  <h4 className="font-semibold text-green-600 mb-4 flex items-center gap-3 text-lg">
+                    <TrendingUp className="h-5 w-5" />
                     Bids (Buy Orders)
                   </h4>
-                  <div className="space-y-1">
+                  {/* Column Headers */}
+                  <div className="grid grid-cols-3 gap-4 text-sm font-semibold text-gray-700 py-2 px-4 bg-gray-50 rounded-lg mb-3">
+                    <div>Price</div>
+                    <div className="text-right">Size</div>
+                    <div className="text-right">Total</div>
+                  </div>
+                  <div className="space-y-2">
                     {orderBookData.bids.slice(0, 10).map((bid, index) => (
                       <div
                         key={index}
-                        className="grid grid-cols-3 gap-2 text-sm py-1 px-2 hover:bg-green-50 cursor-pointer relative"
+                        className="grid grid-cols-3 gap-4 text-base py-3 px-4 hover:bg-green-50 cursor-pointer relative border-b border-gray-100 transition-colors"
                         onClick={() => setSelectedLevel(bid)}
                       >
                         <div
                           className="absolute right-0 top-0 bottom-0 bg-green-100 opacity-50"
                           style={{ width: getBarWidth(bid.percentage) }}
                         />
-                        <div className="text-green-600 font-medium relative z-10">
+                        <div className="text-green-600 font-semibold relative z-10">
                           ${bid.price.toFixed(4)}
                         </div>
-                        <div className="text-right relative z-10">{formatSize(bid.size)}</div>
-                        <div className="text-right text-gray-600 relative z-10">{formatSize(bid.total)}</div>
+                        <div className="text-right relative z-10 font-medium">{formatSize(bid.size)}</div>
+                        <div className="text-right text-gray-600 relative z-10 font-medium">{formatSize(bid.total)}</div>
                       </div>
                     ))}
                   </div>
@@ -398,13 +439,13 @@ export default function OrderBookAnalyzer({
               </div>
 
               {/* Order Book Imbalance */}
-              <div className="space-y-4">
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <h4 className="font-medium text-gray-900 mb-3">Order Book Imbalance</h4>
+              <div className="space-y-6">
+                <div className="bg-gray-50 rounded-lg p-6">
+                  <h4 className="font-semibold text-gray-900 mb-4 text-lg">Order Book Imbalance</h4>
 
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-600">Direction</span>
+                      <span className="text-base text-gray-600">Direction</span>
                       <span className={`font-medium ${
                         orderBookData.imbalance.direction === 'BULLISH' ? 'text-green-600' :
                         orderBookData.imbalance.direction === 'BEARISH' ? 'text-red-600' :
@@ -415,49 +456,49 @@ export default function OrderBookAnalyzer({
                     </div>
 
                     <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-600">Strength</span>
+                      <span className="text-base text-gray-600">Strength</span>
                       <span className={`font-medium ${IMBALANCE_COLORS[orderBookData.imbalance.imbalanceStrength]}`}>
                         {orderBookData.imbalance.imbalanceStrength}
                       </span>
                     </div>
 
                     <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-600">Bid/Ask Ratio</span>
+                      <span className="text-base text-gray-600">Bid/Ask Ratio</span>
                       <span className="font-medium">
                         {(orderBookData.imbalance.bidAskRatio * 100).toFixed(1)}%
                       </span>
                     </div>
 
                     <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-600">Confidence</span>
+                      <span className="text-base text-gray-600">Confidence</span>
                       <span className="font-medium">
                         {(orderBookData.imbalance.confidence * 100).toFixed(1)}%
                       </span>
                     </div>
 
                     {/* Pressure Bars */}
-                    <div className="space-y-2">
+                    <div className="space-y-4">
                       <div>
-                        <div className="flex justify-between text-xs text-gray-600 mb-1">
+                        <div className="flex justify-between text-sm text-gray-600 mb-2">
                           <span>Bid Pressure</span>
                           <span>{(orderBookData.imbalance.bidPressure * 100).toFixed(1)}%</span>
                         </div>
-                        <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div className="w-full bg-gray-200 rounded-full h-3">
                           <div
-                            className="bg-green-500 h-2 rounded-full"
+                            className="bg-green-500 h-3 rounded-full transition-all duration-500"
                             style={{ width: `${orderBookData.imbalance.bidPressure * 100}%` }}
                           />
                         </div>
                       </div>
 
                       <div>
-                        <div className="flex justify-between text-xs text-gray-600 mb-1">
+                        <div className="flex justify-between text-sm text-gray-600 mb-2">
                           <span>Ask Pressure</span>
                           <span>{(orderBookData.imbalance.askPressure * 100).toFixed(1)}%</span>
                         </div>
-                        <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div className="w-full bg-gray-200 rounded-full h-3">
                           <div
-                            className="bg-red-500 h-2 rounded-full"
+                            className="bg-red-500 h-3 rounded-full transition-all duration-500"
                             style={{ width: `${orderBookData.imbalance.askPressure * 100}%` }}
                           />
                         </div>
@@ -467,9 +508,9 @@ export default function OrderBookAnalyzer({
                 </div>
 
                 {/* Market Depth */}
-                <div className="bg-blue-50 rounded-lg p-4">
-                  <h4 className="font-medium text-blue-900 mb-3">Market Depth</h4>
-                  <div className="space-y-2 text-sm">
+                <div className="bg-blue-50 rounded-lg p-6">
+                  <h4 className="font-semibold text-blue-900 mb-4 text-lg">Market Depth</h4>
+                  <div className="space-y-3 text-base">
                     {Object.entries(orderBookData.liquidity.depthAtPercentage).map(([pct, depth]) => (
                       <div key={pct} className="flex justify-between">
                         <span className="text-blue-600">±{pct}%</span>
@@ -486,24 +527,24 @@ export default function OrderBookAnalyzer({
           )}
 
           {viewMode === 'analysis' && (
-            <div className="space-y-6">
+            <div className="space-y-8">
               {/* Liquidity Analysis */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                  <div className="text-sm text-green-600 mb-1">Bid Liquidity</div>
-                  <div className="text-2xl font-bold text-green-700">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div className="bg-green-50 border border-green-200 rounded-lg p-6">
+                  <div className="text-base text-green-600 mb-2">Bid Liquidity</div>
+                  <div className="text-3xl font-bold text-green-700">
                     {formatSize(orderBookData.liquidity.bidLiquidity)}
                   </div>
                 </div>
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                  <div className="text-sm text-red-600 mb-1">Ask Liquidity</div>
-                  <div className="text-2xl font-bold text-red-700">
+                <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+                  <div className="text-base text-red-600 mb-2">Ask Liquidity</div>
+                  <div className="text-3xl font-bold text-red-700">
                     {formatSize(orderBookData.liquidity.askLiquidity)}
                   </div>
                 </div>
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <div className="text-sm text-blue-600 mb-1">Total Liquidity</div>
-                  <div className="text-2xl font-bold text-blue-700">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+                  <div className="text-base text-blue-600 mb-2">Total Liquidity</div>
+                  <div className="text-3xl font-bold text-blue-700">
                     {formatSize(orderBookData.liquidity.totalLiquidity)}
                   </div>
                 </div>
