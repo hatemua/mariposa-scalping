@@ -125,10 +125,9 @@ export default function ProfessionalSignalFeed({
         const batchPromises = batch.map(async (symbol) => {
           try {
             // Get real market data and technical analysis
-            const [marketResponse, confluenceResponse, entrySignalsResponse] = await Promise.all([
+            const [marketResponse, confluenceResponse] = await Promise.all([
               marketApi.getMarketData(symbol),
-              marketApi.getConfluenceScore(symbol),
-              marketApi.getEntrySignals(symbol)
+              marketApi.getRealTimeAnalysis(symbol)
             ]);
 
             if (!marketResponse.success || !confluenceResponse.success) {
@@ -137,9 +136,8 @@ export default function ProfessionalSignalFeed({
 
             const marketData = marketResponse.data;
             const confluenceData = confluenceResponse.data;
-            const entrySignalsData = entrySignalsResponse.success ? entrySignalsResponse.data : null;
 
-            return generateSignalsFromRealData(symbol, marketData, confluenceData, entrySignalsData);
+            return generateSignalsFromRealData(symbol, marketData, confluenceData, null);
 
           } catch (error) {
             console.warn(`Failed to generate signals for ${symbol}:`, error);

@@ -114,10 +114,9 @@ export default function TradingTodoList({
         const batchPromises = batch.map(async (symbol) => {
           try {
             // Get real market data and analysis
-            const [marketResponse, confluenceResponse, entrySignalsResponse] = await Promise.all([
+            const [marketResponse, confluenceResponse] = await Promise.all([
               marketApi.getMarketData(symbol),
-              marketApi.getConfluenceScore(symbol),
-              marketApi.getEntrySignals(symbol)
+              marketApi.getRealTimeAnalysis(symbol)
             ]);
 
             if (!marketResponse.success || !confluenceResponse.success) {
@@ -126,9 +125,8 @@ export default function TradingTodoList({
 
             const marketData = marketResponse.data;
             const confluenceData = confluenceResponse.data;
-            const entrySignalsData = entrySignalsResponse.success ? entrySignalsResponse.data : null;
 
-            return generateTodosFromMarketData(symbol, marketData, confluenceData, entrySignalsData);
+            return generateTodosFromMarketData(symbol, marketData, confluenceData, null);
 
           } catch (error) {
             console.warn(`Failed to generate todos for ${symbol}:`, error);

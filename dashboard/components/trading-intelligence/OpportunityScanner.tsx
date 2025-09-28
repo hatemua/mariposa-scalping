@@ -259,7 +259,7 @@ export default function OpportunityScanner({
                 score,
                 confidence,
                 category,
-                timeframe: confluenceData.strongestTimeframe || '1h',
+                timeframe: '1h',
                 expectedReturn,
                 riskLevel,
                 entry,
@@ -270,10 +270,10 @@ export default function OpportunityScanner({
                 priceChange: marketData.change24h || 0,
                 reasoning: getOpportunityReasoning(category, score),
                 indicators: {
-                  rsi: confluenceData.factors?.rsi || 50,
-                  volume_ratio: confluenceData.factors?.volumeScore || 1,
+                  rsi: 50,
+                  volume_ratio: 1,
                   volatility: calculateVolatility(marketData),
-                  momentum: confluenceData.factors?.momentumScore || 0
+                  momentum: 0
                 },
                 timestamp: new Date().toISOString()
               };

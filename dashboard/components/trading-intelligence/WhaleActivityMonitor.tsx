@@ -109,17 +109,14 @@ export default function WhaleActivityMonitor({
         try {
           // Get real market data and analysis
           const marketResponse = await marketApi.getMarketData(symbol);
-          const entrySignalsResponse = await marketApi.getEntrySignals(symbol);
-
-          if (!marketResponse.success || !entrySignalsResponse.success) {
+          if (!marketResponse.success) {
             continue;
           }
 
           const marketData = marketResponse.data;
-          const signalsData = entrySignalsResponse.data;
 
           // Detect whale activity based on real market conditions
-          const whaleActivities = detectWhaleActivityFromMarketData(symbol, marketData, signalsData);
+          const whaleActivities = detectWhaleActivityFromMarketData(symbol, marketData, null);
           activities.push(...whaleActivities);
 
         } catch (error) {
