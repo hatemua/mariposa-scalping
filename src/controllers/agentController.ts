@@ -166,7 +166,7 @@ export const getUserAgents = async (req: AuthRequest, res: Response): Promise<vo
       };
 
       return {
-        id: agent._id.toString(),
+        id: (agent._id as any).toString(),
         name: agent.name,
         symbol: agent.symbol,
         status: agent.isActive ? 'RUNNING' : 'STOPPED' as const,
@@ -367,7 +367,7 @@ export const startAgent = async (req: AuthRequest, res: Response): Promise<void>
       success: true,
       message: 'Agent started successfully',
       data: {
-        id: agent._id.toString(),
+        id: (agent._id as any).toString(),
         status: 'RUNNING'
       }
     } as ApiResponse);
@@ -412,7 +412,7 @@ export const stopAgent = async (req: AuthRequest, res: Response): Promise<void> 
       success: true,
       message: 'Agent stopped successfully',
       data: {
-        id: agent._id.toString(),
+        id: (agent._id as any).toString(),
         status: 'STOPPED'
       }
     } as ApiResponse);
@@ -457,7 +457,7 @@ export const pauseAgent = async (req: AuthRequest, res: Response): Promise<void>
       success: true,
       message: 'Agent paused successfully',
       data: {
-        id: agent._id.toString(),
+        id: (agent._id as any).toString(),
         status: 'PAUSED'
       }
     } as ApiResponse);
