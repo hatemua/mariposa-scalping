@@ -23,6 +23,12 @@ import {
   getOpportunityScanner
 } from '../controllers/tradingIntelligenceController';
 import { authenticate } from '../middleware/auth';
+import {
+  marketDataRateLimiter,
+  aiAnalysisRateLimiter,
+  professionalSignalsRateLimiter,
+  bulkAnalysisRateLimiter
+} from '../middleware/rateLimiter';
 
 const router = express.Router();
 
@@ -36,32 +42,33 @@ router.use((req, res, next) => {
 
 router.use(authenticate);
 
-router.get('/symbols', getAvailableSymbols);
-router.get('/balance', getBalance);
-router.get('/technical-indicators', getTechnicalIndicators);
-router.get('/stream', getRealtimeAnalysisStream);
+// Basic market data endpoints (moderate rate limiting)
+router.get('/symbols', marketDataRateLimiter, getAvailableSymbols);
+router.get('/balance', marketDataRateLimiter, getBalance);
+router.get('/technical-indicators', marketDataRateLimiter, getTechnicalIndicators);
+router.get('/stream', getRealtimeAnalysisStream); // No additional limiting for websocket stream
 
-// New enhanced endpoints
-router.get('/:symbol/multi-timeframe', getMultiTimeframeAnalysis);
-router.get('/:symbol/real-time', getRealTimeAnalysis);
-router.get('/:symbol/chart/:timeframe', getChartData);
+// AI Analysis endpoints (higher rate limiting for Professional Trading Suite)
+router.get('/:symbol/multi-timeframe', aiAnalysisRateLimiter, getMultiTimeframeAnalysis);
+router.get('/:symbol/real-time', aiAnalysisRateLimiter, getRealTimeAnalysis);
+router.get('/:symbol/chart/:timeframe', marketDataRateLimiter, getChartData);
 
-// Existing endpoints
-router.get('/:symbol', getMarketData);
-router.get('/:symbol/analysis', getAnalysis);
-router.get('/:symbol/deep-analysis', getDeepAnalysis);
+// Standard market data endpoints
+router.get('/:symbol', marketDataRateLimiter, getMarketData);
+router.get('/:symbol/analysis', aiAnalysisRateLimiter, getAnalysis);
+router.get('/:symbol/deep-analysis', aiAnalysisRateLimiter, getDeepAnalysis);
 
-// Analysis endpoints
-router.post('/analysis', triggerAnalysis);
-router.post('/analysis/batch', triggerBatchAnalysis);
-router.post('/analysis/multi-token', getMultiTokenAnalysis);
-router.post('/analysis/bulk', getBulkTokenAnalysis);
+// Analysis endpoints with appropriate rate limiting
+router.post('/analysis', aiAnalysisRateLimiter, triggerAnalysis);
+router.post('/analysis/batch', bulkAnalysisRateLimiter, triggerBatchAnalysis);
+router.post('/analysis/multi-token', bulkAnalysisRateLimiter, getMultiTokenAnalysis);
+router.post('/analysis/bulk', bulkAnalysisRateLimiter, getBulkTokenAnalysis);
 
-// Trading intelligence endpoints
-router.get('/:symbol/confluence', getConfluenceScore);
-router.get('/:symbol/entry-signals', getEntrySignals);
-router.post('/professional-signals', getProfessionalSignals);
-router.post('/whale-activity', getWhaleActivity);
-router.post('/opportunity-scanner', getOpportunityScanner);
+// Trading intelligence endpoints (Professional Trading Suite)
+router.get('/:symbol/confluence', aiAnalysisRateLimiter, getConfluenceScore);
+router.get('/:symbol/entry-signals', aiAnalysisRateLimiter, getEntrySignals);
+router.post('/professional-signals', professionalSignalsRateLimiter, getProfessionalSignals);
+router.post('/whale-activity', professionalSignalsRateLimiter, getWhaleActivity);
+router.post('/opportunity-scanner', professionalSignalsRateLimiter, getOpportunityScanner);
 
 export default router;

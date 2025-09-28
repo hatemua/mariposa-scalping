@@ -12,14 +12,20 @@ let rateLimiter: RateLimiterRedis;
 const initializeRateLimiter = () => {
   try {
     if (redis.connected) {
+      // Apply development multiplier if in development mode
+      const isDevelopment = config.NODE_ENV === 'development';
+      const multiplier = isDevelopment ? config.DEVELOPMENT_RATE_LIMIT_MULTIPLIER : 1;
+
       rateLimiter = new RateLimiterRedis({
         storeClient: redis.getClient(),
         keyPrefix: 'rl:',
-        points: config.RATE_LIMIT_MAX_REQUESTS,
+        points: config.RATE_LIMIT_MAX_REQUESTS * multiplier,
         duration: config.RATE_LIMIT_WINDOW_MS / 1000,
-        blockDuration: 60, // Block for 1 minute after rate limit exceeded
+        blockDuration: config.RATE_LIMIT_BLOCK_DURATION,
         execEvenly: true, // Spread requests evenly across the duration
       });
+
+      console.log(`📊 Rate limiter initialized: ${config.RATE_LIMIT_MAX_REQUESTS * multiplier} requests per ${config.RATE_LIMIT_WINDOW_MS / 1000}s window${isDevelopment ? ' (Development Mode)' : ''}`);
     }
   } catch (error) {
     console.error('Failed to initialize Redis rate limiter:', error);
@@ -35,7 +41,21 @@ export const rateLimitMiddleware = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const identifier = req.ip || 'unknown';
+    // Skip rate limiting in development if configured
+    if (config.NODE_ENV === 'development' && config.DEVELOPMENT_RATE_LIMIT_MULTIPLIER >= 100) {
+      next();
+      return;
+    }
+
+    // Create identifier - prefer user ID for authenticated requests, fallback to IP
+    const authReq = req as AuthRequest;
+    const userId = authReq.user?._id?.toString();
+    const identifier = userId ? `user:${userId}` : `ip:${req.ip || 'unknown'}`;
+
+    // Apply development multiplier
+    const isDevelopment = config.NODE_ENV === 'development';
+    const multiplier = isDevelopment ? config.DEVELOPMENT_RATE_LIMIT_MULTIPLIER : 1;
+    const effectiveLimit = config.RATE_LIMIT_MAX_REQUESTS * multiplier;
 
     // Use Redis rate limiter if available, otherwise use Redis service directly
     if (rateLimiter) {
@@ -43,19 +63,21 @@ export const rateLimitMiddleware = async (
         await rateLimiter.consume(identifier);
         next();
       } catch (rejRes: any) {
-        const remainingTime = Math.round(rejRes.msBeforeNext / 1000) || 60;
+        const remainingTime = Math.round(rejRes.msBeforeNext / 1000) || config.RATE_LIMIT_BLOCK_DURATION;
         res.status(429).json({
           success: false,
-          error: 'Too many requests',
-          message: `Rate limit exceeded. Try again in ${remainingTime} seconds.`,
-          retryAfter: remainingTime
+          error: 'Rate limit exceeded',
+          message: `Too many requests. Try again in ${remainingTime} seconds.`,
+          retryAfter: remainingTime,
+          limit: effectiveLimit,
+          window: config.RATE_LIMIT_WINDOW_MS / 1000
         } as ApiResponse);
       }
     } else {
       // Fallback to direct Redis service usage
       const rateCheck = await redisService.checkRateLimit(
         identifier,
-        config.RATE_LIMIT_MAX_REQUESTS,
+        effectiveLimit,
         Math.floor(config.RATE_LIMIT_WINDOW_MS / 1000)
       );
 
@@ -64,9 +86,11 @@ export const rateLimitMiddleware = async (
       } else {
         res.status(429).json({
           success: false,
-          error: 'Too many requests',
+          error: 'Rate limit exceeded',
           message: `Rate limit exceeded. ${rateCheck.remaining} requests remaining.`,
-          remaining: rateCheck.remaining
+          remaining: rateCheck.remaining,
+          limit: effectiveLimit,
+          window: config.RATE_LIMIT_WINDOW_MS / 1000
         } as ApiResponse);
       }
     }
@@ -138,26 +162,62 @@ export const createCustomRateLimiter = (options: {
 
 // Specific rate limiters for different endpoints
 export const authRateLimiter = createCustomRateLimiter({
-  points: 5, // 5 attempts
+  points: config.AUTH_RATE_LIMIT, // 5 attempts by default
   duration: 300, // Per 5 minutes
   keyGenerator: (req) => `auth:${req.ip}`,
   skipSuccessfulRequests: true
 });
 
-export const analysisRateLimiter = createCustomRateLimiter({
-  points: 10, // 10 requests
+export const aiAnalysisRateLimiter = createCustomRateLimiter({
+  points: config.AI_ANALYSIS_RATE_LIMIT * (config.NODE_ENV === 'development' ? config.DEVELOPMENT_RATE_LIMIT_MULTIPLIER : 1),
   duration: 60, // Per minute
-  keyGenerator: (req) => `analysis:${req.ip}`,
+  keyGenerator: (req) => {
+    const authReq = req as AuthRequest;
+    const userId = authReq.user?._id?.toString();
+    return userId ? `ai_analysis:${userId}` : `ai_analysis:${req.ip || 'unknown'}`;
+  },
+  skipFailedRequests: true
+});
+
+export const marketDataRateLimiter = createCustomRateLimiter({
+  points: config.MARKET_DATA_RATE_LIMIT * (config.NODE_ENV === 'development' ? config.DEVELOPMENT_RATE_LIMIT_MULTIPLIER : 1),
+  duration: 60, // Per minute
+  keyGenerator: (req) => {
+    const authReq = req as AuthRequest;
+    const userId = authReq.user?._id?.toString();
+    return userId ? `market_data:${userId}` : `market_data:${req.ip || 'unknown'}`;
+  },
   skipFailedRequests: true
 });
 
 export const tradingRateLimiter = createCustomRateLimiter({
-  points: 20, // 20 trades
+  points: 20 * (config.NODE_ENV === 'development' ? config.DEVELOPMENT_RATE_LIMIT_MULTIPLIER : 1), // 20 trades per minute
   duration: 60, // Per minute
   keyGenerator: (req) => {
     const authReq = req as AuthRequest;
     const userId = authReq.user?._id?.toString();
     return userId ? `trading:${userId}` : `trading:${req.ip || 'unknown'}`;
+  }
+});
+
+// Professional Trading Suite specific rate limiters
+export const professionalSignalsRateLimiter = createCustomRateLimiter({
+  points: 15 * (config.NODE_ENV === 'development' ? config.DEVELOPMENT_RATE_LIMIT_MULTIPLIER : 1), // 15 requests per minute
+  duration: 60,
+  keyGenerator: (req) => {
+    const authReq = req as AuthRequest;
+    const userId = authReq.user?._id?.toString();
+    return userId ? `pro_signals:${userId}` : `pro_signals:${req.ip || 'unknown'}`;
+  }
+});
+
+export const bulkAnalysisRateLimiter = createCustomRateLimiter({
+  points: 5 * (config.NODE_ENV === 'development' ? config.DEVELOPMENT_RATE_LIMIT_MULTIPLIER : 1), // 5 requests per minute
+  duration: 60,
+  keyGenerator: (req) => {
+    const authReq = req as AuthRequest;
+    const userId = authReq.user?._id?.toString();
+    return userId ? `bulk_analysis:${userId}` : `bulk_analysis:${req.ip || 'unknown'}`;
   }
 });
 

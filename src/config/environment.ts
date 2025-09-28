@@ -19,6 +19,11 @@ interface Config {
   NODE_ENV: string;
   RATE_LIMIT_WINDOW_MS: number;
   RATE_LIMIT_MAX_REQUESTS: number;
+  RATE_LIMIT_BLOCK_DURATION: number;
+  AI_ANALYSIS_RATE_LIMIT: number;
+  MARKET_DATA_RATE_LIMIT: number;
+  AUTH_RATE_LIMIT: number;
+  DEVELOPMENT_RATE_LIMIT_MULTIPLIER: number;
   FRONTEND_URL?: string;
   EMAIL_HOST: string;
   EMAIL_PORT: number;
@@ -66,8 +71,13 @@ export const config: Config = {
   TOGETHER_AI_API_KEY: process.env.TOGETHER_AI_API_KEY!,
   PORT: parseInt(process.env.PORT || '3001', 10),
   NODE_ENV: process.env.NODE_ENV || 'development',
-  RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '15000', 10),
-  RATE_LIMIT_MAX_REQUESTS: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
+  RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10), // 1 minute default
+  RATE_LIMIT_MAX_REQUESTS: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '300', 10), // 300 requests per minute
+  RATE_LIMIT_BLOCK_DURATION: parseInt(process.env.RATE_LIMIT_BLOCK_DURATION || '30', 10), // 30 seconds block
+  AI_ANALYSIS_RATE_LIMIT: parseInt(process.env.AI_ANALYSIS_RATE_LIMIT || '20', 10), // 20 per minute
+  MARKET_DATA_RATE_LIMIT: parseInt(process.env.MARKET_DATA_RATE_LIMIT || '60', 10), // 60 per minute
+  AUTH_RATE_LIMIT: parseInt(process.env.AUTH_RATE_LIMIT || '5', 10), // 5 per 5 minutes
+  DEVELOPMENT_RATE_LIMIT_MULTIPLIER: parseInt(process.env.DEVELOPMENT_RATE_LIMIT_MULTIPLIER || '10', 10), // 10x higher in dev
   FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:3000',
   EMAIL_HOST: process.env.EMAIL_HOST!,
   EMAIL_PORT: parseInt(process.env.EMAIL_PORT || '465', 10),
