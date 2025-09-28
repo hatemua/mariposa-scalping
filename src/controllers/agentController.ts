@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { ScalpingAgent, Trade } from '../models';
 import { agendaService } from '../services/agendaService';
 import { okxService } from '../services/okxService';
+import { technicalAnalysisService } from '../services/technicalAnalysisService';
 import { AuthRequest } from '../middleware/auth';
 import { ApiResponse, AgentConfig } from '../types';
 
@@ -155,15 +156,22 @@ export const getUserAgents = async (req: AuthRequest, res: Response): Promise<vo
         };
       }
 
-      // Generate last signal (mock for now, could be enhanced with real signal logic)
-      const lastSignal = {
-        type: (['BUY', 'SELL', 'HOLD'][Math.floor(Math.random() * 3)]) as 'BUY' | 'SELL' | 'HOLD',
-        confidence: 0.5 + Math.random() * 0.4, // 50-90% confidence
-        timestamp: new Date(Date.now() - Math.random() * 30 * 60 * 1000).toISOString(), // Within last 30 mins
-        reasoning: totalTrades > 0 ?
-          'Based on recent market conditions and technical indicators' :
-          'Waiting for optimal market entry conditions'
-      };
+      // Generate real technical analysis signal
+      let lastSignal;
+      try {
+        lastSignal = await technicalAnalysisService.generateSignal(agent.symbol, agent.config);
+      } catch (error) {
+        console.warn(`Failed to generate signal for ${agent.symbol}:`, error);
+        // Fallback signal if technical analysis fails
+        lastSignal = {
+          type: 'HOLD' as const,
+          confidence: 0.5,
+          timestamp: new Date().toISOString(),
+          reasoning: totalTrades > 0 ?
+            'Technical analysis unavailable - based on recent trading activity' :
+            'Waiting for market data to generate signals'
+        };
+      }
 
       return {
         id: (agent._id as any).toString(),

@@ -15,6 +15,13 @@ import {
   getChartData,
   getBulkTokenAnalysis
 } from '../controllers/marketController';
+import {
+  getConfluenceScore,
+  getEntrySignals,
+  getProfessionalSignals,
+  getWhaleActivity,
+  getOpportunityScanner
+} from '../controllers/tradingIntelligenceController';
 import { authenticate } from '../middleware/auth';
 
 const router = express.Router();
@@ -49,5 +56,12 @@ router.post('/analysis', triggerAnalysis);
 router.post('/analysis/batch', triggerBatchAnalysis);
 router.post('/analysis/multi-token', getMultiTokenAnalysis);
 router.post('/analysis/bulk', getBulkTokenAnalysis);
+
+// Trading intelligence endpoints
+router.get('/:symbol/confluence', getConfluenceScore);
+router.get('/:symbol/entry-signals', getEntrySignals);
+router.post('/professional-signals', getProfessionalSignals);
+router.post('/whale-activity', getWhaleActivity);
+router.post('/opportunity-scanner', getOpportunityScanner);
 
 export default router;

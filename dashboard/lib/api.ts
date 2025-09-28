@@ -277,6 +277,41 @@ export const marketApi = {
     const response = await api.get('/market/symbols');
     return response.data;
   },
+
+  // New methods for trading intelligence
+  getConfluenceScore: async (symbol: string): Promise<ApiResponse> => {
+    const response = await api.get(`/market/${symbol}/confluence`);
+    return response.data;
+  },
+
+  getEntrySignals: async (symbol: string): Promise<ApiResponse> => {
+    const response = await api.get(`/market/${symbol}/entry-signals`);
+    return response.data;
+  },
+
+  getProfessionalSignals: async (symbols: string[], minStrength = 60): Promise<ApiResponse> => {
+    const response = await api.post('/market/professional-signals', {
+      symbols,
+      minStrength
+    });
+    return response.data;
+  },
+
+  getWhaleActivity: async (symbols: string[], minSize = 50000): Promise<ApiResponse> => {
+    const response = await api.post('/market/whale-activity', {
+      symbols,
+      minSize
+    });
+    return response.data;
+  },
+
+  getOpportunityScanner: async (symbols: string[], minScore = 70): Promise<ApiResponse> => {
+    const response = await api.post('/market/opportunity-scanner', {
+      symbols,
+      minScore
+    });
+    return response.data;
+  },
 };
 
 export const orderBookApi = {
