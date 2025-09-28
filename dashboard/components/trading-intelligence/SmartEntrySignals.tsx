@@ -109,7 +109,7 @@ const SIGNIFICANCE_COLORS = {
 export default function SmartEntrySignals({
   symbol,
   autoRefresh = true,
-  refreshInterval = 15000, // 15 seconds for entry signals
+  refreshInterval = 60000, // 60 seconds for entry signals (was 15s - too aggressive)
   className = ''
 }: SmartEntrySignalsProps) {
   const [entryData, setEntryData] = useState<SmartEntryData | null>(null);

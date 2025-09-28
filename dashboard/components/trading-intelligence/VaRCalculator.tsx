@@ -99,7 +99,7 @@ export default function VaRCalculator({
   confidence = 95,
   timeHorizon = 1,
   autoRefresh = true,
-  refreshInterval = 60000, // 1 minute
+  refreshInterval = 300000, // 5 minutes for VaR calculation (was 1min - too aggressive)
   className = ''
 }: VaRCalculatorProps) {
   const [varData, setVarData] = useState<VaRData | null>(null);

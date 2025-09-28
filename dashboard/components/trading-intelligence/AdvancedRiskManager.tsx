@@ -125,7 +125,7 @@ export default function AdvancedRiskManager({
   symbol,
   portfolioSymbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT'],
   autoRefresh = true,
-  refreshInterval = 5000,
+  refreshInterval = 120000, // 2 minutes for risk analysis (was 5s - too aggressive)
   className = ''
 }: AdvancedRiskManagerProps) {
   const [riskData, setRiskData] = useState<AdvancedRiskData | null>(null);

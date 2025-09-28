@@ -85,7 +85,7 @@ export default function CorrelationMatrix({
   timeframe = '1h',
   lookbackPeriods = 100,
   autoRefresh = true,
-  refreshInterval = 30000, // 30 seconds
+  refreshInterval = 300000, // 5 minutes for correlation analysis (was 30s - too aggressive)
   className = ''
 }: CorrelationMatrixProps) {
   const [correlationData, setCorrelationData] = useState<CorrelationMatrixData | null>(null);

@@ -61,7 +61,7 @@ const PNL_COLORS = {
 export default function PortfolioHeatMap({
   symbols,
   autoRefresh = true,
-  refreshInterval = 10000,
+  refreshInterval = 300000, // 5 minutes for portfolio heat map (was 10s - too aggressive)
   className = ''
 }: PortfolioHeatMapProps) {
   const [heatMapData, setHeatMapData] = useState<HeatMapData | null>(null);

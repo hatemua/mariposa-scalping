@@ -298,7 +298,7 @@ export default function MarketPage() {
                       symbol={selectedSymbol}
                       portfolioSymbols={['BTCUSDT', 'ETHUSDT', 'SOLUSDT']}
                       autoRefresh={true}
-                      refreshInterval={5000}
+                      refreshInterval={120000} // 2 minutes for risk dashboard
                       className="w-full"
                     />
                   </SectionErrorBoundary>
@@ -336,7 +336,7 @@ export default function MarketPage() {
                         entryTime: new Date().toISOString()
                       }}
                       autoRefresh={true}
-                      refreshInterval={10000}
+                      refreshInterval={90000} // 90 seconds for exit strategy
                       className="w-full"
                     />
                   </SectionErrorBoundary>

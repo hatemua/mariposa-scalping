@@ -119,7 +119,7 @@ export default function OrderBookAnalyzer({
   symbol,
   levels = 20,
   autoRefresh = true,
-  refreshInterval = 2000, // 2 seconds for order book
+  refreshInterval = 45000, // 45 seconds for order book (was 2s - too aggressive)
   className = ''
 }: OrderBookAnalyzerProps) {
   const [orderBookData, setOrderBookData] = useState<OrderBookData | null>(null);

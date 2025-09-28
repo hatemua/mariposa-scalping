@@ -7,6 +7,8 @@ import { toast } from 'react-hot-toast';
 import { SignalFeedSkeleton } from '@/components/ui/LoadingSkeleton';
 import TradingErrorBoundary from '@/components/ui/TradingErrorBoundary';
 import AIProcessingIndicator from '@/components/ui/AIProcessingIndicator';
+import { useSmartRefresh } from '@/hooks/useSmartRefresh';
+import { useComponentRefresh } from '@/contexts/RefreshContext';
 import {
   Zap,
   TrendingUp,
@@ -104,7 +106,7 @@ function ProfessionalSignalFeed({
   maxSignals = 20,
   minStrength = 60,
   autoRefresh = true,
-  refreshInterval = 15000,
+  refreshInterval = 60000, // 60 seconds for signal feed (was 15s - too aggressive)
   enableNotifications = true,
   className = ''
 }: ProfessionalSignalFeedProps) {
@@ -495,6 +497,23 @@ function ProfessionalSignalFeed({
     }
   };
 
+  // Smart refresh integration
+  const { enabled: refreshEnabled, interval: effectiveInterval, refreshFn } = useComponentRefresh(
+    'ProfessionalSignalFeed',
+    refreshInterval,
+    fetchSignals
+  );
+
+  const smartRefresh = useSmartRefresh({
+    refreshFn,
+    interval: effectiveInterval,
+    enabled: autoRefresh && refreshEnabled,
+    pauseOnHover: true,
+    pauseOnFocus: true,
+    pauseOnInteraction: true,
+    interactionPauseDuration: 15000, // 15 seconds pause after interaction
+  });
+
   const formatTimeAgo = (timestamp: string): string => {
     const now = new Date();
     const time = new Date(timestamp);
@@ -508,16 +527,10 @@ function ProfessionalSignalFeed({
     return `${diffHours}h ago`;
   };
 
+  // Initial fetch when dependencies change
   useEffect(() => {
-    fetchSignals();
-  }, [symbols, minStrength]);
-
-  useEffect(() => {
-    if (autoRefresh && refreshInterval > 0) {
-      const interval = setInterval(fetchSignals, refreshInterval);
-      return () => clearInterval(interval);
-    }
-  }, [autoRefresh, refreshInterval, symbols, minStrength]);
+    smartRefresh.manualRefresh();
+  }, [symbols, minStrength, smartRefresh.manualRefresh]);
 
   const filteredSignals = signals.filter(signal => {
     if (selectedCategory && signal.category !== selectedCategory) return false;
@@ -526,7 +539,7 @@ function ProfessionalSignalFeed({
   });
 
   return (
-    <div className={`bg-white rounded-xl shadow-lg border border-gray-200 ${className}`}>
+    <div ref={smartRefresh.elementRef} className={`bg-white rounded-xl shadow-lg border border-gray-200 ${className}`}>
       {/* Header */}
       <div className="p-4 border-b border-gray-200">
         <div className="flex items-center justify-between">
@@ -552,16 +565,23 @@ function ProfessionalSignalFeed({
               {notificationsEnabled ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
             </button>
             <button
-              onClick={fetchSignals}
-              disabled={loading}
-              className="p-2 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-              title="Refresh Signals"
+              onClick={smartRefresh.manualRefresh}
+              disabled={smartRefresh.isRefreshing}
+              className={`p-2 rounded-lg transition-colors ${
+                smartRefresh.isPaused
+                  ? 'text-yellow-600 bg-yellow-50 hover:bg-yellow-100'
+                  : 'text-gray-600 hover:text-blue-600 hover:bg-blue-50'
+              }`}
+              title={smartRefresh.isPaused ? 'Refresh Paused (Interacting)' : 'Manual Refresh'}
             >
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`h-4 w-4 ${smartRefresh.isRefreshing ? 'animate-spin' : ''}`} />
             </button>
-            {lastUpdate && (
+            {smartRefresh.lastRefresh && (
               <div className="text-xs text-gray-500">
-                Updated {lastUpdate.toLocaleTimeString()}
+                Updated {smartRefresh.lastRefresh.toLocaleTimeString()}
+                {smartRefresh.isPaused && (
+                  <span className="ml-1 text-yellow-600">(Paused)</span>
+                )}
               </div>
             )}
           </div>

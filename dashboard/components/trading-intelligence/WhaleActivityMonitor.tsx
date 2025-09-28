@@ -90,7 +90,7 @@ function WhaleActivityMonitor({
   symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT'],
   minWhaleSize = 100000, // $100k minimum
   autoRefresh = true,
-  refreshInterval = 10000,
+  refreshInterval = 180000, // 3 minutes for whale activity (was 10s - too aggressive)
   enableAlerts = true,
   className = ''
 }: WhaleActivityMonitorProps) {

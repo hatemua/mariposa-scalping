@@ -92,7 +92,7 @@ export default function PositionSizingCalculator({
   accountBalance = 10000, // Default $10k account
   riskPerTrade = 2, // Default 2% risk
   autoRefresh = true,
-  refreshInterval = 30000, // 30 seconds
+  refreshInterval = 120000, // 2 minutes for position sizing (was 30s - too aggressive)
   className = ''
 }: PositionSizingCalculatorProps) {
   const [sizingData, setSizingData] = useState<PositionSizingData | null>(null);

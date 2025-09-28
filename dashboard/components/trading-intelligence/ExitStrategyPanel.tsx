@@ -121,7 +121,7 @@ export default function ExitStrategyPanel({
   symbol,
   position,
   autoRefresh = true,
-  refreshInterval = 10000, // 10 seconds for exit signals
+  refreshInterval = 90000, // 90 seconds for exit signals (was 10s - too aggressive)
   className = ''
 }: ExitStrategyPanelProps) {
   const [exitData, setExitData] = useState<ExitStrategyData | null>(null);

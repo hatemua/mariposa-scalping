@@ -75,7 +75,7 @@ const RECOMMENDATION_COLORS = {
 export default function ConfluenceScorePanel({
   symbol,
   autoRefresh = true,
-  refreshInterval = 30000,
+  refreshInterval = 120000, // 2 minutes for confluence analysis (was 30s - too aggressive)
   className = ''
 }: ConfluenceScorePanelProps) {
   const [confluenceData, setConfluenceData] = useState<ConfluenceData | null>(null);

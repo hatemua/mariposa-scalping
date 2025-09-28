@@ -127,7 +127,7 @@ export default function MultiTimeframeConfluence({
   symbol,
   timeframes = DEFAULT_TIMEFRAMES,
   autoRefresh = true,
-  refreshInterval = 30000, // 30 seconds
+  refreshInterval = 120000, // 2 minutes for multi-timeframe analysis (was 30s - too aggressive)
   className = ''
 }: MultiTimeframeConfluenceProps) {
   const [confluenceData, setConfluenceData] = useState<MultiTimeframeData | null>(null);

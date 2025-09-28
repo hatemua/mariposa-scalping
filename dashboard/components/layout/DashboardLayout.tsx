@@ -6,6 +6,7 @@ import { storage } from '@/lib/storage';
 import { useIsClient } from '@/hooks/useIsClient';
 import { ThemeProvider } from '@/components/theme/ThemeProvider';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
+import { RefreshControls } from '@/components/ui/RefreshControls';
 import {
   LayoutDashboard,
   TrendingUp,
@@ -291,6 +292,9 @@ function DashboardLayoutInner({ children }: DashboardLayoutProps) {
                   />
                 </div>
               </form>
+
+              {/* Refresh Controls */}
+              <RefreshControls compact={true} />
 
               {/* Theme Toggle */}
               <ThemeToggle className="hidden lg:flex" />
