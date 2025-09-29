@@ -418,9 +418,16 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
         const effectiveMinStrength = Math.min(minStrength, 50);
         if (signalStrength >= effectiveMinStrength && action !== 'HOLD') {
           console.log(`✅ ${normalizedSymbol} passed filters: Strength=${signalStrength} >= ${effectiveMinStrength}, Action=${action}`);
-          const riskLevel = Math.abs(priceChange24h);
+
+          // Validate input values to prevent null/NaN results
+          const validatedPrice = isNaN(currentPrice) || currentPrice <= 0 ? 1 : currentPrice;
+          const validatedPriceChange = isNaN(priceChange24h) ? 0 : priceChange24h;
+
+          const riskLevel = Math.abs(validatedPriceChange);
           const stopLossPercent = Math.max(1, Math.min(5, riskLevel * 0.5));
           const targetPercent = stopLossPercent * 2; // 2:1 risk/reward ratio
+
+          console.log(`💰 ${normalizedSymbol} pricing: Price=${validatedPrice}, RiskLevel=${riskLevel}%, StopLoss=${stopLossPercent}%, Target=${targetPercent}%`);
 
           // Enhanced signal with LLM analysis for moderate-strength signals
           let advancedLLMData = null;
@@ -432,11 +439,11 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
               // Create market data object for AI analysis
               const marketDataForAI: any = {
                 symbol: normalizedSymbol,
-                price: currentPrice,
-                change24h: parseFloat(marketData.change24h || '0'),
+                price: validatedPrice,
+                change24h: validatedPriceChange,
                 volume: volume24h,
-                high24h: parseFloat(marketData.high24h || currentPrice.toString()),
-                low24h: parseFloat(marketData.low24h || currentPrice.toString()),
+                high24h: parseFloat(marketData.high24h || validatedPrice.toString()),
+                low24h: parseFloat(marketData.low24h || validatedPrice.toString()),
                 timestamp: new Date()
               };
 
@@ -465,8 +472,8 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
                     recommendation: llmAnalysis.recommendation,
                     confidence: llmAnalysis.confidence,
                     reasoning: llmAnalysis.reasoning || `Multi-LLM consensus: ${llmAnalysis.recommendation}`,
-                    targetPrice: llmAnalysis.targetPrice || (currentPrice * (action === 'BUY' ? 1 + targetPercent / 100 : 1 - targetPercent / 100)),
-                    stopLoss: llmAnalysis.stopLoss || (currentPrice * (action === 'BUY' ? 1 - stopLossPercent / 100 : 1 + stopLossPercent / 100)),
+                    targetPrice: llmAnalysis.targetPrice || (validatedPrice * (action === 'BUY' ? 1 + targetPercent / 100 : 1 - targetPercent / 100)),
+                    stopLoss: llmAnalysis.stopLoss || (validatedPrice * (action === 'BUY' ? 1 - stopLossPercent / 100 : 1 + stopLossPercent / 100)),
                     timeToAction: '1h'
                   },
                   source: 'AI_AGENT',
@@ -478,6 +485,18 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
             }
           }
 
+          const entryZone = {
+            min: validatedPrice * (action === 'BUY' ? 0.998 : 1.002),
+            max: validatedPrice * (action === 'BUY' ? 1.002 : 0.998)
+          };
+          const targets = [
+            validatedPrice * (action === 'BUY' ? 1 + targetPercent / 200 : 1 - targetPercent / 200),
+            validatedPrice * (action === 'BUY' ? 1 + targetPercent / 100 : 1 - targetPercent / 100)
+          ];
+          const stopLoss = validatedPrice * (action === 'BUY' ? 1 - stopLossPercent / 100 : 1 + stopLossPercent / 100);
+
+          console.log(`🎯 ${normalizedSymbol} calculated values: Entry=${entryZone.min}-${entryZone.max}, Targets=[${targets[0]}, ${targets[1]}], StopLoss=${stopLoss}`);
+
           professionalSignals.push({
             symbol: normalizedSymbol,
             type: signalType,
@@ -485,15 +504,9 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
             strength: Math.round(signalStrength),
             confidence: Math.max(0.6, Math.min(0.95, signalStrength / 100)),
             timeHorizon: signalStrength > 80 ? 'SCALP' : signalStrength > 65 ? 'SWING' : 'POSITION',
-            entryZone: {
-              min: currentPrice * (action === 'BUY' ? 0.998 : 1.002),
-              max: currentPrice * (action === 'BUY' ? 1.002 : 0.998)
-            },
-            targets: [
-              currentPrice * (action === 'BUY' ? 1 + targetPercent / 200 : 1 - targetPercent / 200),
-              currentPrice * (action === 'BUY' ? 1 + targetPercent / 100 : 1 - targetPercent / 100)
-            ],
-            stopLoss: currentPrice * (action === 'BUY' ? 1 - stopLossPercent / 100 : 1 + stopLossPercent / 100),
+            entryZone,
+            targets,
+            stopLoss,
             reasoning: `${signalType} signal based on RSI: ${indicators.RSI.toFixed(1)}, MACD: ${indicators.MACD.histogram.toFixed(4)}, Volume: ${(volume24h / 1000000).toFixed(1)}M`,
             indicators: {
               rsi: indicators.RSI,
