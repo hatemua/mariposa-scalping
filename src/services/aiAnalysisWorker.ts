@@ -78,7 +78,25 @@ class AIAnalysisWorkerService extends EventEmitter {
 
   constructor() {
     super();
+    console.log('🚀 AIAnalysisWorkerService initialized');
     this.startJobProcessor();
+  }
+
+  // Enhanced logging function
+  private logDebug(category: string, message: string, data?: any) {
+    const timestamp = new Date().toISOString();
+    const logEntry = `[BACKEND-${category}] ${timestamp}: ${message}`;
+
+    if (data) {
+      console.log(logEntry, JSON.stringify(data, null, 2));
+    } else {
+      console.log(logEntry);
+    }
+
+    // Log processing state for debugging
+    if (category === 'PROCESSING') {
+      console.log(`[PROCESSING-STATE] Queue: ${this.processingQueue.length}, Active: ${this.isProcessing}, Total Jobs: ${this.jobs.size}`);
+    }
   }
 
   // Create a new analysis job
@@ -100,12 +118,23 @@ class AIAnalysisWorkerService extends EventEmitter {
     this.jobs.set(jobId, job);
     this.processingQueue.push(jobId);
 
-    console.log(`🔄 Created analysis job ${jobId} for ${job.totalSymbols} symbols`);
+    this.logDebug('JOB', `Created analysis job ${jobId}`, {
+      userId,
+      symbols: job.symbols,
+      totalSymbols: job.totalSymbols,
+      minStrength,
+      queueLength: this.processingQueue.length,
+      isProcessing: this.isProcessing
+    });
+
     this.emit('jobCreated', job);
 
     // Start processing if not already running
     if (!this.isProcessing) {
-      this.processNextJob();
+      this.logDebug('PROCESSING', 'Starting job processing from createJob');
+      this.processNextJob().catch(error => {
+        this.logDebug('ERROR', 'Error in processNextJob from createJob', { error: error.message, stack: error.stack });
+      });
     }
 
     return jobId;
@@ -119,13 +148,23 @@ class AIAnalysisWorkerService extends EventEmitter {
   // Cancel a job
   public cancelJob(jobId: string): boolean {
     const job = this.jobs.get(jobId);
-    if (!job) return false;
+    if (!job) {
+      this.logDebug('JOB', `Cancel requested for non-existent job ${jobId}`);
+      return false;
+    }
+
+    this.logDebug('JOB', `Cancelling job ${jobId}`, {
+      currentStatus: job.status,
+      progress: job.progress,
+      elapsedTime: Date.now() - job.startTime.getTime()
+    });
 
     if (job.status === 'queued') {
       // Remove from queue
       const queueIndex = this.processingQueue.indexOf(jobId);
       if (queueIndex > -1) {
         this.processingQueue.splice(queueIndex, 1);
+        this.logDebug('JOB', `Removed job ${jobId} from processing queue`, { queueIndex });
       }
     }
 
@@ -133,7 +172,7 @@ class AIAnalysisWorkerService extends EventEmitter {
     job.endTime = new Date();
     this.emit('jobUpdated', job);
 
-    console.log(`❌ Cancelled analysis job ${jobId}`);
+    this.logDebug('JOB', `Successfully cancelled job ${jobId}`);
     return true;
   }
 
@@ -221,45 +260,96 @@ class AIAnalysisWorkerService extends EventEmitter {
 
   // Start the job processor
   private startJobProcessor(): void {
+    this.logDebug('INIT', 'Starting job processor with 1s interval');
+
     setInterval(() => {
+      // Check if processing is needed
       if (!this.isProcessing && this.processingQueue.length > 0) {
-        this.processNextJob();
+        this.logDebug('PROCESSING', `Interval triggered processing - Queue: ${this.processingQueue.length}`);
+        this.processNextJob().catch(error => {
+          this.logDebug('ERROR', 'Error in processNextJob from interval', { error: error.message, stack: error.stack });
+        });
       }
-      // Cleanup old jobs every 10 minutes
-      this.cleanupOldJobs();
+
+      // Cleanup old jobs every 10 minutes (600 intervals)
+      const now = Date.now();
+      if (!this.lastCleanup || (now - this.lastCleanup) > 600000) {
+        this.cleanupOldJobs();
+        this.lastCleanup = now;
+      }
     }, 1000);
   }
 
+  private lastCleanup = 0;
+
   // Process the next job in queue
   private async processNextJob(): Promise<void> {
-    if (this.isProcessing || this.processingQueue.length === 0) return;
+    this.logDebug('PROCESSING', `processNextJob called`, {
+      isProcessing: this.isProcessing,
+      queueLength: this.processingQueue.length
+    });
+
+    if (this.isProcessing) {
+      this.logDebug('PROCESSING', 'Already processing, skipping');
+      return;
+    }
+
+    if (this.processingQueue.length === 0) {
+      this.logDebug('PROCESSING', 'No jobs in queue');
+      return;
+    }
 
     const jobId = this.processingQueue.shift();
-    if (!jobId) return;
+    if (!jobId) {
+      this.logDebug('PROCESSING', 'No job ID after shift - unexpected');
+      return;
+    }
 
     const job = this.jobs.get(jobId);
-    if (!job || job.status !== 'queued') return;
+    if (!job) {
+      this.logDebug('PROCESSING', `Job ${jobId} not found in jobs map`);
+      return;
+    }
 
+    if (job.status !== 'queued') {
+      this.logDebug('PROCESSING', `Job ${jobId} status is ${job.status}, expected queued`);
+      return;
+    }
+
+    // Critical state change - log thoroughly
+    this.logDebug('PROCESSING', `Setting isProcessing = true for job ${jobId}`);
     this.isProcessing = true;
+
     job.status = 'processing';
     job.progress = 5; // Initial progress
 
-    console.log(`🚀 Starting analysis job ${jobId} for ${job.totalSymbols} symbols`);
+    this.logDebug('JOB', `Starting processing job ${jobId}`, {
+      userId: job.userId,
+      symbols: job.symbols,
+      totalSymbols: job.totalSymbols,
+      startTime: job.startTime.toISOString()
+    });
+
     this.emit('jobUpdated', job);
 
     // Set timeout for job
     const timeoutId = setTimeout(() => {
       if (job.status === 'processing') {
+        this.logDebug('TIMEOUT', `Job ${jobId} timed out after ${this.jobTimeout}ms`);
+
         job.status = 'failed';
         job.error = 'Analysis timeout after 100 seconds - please try again';
         job.endTime = new Date();
         this.emit('jobUpdated', job);
+
+        // Critical: Reset processing flag
+        this.logDebug('PROCESSING', `Setting isProcessing = false due to timeout for job ${jobId}`);
         this.isProcessing = false;
-        console.log(`⏰ Job ${jobId} timed out`);
       }
     }, this.jobTimeout);
 
     try {
+      this.logDebug('JOB', `Calling processAnalysisJob for ${jobId}`);
       await this.processAnalysisJob(job);
       clearTimeout(timeoutId);
 
@@ -267,7 +357,11 @@ class AIAnalysisWorkerService extends EventEmitter {
       job.progress = 100;
       job.endTime = new Date();
 
-      console.log(`✅ Completed analysis job ${jobId} with ${job.results?.length || 0} signals`);
+      this.logDebug('JOB', `Completed analysis job ${jobId}`, {
+        resultsCount: job.results?.length || 0,
+        elapsedTime: Date.now() - job.startTime.getTime()
+      });
+
       this.emit('jobUpdated', job);
 
     } catch (error) {
@@ -277,17 +371,29 @@ class AIAnalysisWorkerService extends EventEmitter {
       job.error = error instanceof Error ? error.message : 'Unknown error occurred';
       job.endTime = new Date();
 
-      console.error(`❌ Job ${jobId} failed:`, error);
+      this.logDebug('ERROR', `Job ${jobId} failed`, {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        elapsedTime: Date.now() - job.startTime.getTime()
+      });
+
       this.emit('jobUpdated', job);
     } finally {
+      // Critical: Always reset processing flag
+      this.logDebug('PROCESSING', `Setting isProcessing = false in finally block for job ${jobId}`);
       this.isProcessing = false;
 
       // Process next job after a short delay
-      setTimeout(() => {
-        if (this.processingQueue.length > 0) {
-          this.processNextJob();
-        }
-      }, 500);
+      if (this.processingQueue.length > 0) {
+        this.logDebug('PROCESSING', `Scheduling next job processing in 500ms - Queue: ${this.processingQueue.length}`);
+        setTimeout(() => {
+          this.processNextJob().catch(error => {
+            this.logDebug('ERROR', 'Error in delayed processNextJob', { error: error.message });
+          });
+        }, 500);
+      } else {
+        this.logDebug('PROCESSING', 'No more jobs in queue after completion');
+      }
     }
   }
 

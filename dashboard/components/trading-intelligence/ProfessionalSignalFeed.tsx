@@ -129,6 +129,60 @@ function ProfessionalSignalFeed({
   const [hasInitialized, setHasInitialized] = useState(false);
   const [cachedSignals, setCachedSignals] = useState<TradingSignal[]>([]);
   const [cacheTimestamp, setCacheTimestamp] = useState<Date | null>(null);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
+
+  // Debug state tracking
+  const [debugInfo, setDebugInfo] = useState<any>({
+    stateChanges: [],
+    webSocketEvents: [],
+    timeouts: [],
+    lastHealthCheck: null,
+    recoveryAttempts: 0
+  });
+
+  // Enhanced logging function
+  const logDebug = (category: string, message: string, data?: any) => {
+    const timestamp = new Date().toISOString();
+    const logEntry = {
+      timestamp,
+      category,
+      message,
+      data,
+      jobId: currentJobId,
+      isProcessing: isAIProcessing,
+      socketConnected
+    };
+
+    console.log(`[${category}] ${timestamp}: ${message}`, data || '');
+
+    setDebugInfo((prev: any) => ({
+      ...prev,
+      [category === 'STATE' ? 'stateChanges' :
+        category === 'WEBSOCKET' ? 'webSocketEvents' :
+        category === 'TIMEOUT' ? 'timeouts' : 'other']: [
+        ...(prev[category === 'STATE' ? 'stateChanges' :
+           category === 'WEBSOCKET' ? 'webSocketEvents' :
+           category === 'TIMEOUT' ? 'timeouts' : 'other'] || []),
+        logEntry
+      ].slice(-50) // Keep last 50 entries
+    }));
+  };
+
+  // Enhanced state setters with logging
+  const setIsAIProcessingWithLog = (value: boolean, reason: string) => {
+    logDebug('STATE', `isAIProcessing: ${isAIProcessing} -> ${value}`, { reason });
+    setIsAIProcessing(value);
+  };
+
+  const setCurrentJobIdWithLog = (jobId: string | null, reason: string) => {
+    logDebug('STATE', `currentJobId: ${currentJobId} -> ${jobId}`, { reason });
+    setCurrentJobId(jobId);
+  };
+
+  const setProcessingStartTimeWithLog = (time: Date | null, reason: string) => {
+    logDebug('STATE', `processingStartTime: ${processingStartTime?.toISOString()} -> ${time?.toISOString()}`, { reason });
+    setProcessingStartTime(time);
+  };
 
   const generateRealTradingSignals = async (): Promise<TradingSignal[]> => {
     const generatedSignals: TradingSignal[] = [];
@@ -460,14 +514,65 @@ function ProfessionalSignalFeed({
     return 'Monitor for directional signal';
   };
 
+  // Health check monitoring
+  const performHealthCheck = async () => {
+    if (!isAIProcessing || !currentJobId) return;
+
+    try {
+      logDebug('HEALTH', 'Performing health check', {
+        jobId: currentJobId,
+        elapsedTime: processingStartTime ? Date.now() - processingStartTime.getTime() : 0
+      });
+
+      // Check job status via API
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus'}/api/market/analysis-status/${currentJobId}`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        const jobData = result.data;
+        logDebug('HEALTH', 'Health check response', jobData);
+
+        if (jobData.status === 'completed') {
+          logDebug('HEALTH', 'Job completed during health check, fetching results');
+          fetchJobResults(currentJobId);
+        } else if (jobData.status === 'failed') {
+          logDebug('HEALTH', 'Job failed during health check', { error: jobData.error });
+          setIsAIProcessingWithLog(false, 'Health check found failed job');
+          setCurrentJobIdWithLog(null, 'Health check cleanup');
+          setError(jobData.error || 'Analysis failed');
+        } else {
+          // Update progress from health check
+          setJobProgress(jobData.progress || 0);
+          setCurrentSymbol(jobData.currentSymbol);
+          setEstimatedRemainingTime(jobData.estimatedRemainingTime || 0);
+        }
+
+        setDebugInfo((prev: any) => ({ ...prev, lastHealthCheck: new Date() }));
+      } else {
+        logDebug('HEALTH', 'Health check failed', { error: result.error });
+        if (response.status === 404) {
+          logDebug('HEALTH', 'Job not found during health check, resetting state');
+          setIsAIProcessingWithLog(false, 'Health check - job not found');
+          setCurrentJobIdWithLog(null, 'Health check cleanup');
+          setError('Analysis job not found - may have expired');
+        }
+      }
+    } catch (error) {
+      logDebug('HEALTH', 'Health check exception', { error: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
   // Initialize WebSocket connection for analysis jobs
   const initializeWebSocket = () => {
     if (socket) {
-      console.log('🔄 WebSocket already exists, disconnecting old one...');
+      logDebug('WEBSOCKET', 'Disconnecting existing WebSocket');
       socket.disconnect();
     }
 
-    console.log('🔄 Initializing analysis WebSocket connection...');
+    logDebug('WEBSOCKET', 'Initializing WebSocket connection');
     setSocketError(null);
 
     const newSocket = io(process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus', {
@@ -486,54 +591,51 @@ function ProfessionalSignalFeed({
     });
 
     newSocket.on('connect', () => {
-      console.log('🔗 Connected to analysis WebSocket on /analysis/ path');
+      logDebug('WEBSOCKET', 'Connected to analysis WebSocket', { socketId: newSocket.id });
       setSocketConnected(true);
       setSocketError(null);
 
       // If we have an active job, try to resubscribe
       if (currentJobId && isAIProcessing) {
-        console.log(`🔄 Resubscribing to job ${currentJobId} after reconnection`);
+        logDebug('WEBSOCKET', 'Resubscribing to active job after connection', { jobId: currentJobId });
         newSocket.emit('subscribeToJob', { jobId: currentJobId });
-
-        // Request current status to sync state
         newSocket.emit('getJobStatus', { jobId: currentJobId });
       }
     });
 
     newSocket.on('connect_error', (error) => {
-      console.error('❌ WebSocket connection error:', error);
+      logDebug('WEBSOCKET', 'Connection error', { error: error.message });
       setSocketConnected(false);
       setSocketError(`Connection failed: ${error.message}`);
     });
 
     newSocket.on('disconnect', (reason) => {
-      console.log('🔌 WebSocket disconnected:', reason);
+      logDebug('WEBSOCKET', 'Disconnected', { reason });
       setSocketConnected(false);
 
-      // Don't show error for clean disconnections
       if (reason !== 'io client disconnect') {
         setSocketError(`Disconnected: ${reason}`);
       }
     });
 
     newSocket.on('reconnect', (attemptNumber) => {
-      console.log(`🔄 WebSocket reconnected after ${attemptNumber} attempts`);
+      logDebug('WEBSOCKET', 'Reconnected', { attemptNumber });
       setSocketConnected(true);
       setSocketError(null);
     });
 
     newSocket.on('reconnect_error', (error) => {
-      console.error('❌ WebSocket reconnection error:', error);
+      logDebug('WEBSOCKET', 'Reconnection error', { error: error.message });
       setSocketError(`Reconnection failed: ${error.message}`);
     });
 
     newSocket.on('reconnect_failed', () => {
-      console.error('❌ WebSocket failed to reconnect after all attempts');
+      logDebug('WEBSOCKET', 'Reconnection failed after all attempts');
       setSocketError('Connection failed - please refresh the page');
     });
 
     newSocket.on('jobUpdate', (data) => {
-      console.log('📊 Job update received:', data);
+      logDebug('WEBSOCKET', 'Job update received', data);
 
       // Verify this update is for our current job
       if (data.jobId === currentJobId) {
@@ -542,34 +644,39 @@ function ProfessionalSignalFeed({
         setEstimatedRemainingTime(data.estimatedRemainingTime || 0);
 
         if (data.status === 'completed') {
-          console.log('✅ Analysis completed, fetching results...');
+          logDebug('WEBSOCKET', 'Job completed, fetching results');
           fetchJobResults(data.jobId);
         } else if (data.status === 'failed') {
-          console.log('❌ Analysis failed:', data.error);
-          setIsAIProcessing(false);
-          setCurrentJobId(null);
-          setProcessingStartTime(null);
+          logDebug('WEBSOCKET', 'Job failed', { error: data.error });
+          setIsAIProcessingWithLog(false, 'WebSocket job failed');
+          setCurrentJobIdWithLog(null, 'WebSocket cleanup');
+          setProcessingStartTimeWithLog(null, 'WebSocket cleanup');
           setError(data.error || 'Analysis failed');
           toast.error('Analysis failed: ' + (data.error || 'Unknown error'));
           localStorage.removeItem('currentAnalysisJob');
         }
+      } else {
+        logDebug('WEBSOCKET', 'Job update for different job ignored', {
+          receivedJobId: data.jobId,
+          currentJobId
+        });
       }
     });
 
     newSocket.on('jobStatus', (data) => {
-      console.log('📋 Job status received:', data);
+      logDebug('WEBSOCKET', 'Job status received', data);
 
       // Handle job status responses (from getJobStatus requests)
       if (data.jobId === currentJobId) {
         if (data.status === 'not_found') {
-          console.log('⚠️ Job not found, resetting state');
-          setIsAIProcessing(false);
-          setCurrentJobId(null);
-          setProcessingStartTime(null);
+          logDebug('WEBSOCKET', 'Job not found, resetting state');
+          setIsAIProcessingWithLog(false, 'WebSocket job not found');
+          setCurrentJobIdWithLog(null, 'WebSocket cleanup');
+          setProcessingStartTimeWithLog(null, 'WebSocket cleanup');
           setError('Analysis job not found - may have expired');
           localStorage.removeItem('currentAnalysisJob');
         } else if (data.status === 'completed' && data.resultsCount > 0) {
-          console.log('✅ Job completed with results, fetching...');
+          logDebug('WEBSOCKET', 'Job status shows completed, fetching results');
           fetchJobResults(data.jobId);
         } else {
           // Update progress from status
@@ -581,7 +688,7 @@ function ProfessionalSignalFeed({
     });
 
     newSocket.on('error', (error) => {
-      console.error('❌ WebSocket general error:', error);
+      logDebug('WEBSOCKET', 'General error', { error });
       setSocketError(`WebSocket error: ${error}`);
     });
 
@@ -624,13 +731,14 @@ function ProfessionalSignalFeed({
       console.error('Error fetching job results:', error);
       setError('Failed to fetch analysis results');
     } finally {
-      setIsAIProcessing(false);
-      setCurrentJobId(null);
-      setProcessingStartTime(null);
+      setIsAIProcessingWithLog(false, 'Job results fetched');
+      setCurrentJobIdWithLog(null, 'Job completion cleanup');
+      setProcessingStartTimeWithLog(null, 'Job completion cleanup');
       setLoading(false);
 
       // Clear persisted job state on completion
       localStorage.removeItem('currentAnalysisJob');
+      logDebug('STATE', 'Job completion cleanup finished');
     }
   };
 
@@ -663,9 +771,11 @@ function ProfessionalSignalFeed({
 
       if (result.success) {
         const jobId = result.data.jobId;
-        setCurrentJobId(jobId);
-        setIsAIProcessing(true);
-        setProcessingStartTime(new Date());
+        logDebug('STATE', 'Starting new analysis job', { jobId, symbols, minStrength });
+
+        setCurrentJobIdWithLog(jobId, 'New job started');
+        setIsAIProcessingWithLog(true, 'New job started');
+        setProcessingStartTimeWithLog(new Date(), 'New job started');
         setJobProgress(5);
 
         // Store job state for persistence across page refreshes
@@ -698,12 +808,15 @@ function ProfessionalSignalFeed({
       } else if (result.data?.isResumed) {
         // Auto-resumed existing job
         const existingJobId = result.data.jobId;
-        setCurrentJobId(existingJobId);
-        setIsAIProcessing(true);
-        setProcessingStartTime(new Date());
-        setJobProgress(result.data.currentProgress || 5);
+        logDebug('STATE', 'Auto-resuming existing job', {
+          jobId: existingJobId,
+          progress: result.data.currentProgress
+        });
 
-        console.log(`🔄 Auto-resumed existing job ${existingJobId} at ${result.data.currentProgress}%`);
+        setCurrentJobIdWithLog(existingJobId, 'Auto-resume existing job');
+        setIsAIProcessingWithLog(true, 'Auto-resume existing job');
+        setProcessingStartTimeWithLog(new Date(), 'Auto-resume existing job');
+        setJobProgress(result.data.currentProgress || 5);
 
         const subscribeToExistingJob = () => {
           if (socket && socketConnected) {
@@ -719,7 +832,7 @@ function ProfessionalSignalFeed({
         throw new Error(result.error || 'Failed to start analysis');
       }
     } catch (err) {
-      console.error('Error starting analysis:', err);
+      logDebug('STATE', 'Error starting analysis', { error: err instanceof Error ? err.message : String(err) });
 
       let errorMessage = 'Failed to start professional analysis';
       if (err instanceof Error) {
@@ -735,7 +848,7 @@ function ProfessionalSignalFeed({
       setError(errorMessage);
       toast.error(errorMessage);
       setLoading(false);
-      setIsAIProcessing(false);
+      setIsAIProcessingWithLog(false, 'Analysis start error');
     }
   };
 
@@ -798,23 +911,32 @@ function ProfessionalSignalFeed({
         const jobData = JSON.parse(savedJob);
         const elapsedTime = Date.now() - jobData.startTime;
 
+        logDebug('STATE', 'Attempting job state recovery', {
+          jobId: jobData.jobId,
+          elapsedTime,
+          maxAge: 120000
+        });
+
         // Only recover if job is less than 2 minutes old
         if (elapsedTime < 120000) {
-          console.log('🔄 Recovering analysis job state:', jobData.jobId);
-          setCurrentJobId(jobData.jobId);
-          setIsAIProcessing(true);
-          setProcessingStartTime(new Date(jobData.startTime));
+          logDebug('STATE', 'Recovering job state', { jobId: jobData.jobId });
+
+          setCurrentJobIdWithLog(jobData.jobId, 'Job state recovery');
+          setIsAIProcessingWithLog(true, 'Job state recovery');
+          setProcessingStartTimeWithLog(new Date(jobData.startTime), 'Job state recovery');
           setJobProgress(Math.min(90, Math.floor(elapsedTime / 1000))); // Estimate progress
 
-          // Try to resubscribe to the job
+          setDebugInfo((prev: any) => ({ ...prev, recoveryAttempts: prev.recoveryAttempts + 1 }));
           return jobData.jobId;
         } else {
-          // Clean up old job state
+          logDebug('STATE', 'Job too old, cleaning up', { elapsedTime });
           localStorage.removeItem('currentAnalysisJob');
         }
+      } else {
+        logDebug('STATE', 'No saved job found');
       }
     } catch (error) {
-      console.warn('Failed to recover job state:', error);
+      logDebug('STATE', 'Job recovery failed', { error: error instanceof Error ? error.message : String(error) });
       localStorage.removeItem('currentAnalysisJob');
     }
     return null;
@@ -859,21 +981,72 @@ function ProfessionalSignalFeed({
     }
   }, [symbols, minStrength]);
 
-  // Timeout protection for stuck analysis
+  // Health check monitoring during processing
+  useEffect(() => {
+    if (!isAIProcessing || !currentJobId) return;
+
+    logDebug('HEALTH', 'Starting health check monitoring');
+
+    // Immediate health check
+    performHealthCheck();
+
+    // Periodic health checks every 30 seconds during processing
+    const healthCheckInterval = setInterval(() => {
+      performHealthCheck();
+    }, 30000);
+
+    return () => {
+      logDebug('HEALTH', 'Stopping health check monitoring');
+      clearInterval(healthCheckInterval);
+    };
+  }, [isAIProcessing, currentJobId]);
+
+  // Timeout protection for stuck analysis (dual timeout system)
   useEffect(() => {
     if (!isAIProcessing || !processingStartTime) return;
 
-    const timeoutId = setTimeout(() => {
-      const elapsedTime = Date.now() - processingStartTime.getTime();
-      if (elapsedTime > 90000 && isAIProcessing) { // 90 seconds timeout
-        console.log('⏰ Analysis timeout: Resetting after 90 seconds');
-        setIsAIProcessing(false);
-        setProcessingStartTime(null);
-        setError('Analysis timed out - please try again');
-      }
-    }, 90000); // 90 seconds
+    logDebug('TIMEOUT', 'Setting up timeout protection', {
+      startTime: processingStartTime.toISOString()
+    });
 
-    return () => clearTimeout(timeoutId);
+    // Primary timeout at 90 seconds
+    const primaryTimeoutId = setTimeout(() => {
+      const elapsedTime = Date.now() - processingStartTime.getTime();
+      if (elapsedTime > 90000 && isAIProcessing) {
+        logDebug('TIMEOUT', 'Primary timeout triggered (90s)', { elapsedTime });
+        setIsAIProcessingWithLog(false, 'Primary timeout (90s)');
+        setProcessingStartTimeWithLog(null, 'Primary timeout');
+        setError('Analysis timed out after 90 seconds - please try again');
+        toast.error('Analysis timed out - please try again');
+        localStorage.removeItem('currentAnalysisJob');
+      }
+    }, 90000);
+
+    // Secondary timeout at 120 seconds (failsafe)
+    const secondaryTimeoutId = setTimeout(() => {
+      const elapsedTime = Date.now() - processingStartTime.getTime();
+      if (elapsedTime > 120000 && isAIProcessing) {
+        logDebug('TIMEOUT', 'Secondary failsafe timeout triggered (120s)', { elapsedTime });
+        setIsAIProcessingWithLog(false, 'Secondary failsafe timeout (120s)');
+        setProcessingStartTimeWithLog(null, 'Secondary timeout');
+        setCurrentJobIdWithLog(null, 'Secondary timeout');
+        setError('Analysis stuck - system reset');
+        toast.error('Analysis was stuck - system has been reset');
+        localStorage.removeItem('currentAnalysisJob');
+
+        // Force cleanup backend
+        fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus'}/api/market/force-cleanup`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        }).catch(err => logDebug('TIMEOUT', 'Force cleanup failed', { error: err.message }));
+      }
+    }, 120000);
+
+    return () => {
+      logDebug('TIMEOUT', 'Clearing timeout protection');
+      clearTimeout(primaryTimeoutId);
+      clearTimeout(secondaryTimeoutId);
+    };
   }, [isAIProcessing, processingStartTime]);
 
   // Manual refresh with protection
@@ -953,9 +1126,15 @@ function ProfessionalSignalFeed({
   // Force reset stuck analysis state
   const handleForceReset = async () => {
     try {
-      setIsAIProcessing(false);
-      setCurrentJobId(null);
-      setProcessingStartTime(null);
+      logDebug('STATE', 'Starting force reset', {
+        currentJobId,
+        isProcessing: isAIProcessing,
+        elapsedTime: processingStartTime ? Date.now() - processingStartTime.getTime() : 0
+      });
+
+      setIsAIProcessingWithLog(false, 'Force reset');
+      setCurrentJobIdWithLog(null, 'Force reset');
+      setProcessingStartTimeWithLog(null, 'Force reset');
       setJobProgress(0);
       setCurrentSymbol(undefined);
       setError(null);
@@ -963,23 +1142,43 @@ function ProfessionalSignalFeed({
 
       // Clear any stored job state
       localStorage.removeItem('currentAnalysisJob');
+      logDebug('STATE', 'Cleared localStorage');
+
+      // Reset debug info
+      setDebugInfo({
+        stateChanges: [],
+        webSocketEvents: [],
+        timeouts: [],
+        lastHealthCheck: null,
+        recoveryAttempts: 0
+      });
 
       // Try to cleanup backend state
       try {
-        await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus'}/api/market/force-cleanup`, {
+        logDebug('STATE', 'Attempting backend cleanup');
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus'}/api/market/force-cleanup`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${localStorage.getItem('token')}`
           }
         });
+        const result = await response.json();
+        logDebug('STATE', 'Backend cleanup response', result);
       } catch (cleanupError) {
-        console.warn('Backend cleanup failed:', cleanupError);
+        logDebug('STATE', 'Backend cleanup failed', { error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) });
+      }
+
+      // Reinitialize WebSocket connection
+      if (socket) {
+        logDebug('WEBSOCKET', 'Reinitializing WebSocket after force reset');
+        socket.disconnect();
+        setTimeout(initializeWebSocket, 1000);
       }
 
       toast.success('Analysis state reset successfully - you can start a new analysis');
-      console.log('🔄 Force reset completed');
+      logDebug('STATE', 'Force reset completed successfully');
     } catch (error) {
-      console.error('Error during force reset:', error);
+      logDebug('STATE', 'Error during force reset', { error: error instanceof Error ? error.message : String(error) });
       toast.error('Reset completed with warnings');
     }
   };
@@ -1182,6 +1381,139 @@ function ProfessionalSignalFeed({
             </div>
           </div>
         )}
+
+        {/* Debug Panel */}
+        <div className="mb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <button
+              onClick={() => setShowDebugPanel(!showDebugPanel)}
+              className="px-3 py-1 bg-gray-100 text-gray-700 text-xs rounded-md hover:bg-gray-200 transition-colors"
+              title="Toggle debug information"
+            >
+              🔍 Debug Info {showDebugPanel ? '▼' : '▶'}
+            </button>
+            <div className="text-xs text-gray-500">
+              Processing: {isAIProcessing ? '✅' : '❌'} |
+              Socket: {socketConnected ? '🟢' : '🔴'} |
+              Job: {currentJobId ? currentJobId.slice(0, 8) : 'None'} |
+              Recovery: {debugInfo.recoveryAttempts}
+            </div>
+          </div>
+
+          {showDebugPanel && (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-4">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* Current State */}
+                <div className="bg-white rounded p-3 border">
+                  <h4 className="font-medium text-gray-900 mb-2">Current State</h4>
+                  <div className="text-xs space-y-1">
+                    <div><span className="font-medium">Processing:</span> {isAIProcessing ? '✅' : '❌'}</div>
+                    <div><span className="font-medium">Job ID:</span> {currentJobId || 'None'}</div>
+                    <div><span className="font-medium">Progress:</span> {jobProgress}%</div>
+                    <div><span className="font-medium">Symbol:</span> {currentSymbol || 'None'}</div>
+                    <div><span className="font-medium">Socket:</span> {socketConnected ? '🟢 Connected' : '🔴 Disconnected'}</div>
+                    <div><span className="font-medium">Error:</span> {socketError || 'None'}</div>
+                    <div><span className="font-medium">Cache:</span> {cachedSignals.length} signals</div>
+                    <div><span className="font-medium">Last Health:</span> {debugInfo.lastHealthCheck ? new Date(debugInfo.lastHealthCheck).toLocaleTimeString() : 'Never'}</div>
+                  </div>
+                </div>
+
+                {/* Recent State Changes */}
+                <div className="bg-white rounded p-3 border">
+                  <h4 className="font-medium text-gray-900 mb-2">Recent State Changes</h4>
+                  <div className="text-xs space-y-1 max-h-32 overflow-y-auto">
+                    {debugInfo.stateChanges.slice(-5).reverse().map((change: any, i: number) => (
+                      <div key={i} className="border-b border-gray-100 pb-1">
+                        <div className="font-medium text-blue-600">{change.message}</div>
+                        <div className="text-gray-500">{new Date(change.timestamp).toLocaleTimeString()}</div>
+                        {change.data?.reason && <div className="text-gray-400">{change.data.reason}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* WebSocket Events */}
+                <div className="bg-white rounded p-3 border">
+                  <h4 className="font-medium text-gray-900 mb-2">WebSocket Events</h4>
+                  <div className="text-xs space-y-1 max-h-32 overflow-y-auto">
+                    {debugInfo.webSocketEvents.slice(-5).reverse().map((event: any, i: number) => (
+                      <div key={i} className="border-b border-gray-100 pb-1">
+                        <div className="font-medium text-green-600">{event.message}</div>
+                        <div className="text-gray-500">{new Date(event.timestamp).toLocaleTimeString()}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Timing Information */}
+              {processingStartTime && (
+                <div className="bg-white rounded p-3 border">
+                  <h4 className="font-medium text-gray-900 mb-2">Timing Information</h4>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+                    <div>
+                      <span className="font-medium">Started:</span><br />
+                      {processingStartTime.toLocaleTimeString()}
+                    </div>
+                    <div>
+                      <span className="font-medium">Elapsed:</span><br />
+                      {Math.round((Date.now() - processingStartTime.getTime()) / 1000)}s
+                    </div>
+                    <div>
+                      <span className="font-medium">Remaining:</span><br />
+                      {estimatedRemainingTime}s
+                    </div>
+                    <div>
+                      <span className="font-medium">Progress Rate:</span><br />
+                      {processingStartTime ? (jobProgress / ((Date.now() - processingStartTime.getTime()) / 1000)).toFixed(2) : '0'}%/s
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="bg-white rounded p-3 border">
+                <h4 className="font-medium text-gray-900 mb-2">Debug Actions</h4>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => console.log('Current debug state:', debugInfo)}
+                    className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded hover:bg-blue-200"
+                  >
+                    Log Debug State
+                  </button>
+                  <button
+                    onClick={() => {
+                      setDebugInfo({
+                        stateChanges: [],
+                        webSocketEvents: [],
+                        timeouts: [],
+                        lastHealthCheck: null,
+                        recoveryAttempts: 0
+                      });
+                    }}
+                    className="px-2 py-1 bg-yellow-100 text-yellow-700 text-xs rounded hover:bg-yellow-200"
+                  >
+                    Clear Debug Logs
+                  </button>
+                  <button
+                    onClick={handleForceReset}
+                    className="px-2 py-1 bg-red-100 text-red-700 text-xs rounded hover:bg-red-200"
+                  >
+                    Emergency Reset
+                  </button>
+                  {isAIProcessing && (
+                    <button
+                      onClick={performHealthCheck}
+                      className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded hover:bg-green-200"
+                    >
+                      Manual Health Check
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
 
         {loading && signals.length === 0 ? (
           <div className="animate-pulse space-y-3">
