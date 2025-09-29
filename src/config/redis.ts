@@ -6,6 +6,9 @@ class RedisConnection {
   private publisher: Redis | null = null;
   private subscriber: Redis | null = null;
   private isConnected = false;
+  private clientConnected = false;
+  private publisherConnected = false;
+  private subscriberConnected = false;
   private reconnectAttempts = 0;
 
   async connect(): Promise<void> {
@@ -32,16 +35,18 @@ class RedisConnection {
       // Setup event handlers
       this.setupEventHandlers();
 
-      // Connect all clients
+      // Connect all clients and wait for them to be ready
       await Promise.all([
         this.client.connect(),
         this.publisher.connect(),
         this.subscriber.connect(),
       ]);
 
-      this.isConnected = true;
+      // Wait for all clients to be connected
+      await this.waitForAllClientsReady(10000); // 10 second timeout
+
       this.reconnectAttempts = 0;
-      console.log('✅ Redis connected successfully');
+      console.log('✅ Redis connected successfully with all clients ready');
     } catch (error) {
       console.error('❌ Redis connection failed:', error);
       throw error;
@@ -54,36 +59,75 @@ class RedisConnection {
     // Main client events
     this.client.on('connect', () => {
       console.log('Redis main client connected');
+      this.clientConnected = true;
+      this.updateConnectionStatus();
     });
 
     this.client.on('error', (error) => {
       console.error('Redis main client error:', error);
-      this.isConnected = false;
+      this.clientConnected = false;
+      this.updateConnectionStatus();
     });
 
     this.client.on('close', () => {
       console.log('Redis main client disconnected');
-      this.isConnected = false;
+      this.clientConnected = false;
+      this.updateConnectionStatus();
       this.handleReconnection();
     });
 
     // Publisher events
     this.publisher.on('connect', () => {
       console.log('Redis publisher connected');
+      this.publisherConnected = true;
+      this.updateConnectionStatus();
     });
 
     this.publisher.on('error', (error) => {
       console.error('Redis publisher error:', error);
+      this.publisherConnected = false;
+      this.updateConnectionStatus();
     });
 
     // Subscriber events
     this.subscriber.on('connect', () => {
       console.log('Redis subscriber connected');
+      this.subscriberConnected = true;
+      this.updateConnectionStatus();
     });
 
     this.subscriber.on('error', (error) => {
       console.error('Redis subscriber error:', error);
+      this.subscriberConnected = false;
+      this.updateConnectionStatus();
     });
+
+    this.subscriber.on('close', () => {
+      console.log('Redis subscriber disconnected');
+      this.subscriberConnected = false;
+      this.updateConnectionStatus();
+    });
+
+    this.publisher.on('close', () => {
+      console.log('Redis publisher disconnected');
+      this.publisherConnected = false;
+      this.updateConnectionStatus();
+    });
+  }
+
+  // Update overall connection status based on individual client states
+  private updateConnectionStatus(): void {
+    const previousState = this.isConnected;
+    this.isConnected = this.clientConnected && this.publisherConnected && this.subscriberConnected;
+
+    if (previousState !== this.isConnected) {
+      if (this.isConnected) {
+        console.log('✅ All Redis clients connected successfully');
+      } else {
+        console.log('⚠️ Redis connection status changed - not all clients connected');
+        console.log(`  Main: ${this.clientConnected}, Publisher: ${this.publisherConnected}, Subscriber: ${this.subscriberConnected}`);
+      }
+    }
   }
 
   private async handleReconnection(): Promise<void> {
@@ -137,34 +181,72 @@ class RedisConnection {
       await this.subscriber.quit();
       this.subscriber = null;
     }
+    this.clientConnected = false;
+    this.publisherConnected = false;
+    this.subscriberConnected = false;
     this.isConnected = false;
     console.log('Redis disconnected');
   }
 
   getClient(): Redis {
-    if (!this.client || !this.isConnected) {
+    if (!this.client || !this.clientConnected) {
       throw new Error('Redis client not connected');
     }
     return this.client;
   }
 
   getPublisher(): Redis {
-    if (!this.publisher || !this.isConnected) {
+    if (!this.publisher || !this.publisherConnected) {
       throw new Error('Redis publisher not connected');
     }
     return this.publisher;
   }
 
   getSubscriber(): Redis {
-    if (!this.subscriber || !this.isConnected) {
+    if (!this.subscriber || !this.subscriberConnected) {
       throw new Error('Redis subscriber not connected');
     }
     return this.subscriber;
   }
 
+  // Wait for all Redis clients to be ready
+  async waitForAllClientsReady(timeoutMs: number = 10000): Promise<void> {
+    const startTime = Date.now();
+
+    while (!this.subscriberConnected || !this.publisherConnected || !this.clientConnected) {
+      if (Date.now() - startTime > timeoutMs) {
+        throw new Error(`Redis clients not ready within ${timeoutMs}ms timeout. ` +
+          `Status: Client=${this.clientConnected}, Publisher=${this.publisherConnected}, Subscriber=${this.subscriberConnected}`);
+      }
+
+      console.log('Waiting for Redis clients to be ready...');
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    console.log('✅ All Redis clients are ready');
+  }
+
+  // Check if specific client is ready
+  isClientReady(): boolean {
+    return this.clientConnected;
+  }
+
+  isPublisherReady(): boolean {
+    return this.publisherConnected;
+  }
+
+  isSubscriberReady(): boolean {
+    return this.subscriberConnected;
+  }
+
+  // Check if all clients are ready
+  areAllClientsReady(): boolean {
+    return this.clientConnected && this.publisherConnected && this.subscriberConnected;
+  }
+
   async healthCheck(): Promise<boolean> {
     try {
-      if (!this.client || !this.isConnected) return false;
+      if (!this.client || !this.clientConnected) return false;
       const result = await this.client.ping();
       return result === 'PONG';
     } catch (error) {

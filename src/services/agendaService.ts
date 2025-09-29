@@ -4,6 +4,7 @@ import { binanceService } from './binanceService';
 import { aiAnalysisService } from './aiAnalysisService';
 import { okxService } from './okxService';
 import { redisService } from './redisService';
+import { redis } from '../config/redis';
 import { tradingSignalService } from './tradingSignalService';
 import { performanceMetricsService } from './performanceMetricsService';
 import { marketDataCacheService } from './marketDataCacheService';
@@ -23,7 +24,8 @@ export class AgendaService {
     });
 
     this.defineJobs();
-    this.setupRedisIntegration();
+    // Note: Redis integration will be set up in start() method
+    // to ensure Redis is ready before attempting subscriptions
   }
 
   private defineJobs(): void {
@@ -367,8 +369,19 @@ export class AgendaService {
   }
 
   async start(): Promise<void> {
-    await this.agenda.start();
-    console.log('Agenda service started');
+    try {
+      // Wait for Redis to be ready before setting up subscriptions
+      await this.waitForRedisReady();
+
+      // Set up Redis integration after Redis is confirmed ready
+      await this.setupRedisIntegration();
+
+      await this.agenda.start();
+      console.log('✅ Agenda service started with Redis integration');
+    } catch (error) {
+      console.error('❌ Failed to start Agenda service:', error);
+      throw error;
+    }
   }
 
   async stop(): Promise<void> {
@@ -398,22 +411,50 @@ export class AgendaService {
   // REDIS INTEGRATION METHODS
   // ===============================
 
-  private setupRedisIntegration(): void {
-    // Define Redis-integrated jobs
-    this.defineRedisJobs();
+  private async waitForRedisReady(timeoutMs: number = 30000): Promise<void> {
+    const startTime = Date.now();
 
-    // Set up Redis pub/sub for job coordination
-    redisService.subscribe('jobs:priority', async (message) => {
-      if (message.type === 'high_priority_analysis') {
-        await this.scheduleHighPriorityAnalysis(message.data);
+    while (!redis.areAllClientsReady()) {
+      if (Date.now() - startTime > timeoutMs) {
+        throw new Error(`Redis clients not ready within ${timeoutMs}ms timeout. ` +
+          `Status: Client=${redis.isClientReady()}, Publisher=${redis.isPublisherReady()}, Subscriber=${redis.isSubscriberReady()}`);
       }
-    });
 
-    redisService.subscribe('jobs:signal', async (message) => {
-      if (message.type === 'process_signal_queue') {
-        await this.agenda.now('process-signal-queue', {});
+      console.log('⏳ Waiting for Redis clients to be ready...');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    console.log('✅ All Redis clients are ready for AgendaService');
+  }
+
+  private async setupRedisIntegration(): Promise<void> {
+    try {
+      // Define Redis-integrated jobs
+      this.defineRedisJobs();
+
+      // Set up Redis pub/sub for job coordination with error handling
+      try {
+        await redisService.subscribe('jobs:priority', async (message) => {
+          if (message.type === 'high_priority_analysis') {
+            await this.scheduleHighPriorityAnalysis(message.data);
+          }
+        });
+
+        await redisService.subscribe('jobs:signal', async (message) => {
+          if (message.type === 'process_signal_queue') {
+            await this.agenda.now('process-signal-queue', {});
+          }
+        });
+
+        console.log('✅ Redis pub/sub subscriptions established for AgendaService');
+      } catch (error) {
+        console.error('❌ Failed to set up Redis subscriptions:', error);
+        throw error;
       }
-    });
+    } catch (error) {
+      console.error('❌ Error setting up Redis integration:', error);
+      throw error;
+    }
   }
 
   private defineRedisJobs(): void {
