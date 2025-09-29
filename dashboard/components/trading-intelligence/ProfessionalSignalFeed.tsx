@@ -465,7 +465,7 @@ function ProfessionalSignalFeed({
     console.log('🔄 Initializing analysis WebSocket connection...');
     setSocketError(null);
 
-    const newSocket = io(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000', {
+    const newSocket = io(process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus', {
       path: '/analysis/',
       auth: {
         token: localStorage.getItem('token')
@@ -530,7 +530,7 @@ function ProfessionalSignalFeed({
   // Fetch job results when analysis is completed
   const fetchJobResults = async (jobId: string) => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/api/market/analysis-results/${jobId}`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus'}/api/market/analysis-results/${jobId}`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -578,7 +578,7 @@ function ProfessionalSignalFeed({
       setError(null);
 
       // Start new job-based analysis
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/api/market/start-professional-analysis`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus'}/api/market/start-professional-analysis`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -764,7 +764,7 @@ function ProfessionalSignalFeed({
     if (!currentJobId) return;
 
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/api/market/analysis/${currentJobId}`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus'}/api/market/analysis/${currentJobId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
