@@ -314,7 +314,7 @@ function ProfessionalSignalFeed({
           followUp: {
             checkIn: priority === 'CRITICAL' ? '5 minutes' : priority === 'HIGH' ? '15 minutes' : '30 minutes',
             exitStrategy: getExitStrategy(signalType, expectedReturn),
-            riskManagement: `Stop at ${Math.abs((stopLoss - entry) / entry * 100).toFixed(1)}%`
+            riskManagement: `Stop at ${safeNumber.toFixed(Math.abs((stopLoss - entry) / entry * 100), 1)}%`
           }
         });
       }
@@ -386,7 +386,7 @@ function ProfessionalSignalFeed({
     const confidence = (confluenceData.confidence || 0.5) * 100;
 
     const baseReasons = {
-      CONFLUENCE: `Strong confluence detected with ${score.toFixed(0)}% score`,
+      CONFLUENCE: `Strong confluence detected with ${safeNumber.toFixed(score, 0)}% score`,
       BREAKOUT: `Technical breakout pattern confirmed`,
       MOMENTUM: `Momentum signals aligned across timeframes`,
       REVERSAL: `Reversal pattern identified at key level`,
@@ -394,7 +394,7 @@ function ProfessionalSignalFeed({
       AI_PREDICTION: `AI analysis indicates ${type.toLowerCase()} opportunity`
     };
 
-    return `${baseReasons[category]} • ${confidence.toFixed(0)}% confidence • Multiple factors converging`;
+    return `${baseReasons[category]} • ${safeNumber.toFixed(confidence, 0)}% confidence • Multiple factors converging`;
   };
 
   const generateSignalReasoning = (
@@ -1465,7 +1465,7 @@ function ProfessionalSignalFeed({
                     </div>
                     <div>
                       <span className="font-medium">Progress Rate:</span><br />
-                      {processingStartTime ? (jobProgress / ((Date.now() - processingStartTime.getTime()) / 1000)).toFixed(2) : '0'}%/s
+                      {processingStartTime ? safeNumber.toFixed(jobProgress / ((Date.now() - processingStartTime.getTime()) / 1000), 2) : '0'}%/s
                     </div>
                   </div>
                 </div>
@@ -1619,15 +1619,15 @@ function ProfessionalSignalFeed({
                           </div>
                           <div>
                             <span className="text-gray-500">Confidence</span>
-                            <div className="font-semibold text-purple-600">{(signal.confidence * 100).toFixed(0)}%</div>
+                            <div className="font-semibold text-purple-600">{safeNumber.toFixed((signal.confidence || 0) * 100, 0)}%</div>
                           </div>
                           <div>
                             <span className="text-gray-500">Expected Return</span>
-                            <div className="font-semibold text-green-600">+{signal.expectedReturn.toFixed(1)}%</div>
+                            <div className="font-semibold text-green-600">+{safeNumber.toFixed(signal.expectedReturn, 1)}%</div>
                           </div>
                           <div>
                             <span className="text-gray-500">Risk/Reward</span>
-                            <div className="font-semibold text-orange-600">{signal.riskReward.toFixed(2)}:1</div>
+                            <div className="font-semibold text-orange-600">{safeNumber.toFixed(signal.riskReward, 2)}:1</div>
                           </div>
                           <div>
                             <span className="text-gray-500">Source</span>
@@ -1639,15 +1639,15 @@ function ProfessionalSignalFeed({
                         <div className="grid grid-cols-3 gap-2 text-xs">
                           <div>
                             <span className="text-gray-500">Entry</span>
-                            <div className="font-semibold">${signal.entry.toFixed(4)}</div>
+                            <div className="font-semibold">${safeNumber.toFixed(signal.entry, 4)}</div>
                           </div>
                           <div>
                             <span className="text-gray-500">Target</span>
-                            <div className="font-semibold text-green-600">${signal.target.toFixed(4)}</div>
+                            <div className="font-semibold text-green-600">${safeNumber.toFixed(signal.target, 4)}</div>
                           </div>
                           <div>
                             <span className="text-gray-500">Stop</span>
-                            <div className="font-semibold text-red-600">${signal.stopLoss.toFixed(4)}</div>
+                            <div className="font-semibold text-red-600">${safeNumber.toFixed(signal.stopLoss, 4)}</div>
                           </div>
                         </div>
                       </div>
