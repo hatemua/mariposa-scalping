@@ -462,7 +462,10 @@ function ProfessionalSignalFeed({
 
   // Initialize WebSocket connection for analysis jobs
   const initializeWebSocket = () => {
-    if (socket) return;
+    if (socket) {
+      console.log('🔄 WebSocket already exists, disconnecting old one...');
+      socket.disconnect();
+    }
 
     console.log('🔄 Initializing analysis WebSocket connection...');
     setSocketError(null);
@@ -473,16 +476,28 @@ function ProfessionalSignalFeed({
         token: localStorage.getItem('token')
       },
       transports: ['websocket', 'polling'],
-      timeout: 5000,
+      timeout: 10000,
       reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionAttempts: 5
+      reconnectionDelay: 2000,
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: 10,
+      randomizationFactor: 0.5,
+      forceNew: true
     });
 
     newSocket.on('connect', () => {
       console.log('🔗 Connected to analysis WebSocket on /analysis/ path');
       setSocketConnected(true);
       setSocketError(null);
+
+      // If we have an active job, try to resubscribe
+      if (currentJobId && isAIProcessing) {
+        console.log(`🔄 Resubscribing to job ${currentJobId} after reconnection`);
+        newSocket.emit('subscribeToJob', { jobId: currentJobId });
+
+        // Request current status to sync state
+        newSocket.emit('getJobStatus', { jobId: currentJobId });
+      }
     });
 
     newSocket.on('connect_error', (error) => {
@@ -494,36 +509,80 @@ function ProfessionalSignalFeed({
     newSocket.on('disconnect', (reason) => {
       console.log('🔌 WebSocket disconnected:', reason);
       setSocketConnected(false);
-      if (reason === 'io server disconnect') {
-        // Server disconnected, try to reconnect
-        newSocket.connect();
+
+      // Don't show error for clean disconnections
+      if (reason !== 'io client disconnect') {
+        setSocketError(`Disconnected: ${reason}`);
       }
     });
 
-    newSocket.on('error', (error) => {
-      console.error('❌ WebSocket error:', error);
-      setSocketError(`WebSocket error: ${error}`);
+    newSocket.on('reconnect', (attemptNumber) => {
+      console.log(`🔄 WebSocket reconnected after ${attemptNumber} attempts`);
+      setSocketConnected(true);
+      setSocketError(null);
+    });
+
+    newSocket.on('reconnect_error', (error) => {
+      console.error('❌ WebSocket reconnection error:', error);
+      setSocketError(`Reconnection failed: ${error.message}`);
+    });
+
+    newSocket.on('reconnect_failed', () => {
+      console.error('❌ WebSocket failed to reconnect after all attempts');
+      setSocketError('Connection failed - please refresh the page');
     });
 
     newSocket.on('jobUpdate', (data) => {
       console.log('📊 Job update received:', data);
-      setJobProgress(data.progress);
-      setCurrentSymbol(data.currentSymbol);
-      setEstimatedRemainingTime(data.estimatedRemainingTime);
 
-      if (data.status === 'completed') {
-        // Fetch the results
-        fetchJobResults(data.jobId);
-      } else if (data.status === 'failed') {
-        setIsAIProcessing(false);
-        setCurrentJobId(null);
-        setError(data.error || 'Analysis failed');
-        toast.error('Analysis failed: ' + (data.error || 'Unknown error'));
+      // Verify this update is for our current job
+      if (data.jobId === currentJobId) {
+        setJobProgress(data.progress || 0);
+        setCurrentSymbol(data.currentSymbol);
+        setEstimatedRemainingTime(data.estimatedRemainingTime || 0);
+
+        if (data.status === 'completed') {
+          console.log('✅ Analysis completed, fetching results...');
+          fetchJobResults(data.jobId);
+        } else if (data.status === 'failed') {
+          console.log('❌ Analysis failed:', data.error);
+          setIsAIProcessing(false);
+          setCurrentJobId(null);
+          setProcessingStartTime(null);
+          setError(data.error || 'Analysis failed');
+          toast.error('Analysis failed: ' + (data.error || 'Unknown error'));
+          localStorage.removeItem('currentAnalysisJob');
+        }
+      }
+    });
+
+    newSocket.on('jobStatus', (data) => {
+      console.log('📋 Job status received:', data);
+
+      // Handle job status responses (from getJobStatus requests)
+      if (data.jobId === currentJobId) {
+        if (data.status === 'not_found') {
+          console.log('⚠️ Job not found, resetting state');
+          setIsAIProcessing(false);
+          setCurrentJobId(null);
+          setProcessingStartTime(null);
+          setError('Analysis job not found - may have expired');
+          localStorage.removeItem('currentAnalysisJob');
+        } else if (data.status === 'completed' && data.resultsCount > 0) {
+          console.log('✅ Job completed with results, fetching...');
+          fetchJobResults(data.jobId);
+        } else {
+          // Update progress from status
+          setJobProgress(data.progress || 0);
+          setCurrentSymbol(data.currentSymbol);
+          setEstimatedRemainingTime(data.estimatedRemainingTime || 0);
+        }
       }
     });
 
     newSocket.on('error', (error) => {
-      console.error('WebSocket error:', error);
+      console.error('❌ WebSocket general error:', error);
+      setSocketError(`WebSocket error: ${error}`);
     });
 
     setSocket(newSocket);
@@ -569,6 +628,9 @@ function ProfessionalSignalFeed({
       setCurrentJobId(null);
       setProcessingStartTime(null);
       setLoading(false);
+
+      // Clear persisted job state on completion
+      localStorage.removeItem('currentAnalysisJob');
     }
   };
 
@@ -605,6 +667,14 @@ function ProfessionalSignalFeed({
         setIsAIProcessing(true);
         setProcessingStartTime(new Date());
         setJobProgress(5);
+
+        // Store job state for persistence across page refreshes
+        localStorage.setItem('currentAnalysisJob', JSON.stringify({
+          jobId,
+          startTime: new Date().getTime(),
+          symbols,
+          minStrength
+        }));
 
         // Initialize WebSocket if not already connected
         if (!socket) {
@@ -677,10 +747,10 @@ function ProfessionalSignalFeed({
       return;
     }
 
-    // Check if analysis timed out (more than 60 seconds)
+    // Check if analysis timed out (more than 90 seconds)
     if (processingStartTime) {
       const elapsedTime = Date.now() - processingStartTime.getTime();
-      if (elapsedTime > 60000) { // 1 minute timeout for 6 symbols
+      if (elapsedTime > 90000) { // 90 seconds timeout for 6 symbols
         console.log('⏰ Analysis timeout detected, resetting...');
         setIsAIProcessing(false);
         setProcessingStartTime(null);
@@ -720,12 +790,60 @@ function ProfessionalSignalFeed({
     return `${diffHours}h ago`;
   };
 
+  // Recover job state from localStorage
+  const recoverJobState = () => {
+    try {
+      const savedJob = localStorage.getItem('currentAnalysisJob');
+      if (savedJob) {
+        const jobData = JSON.parse(savedJob);
+        const elapsedTime = Date.now() - jobData.startTime;
+
+        // Only recover if job is less than 2 minutes old
+        if (elapsedTime < 120000) {
+          console.log('🔄 Recovering analysis job state:', jobData.jobId);
+          setCurrentJobId(jobData.jobId);
+          setIsAIProcessing(true);
+          setProcessingStartTime(new Date(jobData.startTime));
+          setJobProgress(Math.min(90, Math.floor(elapsedTime / 1000))); // Estimate progress
+
+          // Try to resubscribe to the job
+          return jobData.jobId;
+        } else {
+          // Clean up old job state
+          localStorage.removeItem('currentAnalysisJob');
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to recover job state:', error);
+      localStorage.removeItem('currentAnalysisJob');
+    }
+    return null;
+  };
+
   // Initialize WebSocket on component mount
   useEffect(() => {
     initializeWebSocket();
 
-    // Load cached signals immediately if available
-    loadCachedSignals();
+    // Try to recover any existing job state first
+    const recoveredJobId = recoverJobState();
+
+    // If we recovered a job, set up WebSocket subscription after connection
+    if (recoveredJobId && socket) {
+      const setupRecoveredSubscription = () => {
+        if (socketConnected) {
+          socket.emit('subscribeToJob', { jobId: recoveredJobId });
+          socket.emit('getJobStatus', { jobId: recoveredJobId });
+          console.log(`🔄 Set up subscription for recovered job ${recoveredJobId}`);
+        } else {
+          // Retry in 1 second
+          setTimeout(setupRecoveredSubscription, 1000);
+        }
+      };
+      setupRecoveredSubscription();
+    } else {
+      // Load cached signals if no active job
+      loadCachedSignals();
+    }
 
     return () => {
       if (socket) {
@@ -747,13 +865,13 @@ function ProfessionalSignalFeed({
 
     const timeoutId = setTimeout(() => {
       const elapsedTime = Date.now() - processingStartTime.getTime();
-      if (elapsedTime > 60000 && isAIProcessing) { // 1 minute timeout
-        console.log('⏰ Analysis timeout: Resetting after 1 minute');
+      if (elapsedTime > 90000 && isAIProcessing) { // 90 seconds timeout
+        console.log('⏰ Analysis timeout: Resetting after 90 seconds');
         setIsAIProcessing(false);
         setProcessingStartTime(null);
         setError('Analysis timed out - please try again');
       }
-    }, 60000); // 1 minute
+    }, 90000); // 90 seconds
 
     return () => clearTimeout(timeoutId);
   }, [isAIProcessing, processingStartTime]);
@@ -830,6 +948,50 @@ function ProfessionalSignalFeed({
       console.error('Error cancelling analysis:', error);
       toast.error('Failed to cancel analysis');
     }
+  };
+
+  // Force reset stuck analysis state
+  const handleForceReset = async () => {
+    try {
+      setIsAIProcessing(false);
+      setCurrentJobId(null);
+      setProcessingStartTime(null);
+      setJobProgress(0);
+      setCurrentSymbol(undefined);
+      setError(null);
+      setLoading(false);
+
+      // Clear any stored job state
+      localStorage.removeItem('currentAnalysisJob');
+
+      // Try to cleanup backend state
+      try {
+        await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus'}/api/market/force-cleanup`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
+      } catch (cleanupError) {
+        console.warn('Backend cleanup failed:', cleanupError);
+      }
+
+      toast.success('Analysis state reset successfully - you can start a new analysis');
+      console.log('🔄 Force reset completed');
+    } catch (error) {
+      console.error('Error during force reset:', error);
+      toast.error('Reset completed with warnings');
+    }
+  };
+
+  // Detect if analysis appears stuck
+  const isAnalysisStuck = () => {
+    if (!isAIProcessing || !processingStartTime) return false;
+    const elapsedTime = Date.now() - processingStartTime.getTime();
+    const progressPerSecond = jobProgress / (elapsedTime / 1000);
+
+    // Consider stuck if no progress for 30 seconds or very slow progress
+    return elapsedTime > 30000 && (progressPerSecond < 0.5 || jobProgress < 10);
   };
 
   const filteredSignals = signals.filter(signal => {
@@ -994,13 +1156,24 @@ function ProfessionalSignalFeed({
                 <span>Job ID: {currentJobId?.slice(0, 8)}...</span>
                 <div className="flex items-center gap-2">
                   <span>Est. {estimatedRemainingTime}s remaining</span>
-                  <button
-                    onClick={handleCancelAnalysis}
-                    className="px-2 py-1 bg-red-100 text-red-600 rounded text-xs hover:bg-red-200 transition-colors"
-                    title="Cancel Analysis"
-                  >
-                    Cancel
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={handleCancelAnalysis}
+                      className="px-2 py-1 bg-red-100 text-red-600 rounded text-xs hover:bg-red-200 transition-colors"
+                      title="Cancel Analysis"
+                    >
+                      Cancel
+                    </button>
+                    {isAnalysisStuck() && (
+                      <button
+                        onClick={handleForceReset}
+                        className="px-2 py-1 bg-yellow-100 text-yellow-700 rounded text-xs hover:bg-yellow-200 transition-colors animate-pulse"
+                        title="Force Reset Stuck Analysis"
+                      >
+                        🔄 Reset
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

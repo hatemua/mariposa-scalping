@@ -27,7 +27,9 @@ import {
   getAnalysisStatus,
   getAnalysisResults,
   cancelAnalysisJob,
-  getUserAnalysisJobs
+  getUserAnalysisJobs,
+  forceCleanupAnalysisJobs,
+  getAnalysisHealthStatus
 } from '../controllers/aiAnalysisController';
 import { authenticate } from '../middleware/auth';
 import {
@@ -84,5 +86,9 @@ router.get('/analysis-status/:jobId', marketDataRateLimiter, getAnalysisStatus);
 router.get('/analysis-results/:jobId', marketDataRateLimiter, getAnalysisResults);
 router.delete('/analysis/:jobId', marketDataRateLimiter, cancelAnalysisJob);
 router.get('/analysis-jobs', marketDataRateLimiter, getUserAnalysisJobs);
+
+// Job management and health endpoints
+router.post('/force-cleanup', marketDataRateLimiter, forceCleanupAnalysisJobs);
+router.get('/analysis-health', marketDataRateLimiter, getAnalysisHealthStatus);
 
 export default router;

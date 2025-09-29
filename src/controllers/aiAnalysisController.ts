@@ -52,7 +52,7 @@ export const startProfessionalAnalysis = async (req: AuthRequest, res: Response)
         message: 'Resuming existing analysis in progress',
         data: {
           jobId: runningJob.id,
-          estimatedDuration: '30-45 seconds',
+          estimatedDuration: '45-60 seconds',
           symbols: runningJob.symbols,
           minStrength: runningJob.minStrength,
           statusEndpoint: `/api/market/analysis-status/${runningJob.id}`,
@@ -318,6 +318,69 @@ export const getUserAnalysisJobs = async (req: AuthRequest, res: Response): Prom
     res.status(500).json({
       success: false,
       error: 'Failed to get analysis jobs'
+    } as ApiResponse);
+  }
+};
+
+// Force cleanup stuck analysis jobs for user
+export const forceCleanupAnalysisJobs = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.id || 'anonymous';
+
+    console.log(`🔧 Force cleanup requested by user ${userId}`);
+
+    const cleanedCount = aiAnalysisWorker.forceCleanupUserJobs(userId);
+
+    res.json({
+      success: true,
+      message: `Force cleanup completed - ${cleanedCount} jobs cleaned`,
+      data: {
+        cleanedJobsCount: cleanedCount,
+        timestamp: new Date().toISOString()
+      }
+    } as ApiResponse);
+
+    console.log(`✅ Force cleanup completed for user ${userId} - ${cleanedCount} jobs cleaned`);
+
+  } catch (error) {
+    console.error('Error during force cleanup:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to force cleanup analysis jobs'
+    } as ApiResponse);
+  }
+};
+
+// Get analysis system health status
+export const getAnalysisHealthStatus = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const healthStatus = aiAnalysisWorker.getHealthStatus();
+    const userId = req.user?.id || 'anonymous';
+
+    // Add user-specific info
+    const userJobs = aiAnalysisWorker.getUserJobs(userId);
+    const userStatus = {
+      userActiveJobs: userJobs.filter(j => ['processing', 'queued'].includes(j.status)).length,
+      userTotalJobs: userJobs.length,
+      userLastJobTime: userJobs.length > 0
+        ? Math.max(...userJobs.map(j => j.startTime.getTime()))
+        : null
+    };
+
+    res.json({
+      success: true,
+      data: {
+        ...healthStatus,
+        user: userStatus,
+        timestamp: new Date().toISOString()
+      }
+    } as ApiResponse);
+
+  } catch (error) {
+    console.error('Error getting health status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get health status'
     } as ApiResponse);
   }
 };

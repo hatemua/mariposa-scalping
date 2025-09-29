@@ -74,7 +74,7 @@ class AIAnalysisWorkerService extends EventEmitter {
   private processingQueue: string[] = [];
   private isProcessing = false;
   private maxConcurrentJobs = 1; // Process one analysis at a time
-  private jobTimeout = 180000; // 3 minutes timeout
+  private jobTimeout = 100000; // 100 seconds timeout (buffer for frontend 90s)
 
   constructor() {
     super();
@@ -145,13 +145,78 @@ class AIAnalysisWorkerService extends EventEmitter {
   // Clean up old jobs (older than 1 hour)
   public cleanupOldJobs(): void {
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const stuckJobThreshold = new Date(Date.now() - 5 * 60 * 1000); // 5 minutes
 
     for (const [jobId, job] of this.jobs) {
+      // Clean up completed/failed jobs older than 1 hour
       if (job.startTime < oneHourAgo && ['completed', 'failed', 'cancelled'].includes(job.status)) {
         this.jobs.delete(jobId);
         console.log(`🧹 Cleaned up old job ${jobId}`);
       }
+      // Force-fail stuck processing jobs older than 5 minutes
+      else if (job.status === 'processing' && job.startTime < stuckJobThreshold) {
+        console.log(`⚠️ Detected stuck job ${jobId}, marking as failed`);
+        job.status = 'failed';
+        job.error = 'Job timeout - stuck in processing state';
+        job.endTime = new Date();
+        this.emit('jobUpdated', job);
+
+        // Reset processing flag if this was the stuck job
+        if (this.isProcessing) {
+          this.isProcessing = false;
+        }
+      }
     }
+  }
+
+  // Force cleanup all processing jobs for a user
+  public forceCleanupUserJobs(userId: string): number {
+    let cleanedCount = 0;
+    const userJobs = this.getUserJobs(userId);
+
+    for (const job of userJobs) {
+      if (['processing', 'queued'].includes(job.status)) {
+        console.log(`🔧 Force cleaning job ${job.id} for user ${userId}`);
+        job.status = 'cancelled';
+        job.error = 'Manually reset by user';
+        job.endTime = new Date();
+        this.emit('jobUpdated', job);
+        cleanedCount++;
+
+        // Remove from queue if queued
+        const queueIndex = this.processingQueue.indexOf(job.id);
+        if (queueIndex > -1) {
+          this.processingQueue.splice(queueIndex, 1);
+        }
+      }
+    }
+
+    // Reset processing flag if needed
+    if (cleanedCount > 0 && this.isProcessing) {
+      this.isProcessing = false;
+    }
+
+    return cleanedCount;
+  }
+
+  // Get processing health status
+  public getHealthStatus(): any {
+    const now = Date.now();
+    const jobs = Array.from(this.jobs.values());
+
+    return {
+      totalJobs: jobs.length,
+      processing: jobs.filter(j => j.status === 'processing').length,
+      queued: jobs.filter(j => j.status === 'queued').length,
+      completed: jobs.filter(j => j.status === 'completed').length,
+      failed: jobs.filter(j => j.status === 'failed').length,
+      isProcessorRunning: this.isProcessing,
+      queueLength: this.processingQueue.length,
+      stuckJobs: jobs.filter(j =>
+        j.status === 'processing' &&
+        (now - j.startTime.getTime()) > 300000 // 5 minutes
+      ).length
+    };
   }
 
   // Start the job processor
@@ -186,7 +251,7 @@ class AIAnalysisWorkerService extends EventEmitter {
     const timeoutId = setTimeout(() => {
       if (job.status === 'processing') {
         job.status = 'failed';
-        job.error = 'Analysis timeout after 3 minutes';
+        job.error = 'Analysis timeout after 100 seconds - please try again';
         job.endTime = new Date();
         this.emit('jobUpdated', job);
         this.isProcessing = false;
