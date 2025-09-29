@@ -122,6 +122,8 @@ function ProfessionalSignalFeed({
   const [processingStartTime, setProcessingStartTime] = useState<Date | null>(null);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
+  const [socketConnected, setSocketConnected] = useState(false);
+  const [socketError, setSocketError] = useState<string | null>(null);
   const [jobProgress, setJobProgress] = useState(0);
   const [currentSymbol, setCurrentSymbol] = useState<string | undefined>(undefined);
   const [estimatedRemainingTime, setEstimatedRemainingTime] = useState(0);
@@ -456,19 +458,49 @@ function ProfessionalSignalFeed({
     return 'Monitor for directional signal';
   };
 
-  // Initialize WebSocket connection
+  // Initialize WebSocket connection for analysis jobs
   const initializeWebSocket = () => {
     if (socket) return;
 
+    console.log('🔄 Initializing analysis WebSocket connection...');
+    setSocketError(null);
+
     const newSocket = io(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000', {
+      path: '/analysis/',
       auth: {
         token: localStorage.getItem('token')
       },
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      timeout: 5000,
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionAttempts: 5
     });
 
     newSocket.on('connect', () => {
-      console.log('🔗 Connected to analysis WebSocket');
+      console.log('🔗 Connected to analysis WebSocket on /analysis/ path');
+      setSocketConnected(true);
+      setSocketError(null);
+    });
+
+    newSocket.on('connect_error', (error) => {
+      console.error('❌ WebSocket connection error:', error);
+      setSocketConnected(false);
+      setSocketError(`Connection failed: ${error.message}`);
+    });
+
+    newSocket.on('disconnect', (reason) => {
+      console.log('🔌 WebSocket disconnected:', reason);
+      setSocketConnected(false);
+      if (reason === 'io server disconnect') {
+        // Server disconnected, try to reconnect
+        newSocket.connect();
+      }
+    });
+
+    newSocket.on('error', (error) => {
+      console.error('❌ WebSocket error:', error);
+      setSocketError(`WebSocket error: ${error}`);
     });
 
     newSocket.on('jobUpdate', (data) => {
@@ -572,10 +604,18 @@ function ProfessionalSignalFeed({
           initializeWebSocket();
         }
 
-        // Subscribe to job updates
-        if (socket) {
-          socket.emit('subscribeToJob', { jobId });
-        }
+        // Wait for WebSocket to be ready before subscribing
+        const subscribeToJob = () => {
+          if (socket && socketConnected) {
+            socket.emit('subscribeToJob', { jobId });
+            console.log(`📡 Subscribed to job ${jobId}`);
+          } else {
+            // Retry subscription after a short delay
+            setTimeout(subscribeToJob, 500);
+          }
+        };
+
+        subscribeToJob();
 
         console.log(`🚀 Started analysis job ${jobId}`);
       } else if (response.status === 409) {
@@ -586,9 +626,16 @@ function ProfessionalSignalFeed({
           setIsAIProcessing(true);
           setProcessingStartTime(new Date());
 
-          if (socket) {
-            socket.emit('subscribeToJob', { jobId: existingJobId });
-          }
+          const subscribeToExistingJob = () => {
+            if (socket && socketConnected) {
+              socket.emit('subscribeToJob', { jobId: existingJobId });
+              console.log(`📡 Subscribed to existing job ${existingJobId}`);
+            } else {
+              setTimeout(subscribeToExistingJob, 500);
+            }
+          };
+
+          subscribeToExistingJob();
 
           console.log(`🔄 Reconnected to existing job ${existingJobId}`);
         }
@@ -597,9 +644,22 @@ function ProfessionalSignalFeed({
       }
     } catch (err) {
       console.error('Error starting analysis:', err);
-      setError('Failed to start professional analysis');
-      toast.error('Failed to start professional analysis');
+
+      let errorMessage = 'Failed to start professional analysis';
+      if (err instanceof Error) {
+        if (err.message.includes('fetch')) {
+          errorMessage = 'Network error: Cannot connect to analysis service';
+        } else if (err.message.includes('WebSocket')) {
+          errorMessage = 'WebSocket connection failed: Real-time updates unavailable';
+        } else {
+          errorMessage = `Analysis error: ${err.message}`;
+        }
+      }
+
+      setError(errorMessage);
+      toast.error(errorMessage);
       setLoading(false);
+      setIsAIProcessing(false);
     }
   };
 
@@ -753,7 +813,10 @@ function ProfessionalSignalFeed({
                   </span>
                 ) : (
                   'Real-time analysis'
-                )}
+                )} •
+                <span className={`font-medium ${socketConnected ? 'text-green-600' : socketError ? 'text-red-600' : 'text-yellow-600'}`}>
+                  {socketConnected ? '🟢 Connected' : socketError ? '🔴 Connection error' : '🟡 Connecting...'}
+                </span>
               </p>
             </div>
           </div>
