@@ -87,13 +87,13 @@ class AIAnalysisWorkerService extends EventEmitter {
     const job: AnalysisJob = {
       id: jobId,
       userId,
-      symbols: symbols.slice(0, 10), // Limit to 10 symbols
+      symbols: symbols.slice(0, 6), // Limit to 6 symbols for faster analysis
       minStrength,
       status: 'queued',
       progress: 0,
       startTime: new Date(),
       processedSymbols: 0,
-      totalSymbols: Math.min(symbols.length, 10),
+      totalSymbols: Math.min(symbols.length, 6),
       results: []
     };
 
@@ -229,7 +229,7 @@ class AIAnalysisWorkerService extends EventEmitter {
   // Process the actual analysis job
   private async processAnalysisJob(job: AnalysisJob): Promise<void> {
     const signals: ProfessionalSignal[] = [];
-    const batchSize = 2; // Process 2 symbols at a time
+    const batchSize = 3; // Process 3 symbols at a time for faster completion
 
     for (let i = 0; i < job.symbols.length; i += batchSize) {
       if (job.status === 'cancelled') break;
@@ -237,8 +237,8 @@ class AIAnalysisWorkerService extends EventEmitter {
       const batch = job.symbols.slice(i, i + batchSize);
       job.currentSymbol = batch[0];
 
-      // Update progress
-      job.progress = Math.round(15 + (i / job.symbols.length) * 75); // 15% to 90%
+      // Update progress with more granular steps
+      job.progress = Math.round(20 + (i / job.symbols.length) * 70); // 20% to 90%
       this.emit('jobUpdated', job);
 
       console.log(`📊 Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(job.symbols.length/batchSize)}: ${batch.join(', ')}`);
@@ -256,8 +256,8 @@ class AIAnalysisWorkerService extends EventEmitter {
         }
       });
 
-      // Simulate AI processing time for realistic progress
-      await this.sleep(2000 + Math.random() * 3000); // 2-5 seconds per batch
+      // Reduced processing time for faster completion
+      await this.sleep(1000 + Math.random() * 1500); // 1-2.5 seconds per batch
     }
 
     // Final processing and ranking
@@ -281,8 +281,8 @@ class AIAnalysisWorkerService extends EventEmitter {
 
     job.results = sortedSignals;
 
-    // Final delay for AI processing completion
-    await this.sleep(2000);
+    // Reduced final delay for faster completion
+    await this.sleep(1000);
   }
 
   // Analyze a single symbol

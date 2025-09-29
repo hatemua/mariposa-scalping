@@ -23,10 +23,10 @@ export const startProfessionalAnalysis = async (req: AuthRequest, res: Response)
       return;
     }
 
-    if (symbols.length > 10) {
+    if (symbols.length > 6) {
       res.status(400).json({
         success: false,
-        error: 'Maximum 10 symbols allowed per analysis'
+        error: 'Maximum 6 symbols allowed per analysis for optimal performance'
       } as ApiResponse);
       return;
     }
@@ -44,13 +44,21 @@ export const startProfessionalAnalysis = async (req: AuthRequest, res: Response)
     const runningJob = userJobs.find(job => ['queued', 'processing'].includes(job.status));
 
     if (runningJob) {
-      res.status(409).json({
-        success: false,
-        error: 'You already have an analysis running. Please wait for it to complete or cancel it first.',
+      // Auto-resume existing job instead of throwing error
+      console.log(`🔄 Auto-resuming existing analysis job ${runningJob.id} for user ${userId}`);
+
+      res.status(202).json({
+        success: true,
+        message: 'Resuming existing analysis in progress',
         data: {
-          existingJobId: runningJob.id,
-          status: runningJob.status,
-          progress: runningJob.progress
+          jobId: runningJob.id,
+          estimatedDuration: '30-45 seconds',
+          symbols: runningJob.symbols,
+          minStrength: runningJob.minStrength,
+          statusEndpoint: `/api/market/analysis-status/${runningJob.id}`,
+          resultsEndpoint: `/api/market/analysis-results/${runningJob.id}`,
+          isResumed: true,
+          currentProgress: runningJob.progress
         }
       } as ApiResponse);
       return;
@@ -66,8 +74,8 @@ export const startProfessionalAnalysis = async (req: AuthRequest, res: Response)
       message: 'Professional analysis started successfully',
       data: {
         jobId,
-        estimatedDuration: '90-120 seconds',
-        symbols: symbols.slice(0, 10),
+        estimatedDuration: '30-45 seconds',
+        symbols: symbols.slice(0, 6),
         minStrength,
         statusEndpoint: `/api/market/analysis-status/${jobId}`,
         resultsEndpoint: `/api/market/analysis-results/${jobId}`
@@ -118,7 +126,7 @@ export const getAnalysisStatus = async (req: AuthRequest, res: Response): Promis
 
     // Calculate elapsed time
     const elapsedTime = Date.now() - job.startTime.getTime();
-    const estimatedTotal = 120000; // 2 minutes
+    const estimatedTotal = 45000; // 45 seconds for 6 symbols
     const remainingTime = Math.max(0, estimatedTotal - elapsedTime);
 
     res.json({

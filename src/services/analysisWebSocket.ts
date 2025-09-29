@@ -165,7 +165,7 @@ class AnalysisWebSocketService {
     }
 
     const elapsedTime = Date.now() - job.startTime.getTime();
-    const estimatedTotal = 120000; // 2 minutes
+    const estimatedTotal = 45000; // 45 seconds for 6 symbols
     const remainingTime = Math.max(0, estimatedTotal - elapsedTime);
 
     socket.emit('jobStatus', {
@@ -215,7 +215,7 @@ class AnalysisWebSocketService {
     if (!this.io) return;
 
     const elapsedTime = Date.now() - job.startTime.getTime();
-    const estimatedTotal = 120000; // 2 minutes
+    const estimatedTotal = 45000; // 45 seconds for 6 symbols
     const remainingTime = Math.max(0, estimatedTotal - elapsedTime);
 
     const jobUpdate = {

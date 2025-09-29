@@ -101,18 +101,17 @@ const CATEGORY_ICONS = {
 
 function ProfessionalSignalFeed({
   symbols = [
-    'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT',
-    'MATICUSDT', 'LINKUSDT', 'UNIUSDT', 'AVAXUSDT', 'DOTUSDT', 'LTCUSDT'
+    'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PUMPUSDT', 'TRXUSDT', 'ADAUSDT' // Reduced to 6 high-volume symbols
   ],
   maxSignals = 20,
   minStrength = 60,
-  autoRefresh = true,
-  refreshInterval = 60000, // 60 seconds for signal feed (was 15s - too aggressive)
+  autoRefresh = false, // Disabled by default for manual control
+  refreshInterval = 60000,
   enableNotifications = true,
   className = ''
 }: ProfessionalSignalFeedProps) {
   const [signals, setSignals] = useState<TradingSignal[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // Changed to false for lazy loading
   const [error, setError] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedPriority, setSelectedPriority] = useState<string | null>(null);
@@ -127,6 +126,9 @@ function ProfessionalSignalFeed({
   const [jobProgress, setJobProgress] = useState(0);
   const [currentSymbol, setCurrentSymbol] = useState<string | undefined>(undefined);
   const [estimatedRemainingTime, setEstimatedRemainingTime] = useState(0);
+  const [hasInitialized, setHasInitialized] = useState(false);
+  const [cachedSignals, setCachedSignals] = useState<TradingSignal[]>([]);
+  const [cacheTimestamp, setCacheTimestamp] = useState<Date | null>(null);
 
   const generateRealTradingSignals = async (): Promise<TradingSignal[]> => {
     const generatedSignals: TradingSignal[] = [];
@@ -539,12 +541,15 @@ function ProfessionalSignalFeed({
       const result = await response.json();
 
       if (result.success) {
-        setSignals(result.data || []);
+        const newSignals = result.data || [];
+        setSignals(newSignals);
+        setCachedSignals(newSignals); // Cache the results
+        setCacheTimestamp(new Date());
         setLastUpdate(new Date());
 
         // Show notifications for critical signals
         if (notificationsEnabled) {
-          const criticalSignals = (result.data || []).filter((s: TradingSignal) => s.priority === 'CRITICAL');
+          const criticalSignals = newSignals.filter((s: TradingSignal) => s.priority === 'CRITICAL');
           criticalSignals.forEach((signal: TradingSignal) => {
             toast.success(`🚨 CRITICAL: ${signal.type} signal for ${signal.symbol.replace('USDT', '')}`, {
               duration: 5000
@@ -552,7 +557,7 @@ function ProfessionalSignalFeed({
           });
         }
 
-        console.log(`✅ Analysis completed with ${result.data?.length || 0} signals`);
+        console.log(`✅ Analysis completed with ${newSignals.length} signals`);
       } else {
         setError(result.error || 'Failed to fetch analysis results');
       }
@@ -563,6 +568,7 @@ function ProfessionalSignalFeed({
       setIsAIProcessing(false);
       setCurrentJobId(null);
       setProcessingStartTime(null);
+      setLoading(false);
     }
   };
 
@@ -576,6 +582,7 @@ function ProfessionalSignalFeed({
     try {
       setLoading(true);
       setError(null);
+      setHasInitialized(true);
 
       // Start new job-based analysis
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus'}/api/market/start-professional-analysis`, {
@@ -618,27 +625,26 @@ function ProfessionalSignalFeed({
         subscribeToJob();
 
         console.log(`🚀 Started analysis job ${jobId}`);
-      } else if (response.status === 409) {
-        // User already has a running job
-        const existingJobId = result.data?.existingJobId;
-        if (existingJobId) {
-          setCurrentJobId(existingJobId);
-          setIsAIProcessing(true);
-          setProcessingStartTime(new Date());
+      } else if (result.data?.isResumed) {
+        // Auto-resumed existing job
+        const existingJobId = result.data.jobId;
+        setCurrentJobId(existingJobId);
+        setIsAIProcessing(true);
+        setProcessingStartTime(new Date());
+        setJobProgress(result.data.currentProgress || 5);
 
-          const subscribeToExistingJob = () => {
-            if (socket && socketConnected) {
-              socket.emit('subscribeToJob', { jobId: existingJobId });
-              console.log(`📡 Subscribed to existing job ${existingJobId}`);
-            } else {
-              setTimeout(subscribeToExistingJob, 500);
-            }
-          };
+        console.log(`🔄 Auto-resumed existing job ${existingJobId} at ${result.data.currentProgress}%`);
 
-          subscribeToExistingJob();
+        const subscribeToExistingJob = () => {
+          if (socket && socketConnected) {
+            socket.emit('subscribeToJob', { jobId: existingJobId });
+            console.log(`📡 Subscribed to resumed job ${existingJobId}`);
+          } else {
+            setTimeout(subscribeToExistingJob, 500);
+          }
+        };
 
-          console.log(`🔄 Reconnected to existing job ${existingJobId}`);
-        }
+        subscribeToExistingJob();
       } else {
         throw new Error(result.error || 'Failed to start analysis');
       }
@@ -671,10 +677,10 @@ function ProfessionalSignalFeed({
       return;
     }
 
-    // Check if analysis timed out (more than 3 minutes)
+    // Check if analysis timed out (more than 60 seconds)
     if (processingStartTime) {
       const elapsedTime = Date.now() - processingStartTime.getTime();
-      if (elapsedTime > 180000) { // 3 minutes timeout
+      if (elapsedTime > 60000) { // 1 minute timeout for 6 symbols
         console.log('⏰ Analysis timeout detected, resetting...');
         setIsAIProcessing(false);
         setProcessingStartTime(null);
@@ -684,7 +690,7 @@ function ProfessionalSignalFeed({
     await fetchSignals();
   };
 
-  // Smart refresh integration with analysis protection
+  // Smart refresh integration with analysis protection - disabled by default
   const { enabled: refreshEnabled, interval: effectiveInterval, refreshFn } = useComponentRefresh(
     'ProfessionalSignalFeed',
     refreshInterval,
@@ -694,11 +700,11 @@ function ProfessionalSignalFeed({
   const smartRefresh = useSmartRefresh({
     refreshFn: protectedFetchSignals,
     interval: effectiveInterval,
-    enabled: autoRefresh && refreshEnabled && !isAIProcessing, // Disable during analysis
+    enabled: false, // Disabled - use manual refresh for better performance
     pauseOnHover: true,
     pauseOnFocus: true,
     pauseOnInteraction: true,
-    interactionPauseDuration: 15000, // 15 seconds pause after interaction
+    interactionPauseDuration: 15000,
   });
 
   const formatTimeAgo = (timestamp: string): string => {
@@ -718,6 +724,9 @@ function ProfessionalSignalFeed({
   useEffect(() => {
     initializeWebSocket();
 
+    // Load cached signals immediately if available
+    loadCachedSignals();
+
     return () => {
       if (socket) {
         socket.disconnect();
@@ -725,11 +734,10 @@ function ProfessionalSignalFeed({
     };
   }, []);
 
-  // Initial fetch when dependencies change
+  // Only load cache when dependencies change (no auto-analysis)
   useEffect(() => {
-    // Only trigger if not currently processing
-    if (!isAIProcessing) {
-      protectedFetchSignals();
+    if (!isAIProcessing && hasInitialized) {
+      loadCachedSignals(); // Only load cache, don't start new analysis
     }
   }, [symbols, minStrength]);
 
@@ -739,13 +747,13 @@ function ProfessionalSignalFeed({
 
     const timeoutId = setTimeout(() => {
       const elapsedTime = Date.now() - processingStartTime.getTime();
-      if (elapsedTime > 180000 && isAIProcessing) { // 3 minutes timeout
-        console.log('⏰ Analysis timeout: Resetting after 3 minutes');
+      if (elapsedTime > 60000 && isAIProcessing) { // 1 minute timeout
+        console.log('⏰ Analysis timeout: Resetting after 1 minute');
         setIsAIProcessing(false);
         setProcessingStartTime(null);
         setError('Analysis timed out - please try again');
       }
-    }, 180000); // 3 minutes
+    }, 60000); // 1 minute
 
     return () => clearTimeout(timeoutId);
   }, [isAIProcessing, processingStartTime]);
@@ -757,6 +765,40 @@ function ProfessionalSignalFeed({
       return;
     }
     protectedFetchSignals();
+  };
+
+  // Start analysis manually
+  const handleStartAnalysis = () => {
+    if (isAIProcessing) {
+      console.log('⚠️ Analysis already in progress');
+      return;
+    }
+    fetchSignals();
+  };
+
+  // Load cached signals if available and recent
+  const loadCachedSignals = () => {
+    if (cachedSignals.length > 0 && cacheTimestamp) {
+      const cacheAge = Date.now() - cacheTimestamp.getTime();
+      const cacheValidityMs = 5 * 60 * 1000; // 5 minutes
+
+      if (cacheAge < cacheValidityMs) {
+        setSignals(cachedSignals);
+        setLastUpdate(cacheTimestamp);
+        console.log(`📦 Loaded ${cachedSignals.length} cached signals (${Math.round(cacheAge / 1000)}s old)`);
+        return true;
+      } else {
+        console.log('💾 Cache expired, clearing old signals');
+        setCachedSignals([]);
+        setCacheTimestamp(null);
+      }
+    }
+    return false;
+  };
+
+  // Check if we have recent data
+  const hasRecentData = () => {
+    return signals.length > 0 && lastUpdate && (Date.now() - lastUpdate.getTime()) < 10 * 60 * 1000; // 10 minutes
   };
 
   // Cancel current analysis
@@ -832,31 +874,49 @@ function ProfessionalSignalFeed({
             >
               {notificationsEnabled ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
             </button>
-            <button
-              onClick={handleManualRefresh}
-              disabled={smartRefresh.isRefreshing || isAIProcessing}
-              className={`p-2 rounded-lg transition-colors ${
-                isAIProcessing
-                  ? 'text-orange-600 bg-orange-50 cursor-not-allowed'
-                  : smartRefresh.isPaused
-                  ? 'text-yellow-600 bg-yellow-50 hover:bg-yellow-100'
-                  : 'text-gray-600 hover:text-blue-600 hover:bg-blue-50'
-              }`}
-              title={
-                isAIProcessing
-                  ? 'Refresh blocked - Analysis in progress'
-                  : smartRefresh.isPaused
-                  ? 'Refresh Paused (Interacting)'
-                  : 'Manual Refresh'
-              }
-            >
-              <RefreshCw className={`h-4 w-4 ${smartRefresh.isRefreshing ? 'animate-spin' : ''}`} />
-            </button>
-            {smartRefresh.lastRefresh && (
+
+            {/* Start Analysis Button */}
+            {!hasInitialized || (!isAIProcessing && !hasRecentData()) ? (
+              <button
+                onClick={handleStartAnalysis}
+                disabled={loading || isAIProcessing}
+                className="px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                title="Start AI Analysis (30-45 seconds)"
+              >
+                <Brain className="h-3 w-3" />
+                {loading ? 'Starting...' : 'Start Analysis'}
+              </button>
+            ) : (
+              <button
+                onClick={handleManualRefresh}
+                disabled={smartRefresh.isRefreshing || isAIProcessing}
+                className={`p-2 rounded-lg transition-colors ${
+                  isAIProcessing
+                    ? 'text-orange-600 bg-orange-50 cursor-not-allowed'
+                    : smartRefresh.isPaused
+                    ? 'text-yellow-600 bg-yellow-50 hover:bg-yellow-100'
+                    : 'text-gray-600 hover:text-blue-600 hover:bg-blue-50'
+                }`}
+                title={
+                  isAIProcessing
+                    ? 'Refresh blocked - Analysis in progress'
+                    : smartRefresh.isPaused
+                    ? 'Refresh Paused (Interacting)'
+                    : 'Manual Refresh'
+                }
+              >
+                <RefreshCw className={`h-4 w-4 ${smartRefresh.isRefreshing ? 'animate-spin' : ''}`} />
+              </button>
+            )}
+
+            {lastUpdate && (
               <div className="text-xs text-gray-500">
-                Updated {smartRefresh.lastRefresh.toLocaleTimeString()}
+                Updated {lastUpdate.toLocaleTimeString()}
                 {smartRefresh.isPaused && (
                   <span className="ml-1 text-yellow-600">(Paused)</span>
+                )}
+                {cacheTimestamp && (
+                  <span className="ml-1 text-blue-600 opacity-75">💾</span>
                 )}
               </div>
             )}
@@ -977,11 +1037,41 @@ function ProfessionalSignalFeed({
               </div>
             ))}
           </div>
+        ) : !hasInitialized && signals.length === 0 ? (
+          <div className="text-center py-12 text-gray-500">
+            <Brain className="h-16 w-16 mx-auto mb-4 text-gray-300" />
+            <h4 className="text-lg font-medium text-gray-700 mb-2">Ready to Analyze Markets</h4>
+            <p className="text-sm mb-4">Click "Start Analysis" to begin AI-powered signal generation</p>
+            <div className="space-y-2 text-xs text-gray-600">
+              <div>• Analyzes {symbols.length} high-volume symbols</div>
+              <div>• Uses multi-timeframe confluence</div>
+              <div>• Completes in 30-45 seconds</div>
+              <div>• Filters signals by {minStrength}% minimum strength</div>
+            </div>
+            <button
+              onClick={handleStartAnalysis}
+              disabled={loading || isAIProcessing}
+              className="mt-6 px-6 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2 mx-auto"
+            >
+              <Brain className="h-4 w-4" />
+              {loading ? 'Starting Analysis...' : 'Start AI Analysis'}
+            </button>
+          </div>
         ) : filteredSignals.length === 0 ? (
           <div className="text-center py-8 text-gray-500">
             <Zap className="h-12 w-12 mx-auto mb-3 text-gray-300" />
             <p>No signals match your criteria</p>
-            <p className="text-sm mt-1">Adjust filters or wait for new signals</p>
+            <p className="text-sm mt-1">Adjust filters or start a new analysis</p>
+            {hasInitialized && (
+              <button
+                onClick={handleStartAnalysis}
+                disabled={loading || isAIProcessing}
+                className="mt-3 px-4 py-2 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-1 mx-auto"
+              >
+                <Brain className="h-3 w-3" />
+                New Analysis
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-3">
