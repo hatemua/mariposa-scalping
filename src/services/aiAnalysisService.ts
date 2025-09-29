@@ -22,8 +22,8 @@ export class AIAnalysisService {
   private models = [
     'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
     'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',
-    'deepseek-ai/DeepSeek-R1',
-    'Qwen/QwQ-32B-Preview'
+    'mistralai/Mixtral-8x22B-Instruct-v0.1',
+    'Qwen/QwQ-32B'
   ];
 
   constructor() {

@@ -335,9 +335,13 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
 
     const professionalSignals: any[] = [];
 
+    console.log(`🔍 Starting professional signal generation for ${symbols.length} symbols with minStrength: ${minStrength}`);
+
     for (const symbol of symbols.slice(0, 10)) { // Limit to 10 symbols for performance
       try {
         const normalizedSymbol = SymbolConverter.normalize(symbol);
+        console.log(`📊 Analyzing ${normalizedSymbol}...`);
+
         const marketData = await binanceService.getSymbolInfo(normalizedSymbol);
         const klineData = await binanceService.getKlineData(normalizedSymbol, '1h', 50);
 
@@ -346,6 +350,8 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
         const currentPrice = parseFloat(marketData.price);
         const priceChange24h = parseFloat(marketData.change24h || '0');
         const volume24h = parseFloat(marketData.volume || '0');
+
+        console.log(`📈 ${normalizedSymbol} market data: Price=${currentPrice}, Change24h=${priceChange24h}%, Volume=${(volume24h/1000000).toFixed(1)}M, RSI=${indicators.RSI.toFixed(1)}`);
 
         // Calculate signal strength based on real technical analysis
         let signalStrength = 50; // Base strength
@@ -368,29 +374,57 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
         let signalType = 'MOMENTUM';
         let action = 'HOLD';
 
-        if (indicators.RSI < 30 && indicators.MACD.histogram > 0) {
+        // Reversal signals (oversold/overbought conditions)
+        if (indicators.RSI < 35 && indicators.MACD.histogram > 0) {
           signalType = 'REVERSAL';
           action = 'BUY';
-        } else if (indicators.RSI > 70 && indicators.MACD.histogram < 0) {
+        } else if (indicators.RSI > 65 && indicators.MACD.histogram < 0) {
           signalType = 'REVERSAL';
           action = 'SELL';
-        } else if (Math.abs(priceChange24h) > 5 && volume24h > 20000000) {
+        }
+        // Breakout signals (relaxed thresholds)
+        else if (Math.abs(priceChange24h) > 3 && volume24h > 5000000) {
           signalType = 'BREAKOUT';
           action = priceChange24h > 0 ? 'BUY' : 'SELL';
-        } else if (currentPrice > indicators.SMA20 && indicators.MACD.histogram > 0) {
+        }
+        // Trend following signals
+        else if (currentPrice > indicators.SMA20 && indicators.MACD.histogram > 0) {
+          signalType = 'MOMENTUM';
           action = 'BUY';
         } else if (currentPrice < indicators.SMA20 && indicators.MACD.histogram < 0) {
+          signalType = 'MOMENTUM';
+          action = 'SELL';
+        }
+        // Strong momentum signals (new conditions)
+        else if (priceChange24h > 2 && indicators.RSI > 50 && volume24h > 2000000) {
+          signalType = 'MOMENTUM';
+          action = 'BUY';
+        } else if (priceChange24h < -2 && indicators.RSI < 50 && volume24h > 2000000) {
+          signalType = 'MOMENTUM';
+          action = 'SELL';
+        }
+        // MACD crossover signals (new conditions)
+        else if (indicators.MACD.histogram > 0.001 && indicators.RSI > 40) {
+          signalType = 'MOMENTUM';
+          action = 'BUY';
+        } else if (indicators.MACD.histogram < -0.001 && indicators.RSI < 60) {
+          signalType = 'MOMENTUM';
           action = 'SELL';
         }
 
-        if (signalStrength >= minStrength && action !== 'HOLD') {
+        console.log(`💡 ${normalizedSymbol} signal analysis: Strength=${signalStrength}, Type=${signalType}, Action=${action}, MACD=${indicators.MACD.histogram.toFixed(4)}`);
+
+        // Lower threshold for more signals and include moderate strength signals
+        const effectiveMinStrength = Math.min(minStrength, 50);
+        if (signalStrength >= effectiveMinStrength && action !== 'HOLD') {
+          console.log(`✅ ${normalizedSymbol} passed filters: Strength=${signalStrength} >= ${effectiveMinStrength}, Action=${action}`);
           const riskLevel = Math.abs(priceChange24h);
           const stopLossPercent = Math.max(1, Math.min(5, riskLevel * 0.5));
           const targetPercent = stopLossPercent * 2; // 2:1 risk/reward ratio
 
-          // Enhanced signal with LLM analysis for high-strength signals
+          // Enhanced signal with LLM analysis for moderate-strength signals
           let advancedLLMData = null;
-          if (signalStrength >= 70) {
+          if (signalStrength >= 60) {
             try {
               // Get orderbook data for LLM analysis
               const orderBook = await binanceService.getOrderBook(normalizedSymbol, 20);
@@ -472,10 +506,22 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
             advancedLLMData: advancedLLMData,
             timestamp: new Date().toISOString()
           });
+
+          console.log(`🎯 ${normalizedSymbol} signal generated: ${action} ${signalType} with ${Math.round(signalStrength)}% strength`);
+        } else {
+          console.log(`❌ ${normalizedSymbol} filtered out: Strength=${signalStrength} < ${effectiveMinStrength} OR Action=${action}`);
         }
       } catch (error) {
-        console.warn(`Failed to generate professional signal for ${symbol}:`, error);
+        console.warn(`❌ Failed to generate professional signal for ${symbol}:`, error);
       }
+    }
+
+    console.log(`📊 Professional signals summary: Generated ${professionalSignals.length} signals from ${symbols.length} symbols (minStrength: ${minStrength})`);
+
+    if (professionalSignals.length > 0) {
+      console.log(`🎯 Signal breakdown:`, professionalSignals.map(s => `${s.symbol}: ${s.action} ${s.type} (${s.strength}%)`));
+    } else {
+      console.warn(`⚠️ No professional signals generated - check market conditions and thresholds`);
     }
 
     res.json({
