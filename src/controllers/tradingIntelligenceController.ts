@@ -347,11 +347,19 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
 
         // Calculate technical indicators for signal generation
         const indicators = calculateTechnicalIndicators(klineData, ['RSI', 'MACD', 'SMA20', 'EMA20']);
-        const currentPrice = parseFloat(marketData.price);
-        const priceChange24h = parseFloat(marketData.change24h || '0');
-        const volume24h = parseFloat(marketData.volume || '0');
 
-        console.log(`📈 ${normalizedSymbol} market data: Price=${currentPrice}, Change24h=${priceChange24h}%, Volume=${(volume24h/1000000).toFixed(1)}M, RSI=${indicators.RSI.toFixed(1)}`);
+        // Parse market data from Binance API (handle both field name formats)
+        const currentPrice = parseFloat(marketData.lastPrice || marketData.price || marketData.c || '0');
+        const priceChange24h = parseFloat(marketData.priceChangePercent || marketData.change24h || marketData.P || '0');
+        const volume24h = parseFloat(marketData.volume || marketData.v || '0');
+
+        console.log(`📈 ${normalizedSymbol} raw market data (ALL FIELDS):`, JSON.stringify(marketData, null, 2));
+        console.log(`📈 ${normalizedSymbol} parsed data: Price=${currentPrice}, Change24h=${priceChange24h}%, Volume=${(volume24h/1000000).toFixed(1)}M, RSI=${indicators.RSI.toFixed(1)}`);
+
+        // Verify if this is real-time data or stale data
+        const timestamp = marketData.timestamp || marketData.E || Date.now();
+        const dataAge = Date.now() - (typeof timestamp === 'string' ? new Date(timestamp).getTime() : timestamp);
+        console.log(`⏰ ${normalizedSymbol} data age: ${Math.round(dataAge/1000)}s ago (${dataAge < 60000 ? 'REAL-TIME' : 'STALE'})`);
 
         // Calculate signal strength based on real technical analysis
         let signalStrength = 50; // Base strength
@@ -419,8 +427,17 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
         if (signalStrength >= effectiveMinStrength && action !== 'HOLD') {
           console.log(`✅ ${normalizedSymbol} passed filters: Strength=${signalStrength} >= ${effectiveMinStrength}, Action=${action}`);
 
-          // Validate input values to prevent null/NaN results
-          const validatedPrice = isNaN(currentPrice) || currentPrice <= 0 ? 1 : currentPrice;
+          // Validate input values - skip symbol if invalid price data
+          if (isNaN(currentPrice) || currentPrice <= 0) {
+            console.error(`❌ ${normalizedSymbol} Invalid price data: ${currentPrice} (raw: ${JSON.stringify({
+              lastPrice: marketData.lastPrice,
+              price: marketData.price,
+              c: marketData.c
+            })}), skipping signal generation`);
+            continue;
+          }
+
+          const validatedPrice = currentPrice; // Use real price, no fallback
           const validatedPriceChange = isNaN(priceChange24h) ? 0 : priceChange24h;
 
           const riskLevel = Math.abs(validatedPriceChange);
