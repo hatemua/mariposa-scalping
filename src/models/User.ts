@@ -49,7 +49,6 @@ const UserSchema = new Schema<UserDocument>({
 });
 
 // Removed password hashing middleware - OTP-only authentication
-
-UserSchema.index({ email: 1 });
+// Note: email index is automatically created by unique: true constraint
 
 export default mongoose.model<UserDocument>('User', UserSchema);

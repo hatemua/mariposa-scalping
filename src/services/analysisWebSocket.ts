@@ -23,14 +23,14 @@ class AnalysisWebSocketService {
         methods: ["GET", "POST"],
         credentials: true
       },
-      path: '/socket.io/',
+      path: '/analysis/',
       transports: ['websocket', 'polling']
     });
 
     this.setupEventListeners();
     this.setupSocketHandlers();
 
-    console.log('🔗 Analysis WebSocket service initialized');
+    console.log('🔗 Analysis WebSocket service initialized on path /analysis/');
   }
 
   private setupEventListeners(): void {

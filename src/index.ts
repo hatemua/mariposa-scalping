@@ -72,6 +72,42 @@ app.use(rateLimitMiddleware);
 
 app.use('/api', routes);
 
+// Health check endpoint for WebSocket services
+app.get('/health/websockets', (req, res) => {
+  try {
+    const { getWebSocketService } = require('./services/websocketService');
+    const wsService = getWebSocketService();
+    const analysisService = analysisWebSocketService;
+
+    const health = {
+      timestamp: new Date().toISOString(),
+      services: {
+        websocket: {
+          status: wsService ? 'running' : 'not_initialized',
+          path: '/socket.io/',
+          connectedClients: wsService ? 'available' : 'unknown'
+        },
+        analysisWebsocket: {
+          status: analysisService ? 'running' : 'not_initialized',
+          path: '/analysis/',
+          connectedClients: analysisService ? analysisService.getConnectedClientsCount() : 0
+        }
+      }
+    };
+
+    res.json({
+      success: true,
+      data: health
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get WebSocket service health',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 app.use('*', (req, res) => {
   res.status(404).json({
     success: false,
@@ -105,11 +141,21 @@ const startServer = async (): Promise<void> => {
     await binanceService.start();
     console.log('✅ Binance service started with Redis integration');
 
-    initializeWebSocketService(server);
-    console.log('✅ WebSocket service initialized');
+    try {
+      initializeWebSocketService(server);
+      console.log('✅ WebSocket service initialized on default path');
+    } catch (error) {
+      console.error('❌ Failed to initialize WebSocket service:', error);
+      throw error;
+    }
 
-    analysisWebSocketService.initialize(server);
-    console.log('✅ Analysis WebSocket service initialized');
+    try {
+      analysisWebSocketService.initialize(server);
+      console.log('✅ Analysis WebSocket service initialized on /analysis/ path');
+    } catch (error) {
+      console.error('❌ Failed to initialize Analysis WebSocket service:', error);
+      throw error;
+    }
 
     // Set server timeout for long-running AI operations
     server.timeout = config.SERVER_TIMEOUT;
@@ -118,7 +164,9 @@ const startServer = async (): Promise<void> => {
     server.listen(config.PORT, () => {
       console.log(`🚀 Server running on port ${config.PORT} in ${config.NODE_ENV} mode`);
       console.log(`📊 API available at http://localhost:${config.PORT}/api`);
-      console.log(`🔌 WebSocket available at ws://localhost:${config.PORT}`);
+      console.log(`🔌 WebSocket (General) available at ws://localhost:${config.PORT}/socket.io/`);
+      console.log(`🧠 WebSocket (Analysis) available at ws://localhost:${config.PORT}/analysis/`);
+      console.log(`🩺 WebSocket Health Check at http://localhost:${config.PORT}/health/websockets`);
       console.log(`🗄️  Redis cache: ${redis.connected ? 'Connected' : 'Disconnected'}`);
     });
 
