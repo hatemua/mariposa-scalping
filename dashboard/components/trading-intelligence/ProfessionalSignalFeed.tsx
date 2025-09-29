@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect } from 'react';
 import { enhancedMarketApi } from '@/lib/enhancedApi';
-import { io, Socket } from 'socket.io-client';
 import { safeNumber, safeObject, safeArray } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
 import { SignalFeedSkeleton } from '@/components/ui/LoadingSkeleton';
@@ -119,13 +118,7 @@ function ProfessionalSignalFeed({
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [isAIProcessing, setIsAIProcessing] = useState(false);
   const [processingStartTime, setProcessingStartTime] = useState<Date | null>(null);
-  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
-  const [socket, setSocket] = useState<Socket | null>(null);
-  const [socketConnected, setSocketConnected] = useState(false);
-  const [socketError, setSocketError] = useState<string | null>(null);
-  const [jobProgress, setJobProgress] = useState(0);
-  const [currentSymbol, setCurrentSymbol] = useState<string | undefined>(undefined);
-  const [estimatedRemainingTime, setEstimatedRemainingTime] = useState(0);
+  // Removed WebSocket-related state variables - using direct API calls instead
   const [hasInitialized, setHasInitialized] = useState(false);
   const [cachedSignals, setCachedSignals] = useState<TradingSignal[]>([]);
   const [cacheTimestamp, setCacheTimestamp] = useState<Date | null>(null);
@@ -133,56 +126,26 @@ function ProfessionalSignalFeed({
 
   // Debug state tracking
   const [debugInfo, setDebugInfo] = useState<any>({
-    stateChanges: [],
-    webSocketEvents: [],
-    timeouts: [],
-    lastHealthCheck: null,
-    recoveryAttempts: 0
+    apiCalls: [],
+    lastAnalysis: null,
+    errorCount: 0
   });
 
-  // Enhanced logging function
+  // Simple logging function
   const logDebug = (category: string, message: string, data?: any) => {
     const timestamp = new Date().toISOString();
-    const logEntry = {
-      timestamp,
-      category,
-      message,
-      data,
-      jobId: currentJobId,
-      isProcessing: isAIProcessing,
-      socketConnected
-    };
-
     console.log(`[${category}] ${timestamp}: ${message}`, data || '');
 
     setDebugInfo((prev: any) => ({
       ...prev,
-      [category === 'STATE' ? 'stateChanges' :
-        category === 'WEBSOCKET' ? 'webSocketEvents' :
-        category === 'TIMEOUT' ? 'timeouts' : 'other']: [
-        ...(prev[category === 'STATE' ? 'stateChanges' :
-           category === 'WEBSOCKET' ? 'webSocketEvents' :
-           category === 'TIMEOUT' ? 'timeouts' : 'other'] || []),
-        logEntry
-      ].slice(-50) // Keep last 50 entries
+      apiCalls: [
+        ...(prev.apiCalls || []),
+        { timestamp, category, message, data }
+      ].slice(-20) // Keep last 20 entries
     }));
   };
 
-  // Enhanced state setters with logging
-  const setIsAIProcessingWithLog = (value: boolean, reason: string) => {
-    logDebug('STATE', `isAIProcessing: ${isAIProcessing} -> ${value}`, { reason });
-    setIsAIProcessing(value);
-  };
-
-  const setCurrentJobIdWithLog = (jobId: string | null, reason: string) => {
-    logDebug('STATE', `currentJobId: ${currentJobId} -> ${jobId}`, { reason });
-    setCurrentJobId(jobId);
-  };
-
-  const setProcessingStartTimeWithLog = (time: Date | null, reason: string) => {
-    logDebug('STATE', `processingStartTime: ${processingStartTime?.toISOString()} -> ${time?.toISOString()}`, { reason });
-    setProcessingStartTime(time);
-  };
+  // Simplified state management - no complex job tracking needed
 
   const generateRealTradingSignals = async (): Promise<TradingSignal[]> => {
     const generatedSignals: TradingSignal[] = [];
@@ -250,10 +213,18 @@ function ProfessionalSignalFeed({
   ): TradingSignal[] => {
     const signals: TradingSignal[] = [];
 
-    const price = marketData.price || 0;
-    const change24h = marketData.change24h || 0;
-    const volume24h = marketData.volume || 0;
-    const score = confluenceData.score || 0;
+    // Validate price data - if invalid, skip this symbol
+    const price = safeNumber.getValue(marketData?.price, 0);
+    if (price <= 0) {
+      console.warn(`Invalid price data for ${symbol}:`, marketData?.price);
+      return [];
+    }
+
+    const change24h = safeNumber.getValue(marketData?.change24h, 0);
+    const volume24h = safeNumber.getValue(marketData?.volume, 0);
+    const score = safeNumber.getValue(confluenceData?.score, 0);
+
+    console.log(`Processing ${symbol}: price=${price}, change24h=${change24h}%, volume=${volume24h}, score=${score}`);
 
     // Generate signal based on confluence analysis
     if (score >= minStrength) {
@@ -346,11 +317,26 @@ function ProfessionalSignalFeed({
   };
 
   const calculateRealExpectedReturn = (confluenceData: any, marketData: any): number => {
-    const baseReturn = (confluenceData.score || 50) / 25; // 2-4% base
-    const momentumBonus = Math.min(Math.abs(marketData.change24h || 0) * 0.3, 3);
-    const volumeBonus = (marketData.volume || 0) > 30000000 ? 1.5 : 0;
+    const score = safeNumber.getValue(confluenceData?.score, 60);
+    const change24h = safeNumber.getValue(marketData?.change24h, 0);
+    const volume = safeNumber.getValue(marketData?.volume, 0);
 
-    return Math.min(10, Math.max(1, baseReturn + momentumBonus + volumeBonus));
+    // More variable base return: 1.5% - 6% based on score
+    const baseReturn = 1.5 + ((score - 60) / 40) * 4.5; // 60=1.5%, 100=6%
+
+    // Momentum bonus: 0-3% based on 24h change
+    const momentumBonus = Math.min(Math.abs(change24h) * 0.25, 3);
+
+    // Volume bonus: 0-2% for high volume
+    const volumeBonus = volume > 50000000 ? 2 : volume > 20000000 ? 1 : 0;
+
+    // Add some randomness for variety (±0.5%)
+    const randomVariation = (Math.random() - 0.5) * 1;
+
+    const total = baseReturn + momentumBonus + volumeBonus + randomVariation;
+
+    // Final range: 1.5% - 10%
+    return Math.min(10, Math.max(1.5, total));
   };
 
   const calculateRealStopLoss = (confluenceData: any, marketData: any): number => {
@@ -515,201 +501,22 @@ function ProfessionalSignalFeed({
   };
 
   // Health check monitoring
-  const performHealthCheck = async () => {
-    if (!isAIProcessing || !currentJobId) return;
+  // Removed all WebSocket and job-related functions - using direct API calls instead
 
+  const fetchSignals = async () => {
     try {
-      logDebug('HEALTH', 'Performing health check', {
-        jobId: currentJobId,
-        elapsedTime: processingStartTime ? Date.now() - processingStartTime.getTime() : 0
-      });
+      setLoading(true);
+      setError(null);
+      setHasInitialized(true);
 
-      // Check job status via API
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus'}/api/market/analysis-status/${currentJobId}`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      });
+      console.log('🚀 Starting direct API analysis for symbols:', symbols);
 
-      const result = await response.json();
+      // Use the working generateRealTradingSignals function
+      const newSignals = await generateRealTradingSignals();
 
-      if (result.success) {
-        const jobData = result.data;
-        logDebug('HEALTH', 'Health check response', jobData);
-
-        if (jobData.status === 'completed') {
-          logDebug('HEALTH', 'Job completed during health check, fetching results');
-          fetchJobResults(currentJobId);
-        } else if (jobData.status === 'failed') {
-          logDebug('HEALTH', 'Job failed during health check', { error: jobData.error });
-          setIsAIProcessingWithLog(false, 'Health check found failed job');
-          setCurrentJobIdWithLog(null, 'Health check cleanup');
-          setError(jobData.error || 'Analysis failed');
-        } else {
-          // Update progress from health check
-          setJobProgress(jobData.progress || 0);
-          setCurrentSymbol(jobData.currentSymbol);
-          setEstimatedRemainingTime(jobData.estimatedRemainingTime || 0);
-        }
-
-        setDebugInfo((prev: any) => ({ ...prev, lastHealthCheck: new Date() }));
-      } else {
-        logDebug('HEALTH', 'Health check failed', { error: result.error });
-        if (response.status === 404) {
-          logDebug('HEALTH', 'Job not found during health check, resetting state');
-          setIsAIProcessingWithLog(false, 'Health check - job not found');
-          setCurrentJobIdWithLog(null, 'Health check cleanup');
-          setError('Analysis job not found - may have expired');
-        }
-      }
-    } catch (error) {
-      logDebug('HEALTH', 'Health check exception', { error: error instanceof Error ? error.message : String(error) });
-    }
-  };
-
-  // Initialize WebSocket connection for analysis jobs
-  const initializeWebSocket = () => {
-    if (socket) {
-      logDebug('WEBSOCKET', 'Disconnecting existing WebSocket');
-      socket.disconnect();
-    }
-
-    logDebug('WEBSOCKET', 'Initializing WebSocket connection');
-    setSocketError(null);
-
-    const newSocket = io(process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus', {
-      path: '/analysis/',
-      auth: {
-        token: localStorage.getItem('token')
-      },
-      transports: ['websocket', 'polling'],
-      timeout: 10000,
-      reconnection: true,
-      reconnectionDelay: 2000,
-      reconnectionDelayMax: 5000,
-      reconnectionAttempts: 10,
-      randomizationFactor: 0.5,
-      forceNew: true
-    });
-
-    newSocket.on('connect', () => {
-      logDebug('WEBSOCKET', 'Connected to analysis WebSocket', { socketId: newSocket.id });
-      setSocketConnected(true);
-      setSocketError(null);
-
-      // If we have an active job, try to resubscribe
-      if (currentJobId && isAIProcessing) {
-        logDebug('WEBSOCKET', 'Resubscribing to active job after connection', { jobId: currentJobId });
-        newSocket.emit('subscribeToJob', { jobId: currentJobId });
-        newSocket.emit('getJobStatus', { jobId: currentJobId });
-      }
-    });
-
-    newSocket.on('connect_error', (error) => {
-      logDebug('WEBSOCKET', 'Connection error', { error: error.message });
-      setSocketConnected(false);
-      setSocketError(`Connection failed: ${error.message}`);
-    });
-
-    newSocket.on('disconnect', (reason) => {
-      logDebug('WEBSOCKET', 'Disconnected', { reason });
-      setSocketConnected(false);
-
-      if (reason !== 'io client disconnect') {
-        setSocketError(`Disconnected: ${reason}`);
-      }
-    });
-
-    newSocket.on('reconnect', (attemptNumber) => {
-      logDebug('WEBSOCKET', 'Reconnected', { attemptNumber });
-      setSocketConnected(true);
-      setSocketError(null);
-    });
-
-    newSocket.on('reconnect_error', (error) => {
-      logDebug('WEBSOCKET', 'Reconnection error', { error: error.message });
-      setSocketError(`Reconnection failed: ${error.message}`);
-    });
-
-    newSocket.on('reconnect_failed', () => {
-      logDebug('WEBSOCKET', 'Reconnection failed after all attempts');
-      setSocketError('Connection failed - please refresh the page');
-    });
-
-    newSocket.on('jobUpdate', (data) => {
-      logDebug('WEBSOCKET', 'Job update received', data);
-
-      // Verify this update is for our current job
-      if (data.jobId === currentJobId) {
-        setJobProgress(data.progress || 0);
-        setCurrentSymbol(data.currentSymbol);
-        setEstimatedRemainingTime(data.estimatedRemainingTime || 0);
-
-        if (data.status === 'completed') {
-          logDebug('WEBSOCKET', 'Job completed, fetching results');
-          fetchJobResults(data.jobId);
-        } else if (data.status === 'failed') {
-          logDebug('WEBSOCKET', 'Job failed', { error: data.error });
-          setIsAIProcessingWithLog(false, 'WebSocket job failed');
-          setCurrentJobIdWithLog(null, 'WebSocket cleanup');
-          setProcessingStartTimeWithLog(null, 'WebSocket cleanup');
-          setError(data.error || 'Analysis failed');
-          toast.error('Analysis failed: ' + (data.error || 'Unknown error'));
-          localStorage.removeItem('currentAnalysisJob');
-        }
-      } else {
-        logDebug('WEBSOCKET', 'Job update for different job ignored', {
-          receivedJobId: data.jobId,
-          currentJobId
-        });
-      }
-    });
-
-    newSocket.on('jobStatus', (data) => {
-      logDebug('WEBSOCKET', 'Job status received', data);
-
-      // Handle job status responses (from getJobStatus requests)
-      if (data.jobId === currentJobId) {
-        if (data.status === 'not_found') {
-          logDebug('WEBSOCKET', 'Job not found, resetting state');
-          setIsAIProcessingWithLog(false, 'WebSocket job not found');
-          setCurrentJobIdWithLog(null, 'WebSocket cleanup');
-          setProcessingStartTimeWithLog(null, 'WebSocket cleanup');
-          setError('Analysis job not found - may have expired');
-          localStorage.removeItem('currentAnalysisJob');
-        } else if (data.status === 'completed' && data.resultsCount > 0) {
-          logDebug('WEBSOCKET', 'Job status shows completed, fetching results');
-          fetchJobResults(data.jobId);
-        } else {
-          // Update progress from status
-          setJobProgress(data.progress || 0);
-          setCurrentSymbol(data.currentSymbol);
-          setEstimatedRemainingTime(data.estimatedRemainingTime || 0);
-        }
-      }
-    });
-
-    newSocket.on('error', (error) => {
-      logDebug('WEBSOCKET', 'General error', { error });
-      setSocketError(`WebSocket error: ${error}`);
-    });
-
-    setSocket(newSocket);
-  };
-
-  // Fetch job results when analysis is completed
-  const fetchJobResults = async (jobId: string) => {
-    try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus'}/api/market/analysis-results/${jobId}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        const newSignals = result.data || [];
+      if (newSignals.length > 0) {
         setSignals(newSignals);
-        setCachedSignals(newSignals); // Cache the results
+        setCachedSignals(newSignals);
         setCacheTimestamp(new Date());
         setLastUpdate(new Date());
 
@@ -725,165 +532,44 @@ function ProfessionalSignalFeed({
 
         console.log(`✅ Analysis completed with ${newSignals.length} signals`);
       } else {
-        setError(result.error || 'Failed to fetch analysis results');
-      }
-    } catch (error) {
-      console.error('Error fetching job results:', error);
-      setError('Failed to fetch analysis results');
-    } finally {
-      setIsAIProcessingWithLog(false, 'Job results fetched');
-      setCurrentJobIdWithLog(null, 'Job completion cleanup');
-      setProcessingStartTimeWithLog(null, 'Job completion cleanup');
-      setLoading(false);
-
-      // Clear persisted job state on completion
-      localStorage.removeItem('currentAnalysisJob');
-      logDebug('STATE', 'Job completion cleanup finished');
-    }
-  };
-
-  const fetchSignals = async () => {
-    // Prevent new analysis during active AI processing
-    if (isAIProcessing) {
-      console.log('🔒 Analysis protection: Skipping refresh during AI processing');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError(null);
-      setHasInitialized(true);
-
-      // Start new job-based analysis
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus'}/api/market/start-professional-analysis`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          symbols,
-          minStrength
-        })
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        const jobId = result.data.jobId;
-        logDebug('STATE', 'Starting new analysis job', { jobId, symbols, minStrength });
-
-        setCurrentJobIdWithLog(jobId, 'New job started');
-        setIsAIProcessingWithLog(true, 'New job started');
-        setProcessingStartTimeWithLog(new Date(), 'New job started');
-        setJobProgress(5);
-
-        // Store job state for persistence across page refreshes
-        localStorage.setItem('currentAnalysisJob', JSON.stringify({
-          jobId,
-          startTime: new Date().getTime(),
-          symbols,
-          minStrength
-        }));
-
-        // Initialize WebSocket if not already connected
-        if (!socket) {
-          initializeWebSocket();
-        }
-
-        // Wait for WebSocket to be ready before subscribing
-        const subscribeToJob = () => {
-          if (socket && socketConnected) {
-            socket.emit('subscribeToJob', { jobId });
-            console.log(`📡 Subscribed to job ${jobId}`);
-          } else {
-            // Retry subscription after a short delay
-            setTimeout(subscribeToJob, 500);
-          }
-        };
-
-        subscribeToJob();
-
-        console.log(`🚀 Started analysis job ${jobId}`);
-      } else if (result.data?.isResumed) {
-        // Auto-resumed existing job
-        const existingJobId = result.data.jobId;
-        logDebug('STATE', 'Auto-resuming existing job', {
-          jobId: existingJobId,
-          progress: result.data.currentProgress
-        });
-
-        setCurrentJobIdWithLog(existingJobId, 'Auto-resume existing job');
-        setIsAIProcessingWithLog(true, 'Auto-resume existing job');
-        setProcessingStartTimeWithLog(new Date(), 'Auto-resume existing job');
-        setJobProgress(result.data.currentProgress || 5);
-
-        const subscribeToExistingJob = () => {
-          if (socket && socketConnected) {
-            socket.emit('subscribeToJob', { jobId: existingJobId });
-            console.log(`📡 Subscribed to resumed job ${existingJobId}`);
-          } else {
-            setTimeout(subscribeToExistingJob, 500);
-          }
-        };
-
-        subscribeToExistingJob();
-      } else {
-        throw new Error(result.error || 'Failed to start analysis');
+        console.log('⚠️ No signals generated - API may have returned empty/invalid data');
+        setError('No signals generated - check API connectivity');
       }
     } catch (err) {
-      logDebug('STATE', 'Error starting analysis', { error: err instanceof Error ? err.message : String(err) });
+      console.error('Error in fetchSignals:', err);
 
-      let errorMessage = 'Failed to start professional analysis';
+      let errorMessage = 'Failed to generate signals';
       if (err instanceof Error) {
-        if (err.message.includes('fetch')) {
-          errorMessage = 'Network error: Cannot connect to analysis service';
-        } else if (err.message.includes('WebSocket')) {
-          errorMessage = 'WebSocket connection failed: Real-time updates unavailable';
+        if (err.message.includes('fetch') || err.message.includes('NetworkError')) {
+          errorMessage = 'Network error: Cannot connect to API service';
         } else {
-          errorMessage = `Analysis error: ${err.message}`;
+          errorMessage = `API error: ${err.message}`;
         }
       }
 
       setError(errorMessage);
       toast.error(errorMessage);
+    } finally {
       setLoading(false);
-      setIsAIProcessingWithLog(false, 'Analysis start error');
     }
   };
 
-  // Analysis-aware refresh function
-  const protectedFetchSignals = async () => {
-    // Skip refresh if analysis is in progress
-    if (isAIProcessing) {
-      console.log('🔒 Analysis protection: Skipping refresh during AI processing');
-      return;
-    }
-
-    // Check if analysis timed out (more than 90 seconds)
-    if (processingStartTime) {
-      const elapsedTime = Date.now() - processingStartTime.getTime();
-      if (elapsedTime > 90000) { // 90 seconds timeout for 6 symbols
-        console.log('⏰ Analysis timeout detected, resetting...');
-        setIsAIProcessing(false);
-        setProcessingStartTime(null);
-      }
-    }
-
+  // Simple refresh function - no job protection needed
+  const refreshSignals = async () => {
     await fetchSignals();
   };
 
-  // Smart refresh integration with analysis protection - disabled by default
+  // Smart refresh integration - simplified
   const { enabled: refreshEnabled, interval: effectiveInterval, refreshFn } = useComponentRefresh(
     'ProfessionalSignalFeed',
     refreshInterval,
-    protectedFetchSignals
+    refreshSignals
   );
 
   const smartRefresh = useSmartRefresh({
-    refreshFn: protectedFetchSignals,
+    refreshFn: refreshSignals,
     interval: effectiveInterval,
-    enabled: false, // Disabled - use manual refresh for better performance
+    enabled: autoRefresh, // Use the autoRefresh prop
     pauseOnHover: true,
     pauseOnFocus: true,
     pauseOnInteraction: true,
@@ -903,159 +589,21 @@ function ProfessionalSignalFeed({
     return `${diffHours}h ago`;
   };
 
-  // Recover job state from localStorage
-  const recoverJobState = () => {
-    try {
-      const savedJob = localStorage.getItem('currentAnalysisJob');
-      if (savedJob) {
-        const jobData = JSON.parse(savedJob);
-        const elapsedTime = Date.now() - jobData.startTime;
-
-        logDebug('STATE', 'Attempting job state recovery', {
-          jobId: jobData.jobId,
-          elapsedTime,
-          maxAge: 120000
-        });
-
-        // Only recover if job is less than 2 minutes old
-        if (elapsedTime < 120000) {
-          logDebug('STATE', 'Recovering job state', { jobId: jobData.jobId });
-
-          setCurrentJobIdWithLog(jobData.jobId, 'Job state recovery');
-          setIsAIProcessingWithLog(true, 'Job state recovery');
-          setProcessingStartTimeWithLog(new Date(jobData.startTime), 'Job state recovery');
-          setJobProgress(Math.min(90, Math.floor(elapsedTime / 1000))); // Estimate progress
-
-          setDebugInfo((prev: any) => ({ ...prev, recoveryAttempts: prev.recoveryAttempts + 1 }));
-          return jobData.jobId;
-        } else {
-          logDebug('STATE', 'Job too old, cleaning up', { elapsedTime });
-          localStorage.removeItem('currentAnalysisJob');
-        }
-      } else {
-        logDebug('STATE', 'No saved job found');
-      }
-    } catch (error) {
-      logDebug('STATE', 'Job recovery failed', { error: error instanceof Error ? error.message : String(error) });
-      localStorage.removeItem('currentAnalysisJob');
-    }
-    return null;
-  };
-
-  // Initialize WebSocket on component mount
+  // Simple component initialization - load cached signals on mount
   useEffect(() => {
-    initializeWebSocket();
-
-    // Try to recover any existing job state first
-    const recoveredJobId = recoverJobState();
-
-    // If we recovered a job, set up WebSocket subscription after connection
-    if (recoveredJobId && socket) {
-      const setupRecoveredSubscription = () => {
-        if (socketConnected) {
-          socket.emit('subscribeToJob', { jobId: recoveredJobId });
-          socket.emit('getJobStatus', { jobId: recoveredJobId });
-          console.log(`🔄 Set up subscription for recovered job ${recoveredJobId}`);
-        } else {
-          // Retry in 1 second
-          setTimeout(setupRecoveredSubscription, 1000);
-        }
-      };
-      setupRecoveredSubscription();
-    } else {
-      // Load cached signals if no active job
-      loadCachedSignals();
-    }
-
-    return () => {
-      if (socket) {
-        socket.disconnect();
-      }
-    };
+    loadCachedSignals();
   }, []);
 
-  // Only load cache when dependencies change (no auto-analysis)
+  // Load cache when dependencies change
   useEffect(() => {
-    if (!isAIProcessing && hasInitialized) {
-      loadCachedSignals(); // Only load cache, don't start new analysis
+    if (hasInitialized) {
+      loadCachedSignals();
     }
   }, [symbols, minStrength]);
 
-  // Health check monitoring during processing
-  useEffect(() => {
-    if (!isAIProcessing || !currentJobId) return;
-
-    logDebug('HEALTH', 'Starting health check monitoring');
-
-    // Immediate health check
-    performHealthCheck();
-
-    // Periodic health checks every 30 seconds during processing
-    const healthCheckInterval = setInterval(() => {
-      performHealthCheck();
-    }, 30000);
-
-    return () => {
-      logDebug('HEALTH', 'Stopping health check monitoring');
-      clearInterval(healthCheckInterval);
-    };
-  }, [isAIProcessing, currentJobId]);
-
-  // Timeout protection for stuck analysis (dual timeout system)
-  useEffect(() => {
-    if (!isAIProcessing || !processingStartTime) return;
-
-    logDebug('TIMEOUT', 'Setting up timeout protection', {
-      startTime: processingStartTime.toISOString()
-    });
-
-    // Primary timeout at 90 seconds
-    const primaryTimeoutId = setTimeout(() => {
-      const elapsedTime = Date.now() - processingStartTime.getTime();
-      if (elapsedTime > 90000 && isAIProcessing) {
-        logDebug('TIMEOUT', 'Primary timeout triggered (90s)', { elapsedTime });
-        setIsAIProcessingWithLog(false, 'Primary timeout (90s)');
-        setProcessingStartTimeWithLog(null, 'Primary timeout');
-        setError('Analysis timed out after 90 seconds - please try again');
-        toast.error('Analysis timed out - please try again');
-        localStorage.removeItem('currentAnalysisJob');
-      }
-    }, 90000);
-
-    // Secondary timeout at 120 seconds (failsafe)
-    const secondaryTimeoutId = setTimeout(() => {
-      const elapsedTime = Date.now() - processingStartTime.getTime();
-      if (elapsedTime > 120000 && isAIProcessing) {
-        logDebug('TIMEOUT', 'Secondary failsafe timeout triggered (120s)', { elapsedTime });
-        setIsAIProcessingWithLog(false, 'Secondary failsafe timeout (120s)');
-        setProcessingStartTimeWithLog(null, 'Secondary timeout');
-        setCurrentJobIdWithLog(null, 'Secondary timeout');
-        setError('Analysis stuck - system reset');
-        toast.error('Analysis was stuck - system has been reset');
-        localStorage.removeItem('currentAnalysisJob');
-
-        // Force cleanup backend
-        fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus'}/api/market/force-cleanup`, {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-        }).catch(err => logDebug('TIMEOUT', 'Force cleanup failed', { error: err.message }));
-      }
-    }, 120000);
-
-    return () => {
-      logDebug('TIMEOUT', 'Clearing timeout protection');
-      clearTimeout(primaryTimeoutId);
-      clearTimeout(secondaryTimeoutId);
-    };
-  }, [isAIProcessing, processingStartTime]);
-
-  // Manual refresh with protection
+  // Simple manual refresh function
   const handleManualRefresh = () => {
-    if (isAIProcessing) {
-      console.log('⚠️ Manual refresh blocked - Analysis in progress');
-      return;
-    }
-    protectedFetchSignals();
+    refreshSignals();
   };
 
   // Start analysis manually
@@ -1092,106 +640,36 @@ function ProfessionalSignalFeed({
     return signals.length > 0 && lastUpdate && (Date.now() - lastUpdate.getTime()) < 10 * 60 * 1000; // 10 minutes
   };
 
-  // Cancel current analysis
-  const handleCancelAnalysis = async () => {
-    if (!currentJobId) return;
+  // No cancellation needed with direct API calls
 
-    try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus'}/api/market/analysis/${currentJobId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        setIsAIProcessing(false);
-        setCurrentJobId(null);
-        setProcessingStartTime(null);
-        setJobProgress(0);
-        setCurrentSymbol(undefined);
-        toast.success('Analysis cancelled successfully');
-        console.log('❌ Analysis cancelled by user');
-      } else {
-        toast.error('Failed to cancel analysis');
-      }
-    } catch (error) {
-      console.error('Error cancelling analysis:', error);
-      toast.error('Failed to cancel analysis');
-    }
-  };
-
-  // Force reset stuck analysis state
+  // Simple reset function for clearing errors and cache
   const handleForceReset = async () => {
-    try {
-      logDebug('STATE', 'Starting force reset', {
-        currentJobId,
-        isProcessing: isAIProcessing,
-        elapsedTime: processingStartTime ? Date.now() - processingStartTime.getTime() : 0
-      });
+    logDebug('STATE', 'Clearing all state and cache');
 
-      setIsAIProcessingWithLog(false, 'Force reset');
-      setCurrentJobIdWithLog(null, 'Force reset');
-      setProcessingStartTimeWithLog(null, 'Force reset');
-      setJobProgress(0);
-      setCurrentSymbol(undefined);
-      setError(null);
-      setLoading(false);
+    setError(null);
+    setLoading(false);
+    setSignals([]);
+    setCachedSignals([]);
+    setCacheTimestamp(null);
+    setLastUpdate(null);
+    setIsAIProcessing(false);
+    setProcessingStartTime(null);
 
-      // Clear any stored job state
-      localStorage.removeItem('currentAnalysisJob');
-      logDebug('STATE', 'Cleared localStorage');
+    // Clear any old job state from previous version
+    localStorage.removeItem('currentAnalysisJob');
 
-      // Reset debug info
-      setDebugInfo({
-        stateChanges: [],
-        webSocketEvents: [],
-        timeouts: [],
-        lastHealthCheck: null,
-        recoveryAttempts: 0
-      });
+    // Reset debug info
+    setDebugInfo({
+      apiCalls: [],
+      lastAnalysis: null,
+      errorCount: 0
+    });
 
-      // Try to cleanup backend state
-      try {
-        logDebug('STATE', 'Attempting backend cleanup');
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://scalping.backend.mariposa.plus'}/api/market/force-cleanup`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          }
-        });
-        const result = await response.json();
-        logDebug('STATE', 'Backend cleanup response', result);
-      } catch (cleanupError) {
-        logDebug('STATE', 'Backend cleanup failed', { error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) });
-      }
-
-      // Reinitialize WebSocket connection
-      if (socket) {
-        logDebug('WEBSOCKET', 'Reinitializing WebSocket after force reset');
-        socket.disconnect();
-        setTimeout(initializeWebSocket, 1000);
-      }
-
-      toast.success('Analysis state reset successfully - you can start a new analysis');
-      logDebug('STATE', 'Force reset completed successfully');
-    } catch (error) {
-      logDebug('STATE', 'Error during force reset', { error: error instanceof Error ? error.message : String(error) });
-      toast.error('Reset completed with warnings');
-    }
+    toast.success('System reset successfully');
+    console.log('🔄 Simple reset completed');
   };
 
-  // Detect if analysis appears stuck
-  const isAnalysisStuck = () => {
-    if (!isAIProcessing || !processingStartTime) return false;
-    const elapsedTime = Date.now() - processingStartTime.getTime();
-    const progressPerSecond = jobProgress / (elapsedTime / 1000);
-
-    // Consider stuck if no progress for 30 seconds or very slow progress
-    return elapsedTime > 30000 && (progressPerSecond < 0.5 || jobProgress < 10);
-  };
+  // No stuck detection needed with direct API calls
 
   const filteredSignals = signals.filter(signal => {
     if (selectedCategory && signal.category !== selectedCategory) return false;
@@ -1215,10 +693,10 @@ function ProfessionalSignalFeed({
                     🔒 Analysis protected from refresh
                   </span>
                 ) : (
-                  'Real-time analysis'
+                  'Direct API analysis'
                 )} •
-                <span className={`font-medium ${socketConnected ? 'text-green-600' : socketError ? 'text-red-600' : 'text-yellow-600'}`}>
-                  {socketConnected ? '🟢 Connected' : socketError ? '🔴 Connection error' : '🟡 Connecting...'}
+                <span className={`font-medium ${error ? 'text-red-600' : signals.length > 0 ? 'text-green-600' : 'text-gray-600'}`}>
+                  {error ? '🔴 API Error' : signals.length > 0 ? '🟢 Ready' : '⚪ Standby'}
                 </span>
               </p>
             </div>
@@ -1324,60 +802,13 @@ function ProfessionalSignalFeed({
           </div>
         )}
 
-        {isAIProcessing && processingStartTime && (
-          <div className="mb-4 bg-orange-50 border-l-4 border-orange-400 p-4 rounded">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-3 h-3 bg-orange-400 rounded-full animate-pulse"></div>
-              <span className="text-orange-800 font-medium text-sm">
-                🔒 Analysis Protected - Refresh temporarily disabled
+        {loading && (
+          <div className="mb-4 bg-blue-50 border-l-4 border-blue-400 p-4 rounded">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 bg-blue-400 rounded-full animate-pulse"></div>
+              <span className="text-blue-800 font-medium text-sm">
+                📊 Analyzing market data via direct API...
               </span>
-            </div>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-orange-800 font-medium">Analysis Progress</span>
-                <span className="text-orange-600 text-sm">{jobProgress}%</span>
-              </div>
-
-              <div className="w-full bg-orange-200 rounded-full h-3">
-                <div
-                  className="bg-orange-500 h-3 rounded-full transition-all duration-500"
-                  style={{ width: `${jobProgress}%` }}
-                />
-              </div>
-
-              {currentSymbol && (
-                <div className="text-sm text-orange-700">
-                  Currently analyzing: <span className="font-medium">{currentSymbol}</span>
-                </div>
-              )}
-
-              <div className="flex justify-between items-center text-xs text-orange-600">
-                <span>Job ID: {currentJobId?.slice(0, 8)}...</span>
-                <div className="flex items-center gap-2">
-                  <span>Est. {estimatedRemainingTime}s remaining</span>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={handleCancelAnalysis}
-                      className="px-2 py-1 bg-red-100 text-red-600 rounded text-xs hover:bg-red-200 transition-colors"
-                      title="Cancel Analysis"
-                    >
-                      Cancel
-                    </button>
-                    {isAnalysisStuck() && (
-                      <button
-                        onClick={handleForceReset}
-                        className="px-2 py-1 bg-yellow-100 text-yellow-700 rounded text-xs hover:bg-yellow-200 transition-colors animate-pulse"
-                        title="Force Reset Stuck Analysis"
-                      >
-                        🔄 Reset
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="text-xs text-orange-700 mt-2">
-              Analysis will complete without interruption. Auto-refresh will resume afterwards.
             </div>
           </div>
         )}
@@ -1393,10 +824,10 @@ function ProfessionalSignalFeed({
               🔍 Debug Info {showDebugPanel ? '▼' : '▶'}
             </button>
             <div className="text-xs text-gray-500">
-              Processing: {isAIProcessing ? '✅' : '❌'} |
-              Socket: {socketConnected ? '🟢' : '🔴'} |
-              Job: {currentJobId ? currentJobId.slice(0, 8) : 'None'} |
-              Recovery: {debugInfo.recoveryAttempts}
+              Loading: {loading ? '✅' : '❌'} |
+              Signals: {signals.length} |
+              Error: {error ? '🔴' : '🟢'} |
+              API Calls: {debugInfo.apiCalls?.length || 0}
             </div>
           </div>
 
@@ -1407,65 +838,59 @@ function ProfessionalSignalFeed({
                 <div className="bg-white rounded p-3 border">
                   <h4 className="font-medium text-gray-900 mb-2">Current State</h4>
                   <div className="text-xs space-y-1">
-                    <div><span className="font-medium">Processing:</span> {isAIProcessing ? '✅' : '❌'}</div>
-                    <div><span className="font-medium">Job ID:</span> {currentJobId || 'None'}</div>
-                    <div><span className="font-medium">Progress:</span> {jobProgress}%</div>
-                    <div><span className="font-medium">Symbol:</span> {currentSymbol || 'None'}</div>
-                    <div><span className="font-medium">Socket:</span> {socketConnected ? '🟢 Connected' : '🔴 Disconnected'}</div>
-                    <div><span className="font-medium">Error:</span> {socketError || 'None'}</div>
+                    <div><span className="font-medium">Loading:</span> {loading ? '✅' : '❌'}</div>
+                    <div><span className="font-medium">Signals:</span> {signals.length}</div>
                     <div><span className="font-medium">Cache:</span> {cachedSignals.length} signals</div>
-                    <div><span className="font-medium">Last Health:</span> {debugInfo.lastHealthCheck ? new Date(debugInfo.lastHealthCheck).toLocaleTimeString() : 'Never'}</div>
+                    <div><span className="font-medium">Error:</span> {error || 'None'}</div>
+                    <div><span className="font-medium">Last Update:</span> {lastUpdate ? lastUpdate.toLocaleTimeString() : 'Never'}</div>
+                    <div><span className="font-medium">API Calls:</span> {debugInfo.apiCalls?.length || 0}</div>
                   </div>
                 </div>
 
-                {/* Recent State Changes */}
+                {/* Recent API Calls */}
                 <div className="bg-white rounded p-3 border">
-                  <h4 className="font-medium text-gray-900 mb-2">Recent State Changes</h4>
+                  <h4 className="font-medium text-gray-900 mb-2">Recent API Calls</h4>
                   <div className="text-xs space-y-1 max-h-32 overflow-y-auto">
-                    {debugInfo.stateChanges.slice(-5).reverse().map((change: any, i: number) => (
+                    {debugInfo.apiCalls?.slice(-5).reverse().map((call: any, i: number) => (
                       <div key={i} className="border-b border-gray-100 pb-1">
-                        <div className="font-medium text-blue-600">{change.message}</div>
-                        <div className="text-gray-500">{new Date(change.timestamp).toLocaleTimeString()}</div>
-                        {change.data?.reason && <div className="text-gray-400">{change.data.reason}</div>}
+                        <div className="font-medium text-blue-600">{call.message}</div>
+                        <div className="text-gray-500">{new Date(call.timestamp).toLocaleTimeString()}</div>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {/* WebSocket Events */}
+                {/* Component Health */}
                 <div className="bg-white rounded p-3 border">
-                  <h4 className="font-medium text-gray-900 mb-2">WebSocket Events</h4>
-                  <div className="text-xs space-y-1 max-h-32 overflow-y-auto">
-                    {debugInfo.webSocketEvents.slice(-5).reverse().map((event: any, i: number) => (
-                      <div key={i} className="border-b border-gray-100 pb-1">
-                        <div className="font-medium text-green-600">{event.message}</div>
-                        <div className="text-gray-500">{new Date(event.timestamp).toLocaleTimeString()}</div>
-                      </div>
-                    ))}
+                  <h4 className="font-medium text-gray-900 mb-2">Component Health</h4>
+                  <div className="text-xs space-y-1">
+                    <div><span className="font-medium">Status:</span> {error ? '🔴 Error' : signals.length > 0 ? '🟢 Active' : '🟡 Ready'}</div>
+                    <div><span className="font-medium">Cache Age:</span> {cacheTimestamp ? Math.round((Date.now() - cacheTimestamp.getTime()) / 1000) + 's' : 'N/A'}</div>
+                    <div><span className="font-medium">Auto Refresh:</span> {autoRefresh ? '✅' : '❌'}</div>
                   </div>
                 </div>
               </div>
 
-              {/* Timing Information */}
-              {processingStartTime && (
+              {/* System Information */}
+              {lastUpdate && (
                 <div className="bg-white rounded p-3 border">
-                  <h4 className="font-medium text-gray-900 mb-2">Timing Information</h4>
+                  <h4 className="font-medium text-gray-900 mb-2">Last Analysis</h4>
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
                     <div>
-                      <span className="font-medium">Started:</span><br />
-                      {processingStartTime.toLocaleTimeString()}
+                      <span className="font-medium">Time:</span><br />
+                      {lastUpdate.toLocaleTimeString()}
                     </div>
                     <div>
-                      <span className="font-medium">Elapsed:</span><br />
-                      {Math.round((Date.now() - processingStartTime.getTime()) / 1000)}s
+                      <span className="font-medium">Signals:</span><br />
+                      {signals.length} found
                     </div>
                     <div>
-                      <span className="font-medium">Remaining:</span><br />
-                      {estimatedRemainingTime}s
+                      <span className="font-medium">Symbols:</span><br />
+                      {symbols.length}
                     </div>
                     <div>
-                      <span className="font-medium">Progress Rate:</span><br />
-                      {processingStartTime ? safeNumber.toFixed(jobProgress / ((Date.now() - processingStartTime.getTime()) / 1000), 2) : '0'}%/s
+                      <span className="font-medium">Cache Valid:</span><br />
+                      {hasRecentData() ? '✅' : '❌'}
                     </div>
                   </div>
                 </div>
@@ -1501,14 +926,6 @@ function ProfessionalSignalFeed({
                   >
                     Emergency Reset
                   </button>
-                  {isAIProcessing && (
-                    <button
-                      onClick={performHealthCheck}
-                      className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded hover:bg-green-200"
-                    >
-                      Manual Health Check
-                    </button>
-                  )}
                 </div>
               </div>
             </div>
