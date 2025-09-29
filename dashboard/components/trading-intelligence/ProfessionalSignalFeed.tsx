@@ -69,6 +69,14 @@ interface TradingSignal {
     llmConsensus: Record<string, string>;
     confidenceLevel: number;
   };
+  advancedLLMData?: {
+    llmConsensus: Record<string, any>;
+    actionPlan: any;
+    opportunitySignals: any[];
+    marketContext: any;
+    confidenceLevel: number;
+    urgency: 'HIGH' | 'MEDIUM' | 'LOW';
+  };
 }
 
 interface ProfessionalSignalFeedProps {
@@ -150,76 +158,42 @@ function ProfessionalSignalFeed({
     }));
   };
 
-  // Crypto-trading-analyst agent integration
-  const enhanceWithAgentAnalysis = async (backendSignals: TradingSignal[]): Promise<TradingSignal[]> => {
+
+
+
+  // Simplified state management - no complex job tracking needed
+
+  const generateRealTradingSignals = async (): Promise<TradingSignal[]> => {
     try {
-      console.log('🤖 Enhancing signals with crypto-trading-analyst agent...');
-      logDebug('AGENT', 'Starting agent analysis', { symbolCount: symbols.length, backendSignals: backendSignals.length });
+      console.log('🚀 Starting advanced multi-LLM analysis...');
+      logDebug('API', 'Calling advanced LLM analysis', { symbols, minStrength });
 
-      // Get all available agents
-      const agentsResponse = await agentApi.getAgents();
-      if (!agentsResponse.success) {
-        console.warn('⚠️ Could not fetch agents, proceeding without agent enhancement');
-        return backendSignals;
+      // Call the new advanced LLM analysis endpoint
+      const analysisResponse = await marketApi.getAdvancedLLMAnalysis(symbols, {
+        minStrength,
+        analysisDepth: 'comprehensive',
+        strategy: 'multi_confluence'
+      });
+
+      if (!analysisResponse.success) {
+        console.warn('❌ Advanced LLM analysis API failed:', analysisResponse.error);
+        throw new Error(analysisResponse.error || 'Failed to fetch advanced LLM analysis');
       }
 
-      // Find crypto-trading-analyst agent
-      const agents = agentsResponse.data || [];
-      const tradingAgent = agents.find((agent: any) =>
-        agent.name?.toLowerCase().includes('crypto-trading-analyst') ||
-        agent.type?.toLowerCase().includes('trading')
-      );
+      const analysisData = analysisResponse.data || [];
+      console.log(`✅ Received ${analysisData.length} advanced LLM analyses from API`);
 
-      if (!tradingAgent) {
-        console.warn('⚠️ Crypto-trading-analyst agent not found, proceeding without agent enhancement');
-        return backendSignals;
+      if (analysisData.length === 0) {
+        console.warn('⚠️ No analysis returned from advanced LLM API');
+        return [];
       }
 
-      console.log(`🎯 Found trading agent: ${tradingAgent.name} (ID: ${tradingAgent.id})`);
+      // Convert advanced LLM analysis to trading signals
+      const signals = convertAdvancedAnalysisToSignals(analysisData);
 
-      // Analyze each symbol with the agent
-      const agentEnhancedSignals: TradingSignal[] = [];
+      console.log(`🎯 Generated ${signals.length} enhanced trading signals with 4-LLM consensus`);
 
-      for (const symbol of symbols.slice(0, 6)) { // Limit to 6 symbols for performance
-        try {
-          console.log(`🔍 Agent analyzing ${symbol}...`);
-
-          // Request agent analysis for this symbol
-          const analysisRequest = {
-            symbol,
-            action: 'analyze',
-            includeBindanceData: true,
-            llmModels: ['meta-llama/Llama-3.1-8B-Instruct-Turbo', 'meta-llama/Llama-3.1-70B-Instruct-Turbo', 'mistralai/Mixtral-8x7B-Instruct-v0.1'],
-            analysisType: 'comprehensive',
-            timeframes: ['1m', '5m', '15m', '1h'],
-            indicators: ['RSI', 'MACD', 'EMA', 'Bollinger', 'Volume']
-          };
-
-          // Call agent for analysis (this might need to be adapted based on your agent API structure)
-          const agentAnalysis = await performAgentAnalysis(tradingAgent.id, analysisRequest);
-
-          if (agentAnalysis) {
-            // Convert agent analysis to signal format
-            const agentSignal = convertAgentAnalysisToSignal(symbol, agentAnalysis);
-            if (agentSignal) {
-              agentEnhancedSignals.push(agentSignal);
-            }
-          }
-
-          // Small delay between symbols to avoid overwhelming the agent
-          await new Promise(resolve => setTimeout(resolve, 500));
-
-        } catch (error) {
-          console.warn(`⚠️ Agent analysis failed for ${symbol}:`, error);
-        }
-      }
-
-      // Merge backend signals with agent signals
-      const mergedSignals = mergeSignals(backendSignals, agentEnhancedSignals);
-
-      console.log(`✅ Enhanced analysis complete: ${backendSignals.length} backend + ${agentEnhancedSignals.length} agent = ${mergedSignals.length} total`);
-
-      return mergedSignals
+      return signals
         .sort((a, b) => {
           const priorityOrder = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
           if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
@@ -230,287 +204,70 @@ function ProfessionalSignalFeed({
         .slice(0, maxSignals);
 
     } catch (error) {
-      console.error('❌ Agent enhancement failed:', error);
-      return backendSignals; // Return original signals on agent failure
+      console.error('❌ Error in advanced LLM analysis:', error);
+      logDebug('API', 'Advanced LLM analysis error', { error: error instanceof Error ? error.message : String(error) });
+
+      // Fallback: Return empty array to show error message
+      return [];
     }
   };
 
-  // Helper functions for agent analysis
-  const performAgentAnalysis = async (agentId: string, request: any) => {
-    try {
-      console.log(`🤖 Requesting crypto-trading-analyst analysis for ${request.symbol}...`);
-
-      // Use the Task tool to get real LLM analysis from crypto-trading-analyst
-      const analysisPrompt = `Please provide a comprehensive trading analysis for ${request.symbol} including:
-
-1. Current price action analysis
-2. Technical indicators (RSI, MACD, EMA, Bollinger Bands)
-3. Clear BUY/SELL/HOLD recommendation with confidence level
-4. Entry price, target price, and stop loss levels
-5. Risk/reward ratio
-6. Expected return percentage
-7. Reasoning for the recommendation
-8. Multi-timeframe analysis (${request.timeframes.join(', ')})
-
-Please respond with structured JSON data including:
-- recommendation: "BUY" | "SELL" | "HOLD"
-- confidence: 0.0-1.0
-- strength: 0-100
-- entry: number
-- target: number
-- stopLoss: number
-- expectedReturn: number (percentage)
-- riskLevel: "LOW" | "MEDIUM" | "HIGH"
-- reasoning: string
-- technicalFactors: object with RSI, volume, trend data
-
-Focus on ${request.analysisType} analysis using Binance live data and the specified indicators: ${request.indicators.join(', ')}. Use TogetherAI models (${request.llmModels.join(', ')}) for enhanced reasoning and cost-effective analysis.`;
-
-      // For now, return a structured analysis based on the crypto-trading-analyst pattern
-      // In a real implementation, you'd call the Task tool here to get live analysis
-      const analysis = await getCryptoAnalysis(request.symbol, analysisPrompt);
-
-      return analysis;
-    } catch (error) {
-      console.error(`Agent analysis failed for ${request.symbol}:`, error);
-      return null;
-    }
-  };
-
-  const getCryptoAnalysis = async (symbol: string, prompt: string) => {
-    try {
-      // This would ideally use the Task tool to call crypto-trading-analyst
-      // For now, return professionally structured analysis based on market patterns
-
-      // Base prices for realistic calculations
-      const basePrices: { [key: string]: number } = {
-        'BTCUSDT': 114000,
-        'ETHUSDT': 2650,
-        'SOLUSDT': 142,
-        'PUMPUSDT': 0.0031,
-        'TRXUSDT': 0.435,
-        'ADAUSDT': 1.15
-      };
-
-      const basePrice = basePrices[symbol] || 100;
-
-      // Professional analysis structure based on real trading patterns
-      const analysisVariants: { [key: string]: any } = {
-        'BTCUSDT': {
-          recommendation: 'HOLD',
-          confidence: 0.65,
-          strength: 72,
-          riskLevel: 'MEDIUM',
-          expectedReturn: 4.3,
-          reasoning: 'Mixed technical signals with oversold RSI suggesting potential bounce, but descending channel pattern indicates continued bearish pressure. TogetherAI multi-model consensus shows cautious optimism.',
-          technicalFactors: {
-            rsi: 28, // Oversold
-            volume: 'HIGH',
-            trend: 'NEUTRAL_BEARISH'
-          }
-        },
-        'ETHUSDT': {
-          recommendation: 'BUY',
-          confidence: 0.78,
-          strength: 83,
-          riskLevel: 'MEDIUM',
-          expectedReturn: 6.2,
-          reasoning: 'Strong technical confluence with RSI divergence and volume spike. Multi-timeframe alignment suggests upward momentum continuation.',
-          technicalFactors: {
-            rsi: 58,
-            volume: 'HIGH',
-            trend: 'BULLISH'
-          }
-        },
-        'SOLUSDT': {
-          recommendation: 'BUY',
-          confidence: 0.72,
-          strength: 76,
-          riskLevel: 'HIGH',
-          expectedReturn: 8.1,
-          reasoning: 'Breakout above key resistance with strong volume confirmation. LLM models show bullish consensus on ecosystem growth.',
-          technicalFactors: {
-            rsi: 67,
-            volume: 'VERY_HIGH',
-            trend: 'BULLISH'
-          }
-        }
-      };
-
-      const analysis = analysisVariants[symbol] || {
-        recommendation: 'HOLD',
-        confidence: 0.60,
-        strength: 65,
-        riskLevel: 'MEDIUM',
-        expectedReturn: 3.5,
-        reasoning: `TogetherAI multi-model analysis shows mixed signals for ${symbol}. Waiting for clearer directional confirmation.`,
-        technicalFactors: {
-          rsi: 50,
-          volume: 'MEDIUM',
-          trend: 'NEUTRAL'
-        }
-      };
-
-      // Calculate realistic price levels
-      const entry = basePrice;
-      let target, stopLoss;
-
-      if (analysis.recommendation === 'BUY') {
-        target = entry * (1 + analysis.expectedReturn / 100);
-        stopLoss = entry * (1 - 0.035); // 3.5% stop loss
-      } else if (analysis.recommendation === 'SELL') {
-        target = entry * (1 - analysis.expectedReturn / 100);
-        stopLoss = entry * (1 + 0.035);
-      } else {
-        target = entry;
-        stopLoss = entry * 0.97;
-      }
-
-      return {
-        ...analysis,
-        symbol,
-        entry,
-        target,
-        stopLoss,
-        llmConsensus: {
-          'llama-3.1-8b': analysis.recommendation,
-          'llama-3.1-70b': analysis.recommendation,
-          'mixtral-8x7b': analysis.recommendation === 'HOLD' ? (Math.random() > 0.5 ? 'BUY' : 'SELL') : analysis.recommendation
-        }
-      };
-
-    } catch (error) {
-      console.error(`Failed to get crypto analysis for ${symbol}:`, error);
-      return null;
-    }
-  };
-
-  const convertAgentAnalysisToSignal = (symbol: string, analysis: any): TradingSignal | null => {
-    try {
-      // Use the entry price from analysis
-      const entry = analysis.entry;
-
-      // Use the target and stopLoss from analysis
-      const expectedReturn = analysis.expectedReturn || 3;
-      const target = analysis.target;
-      const stopLoss = analysis.stopLoss;
-
-      const riskReward = Math.abs(target - entry) / Math.abs(entry - stopLoss);
-
+  // Convert advanced LLM analysis response to trading signals
+  const convertAdvancedAnalysisToSignals = (analysisData: any[]): TradingSignal[] => {
+    return analysisData.map((analysis: any) => {
       const signal: TradingSignal = {
-        id: `agent-${symbol}-${Date.now()}`,
-        symbol,
-        type: analysis.recommendation as 'BUY' | 'SELL' | 'HOLD',
-        strength: analysis.strength || 75,
-        confidence: analysis.confidence || 0.75,
+        id: `llm-${analysis.symbol}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        symbol: analysis.symbol,
+        type: analysis.consensus?.action as 'BUY' | 'SELL' | 'HOLD',
+        strength: analysis.consensus?.strength || 75,
+        confidence: analysis.consensus?.confidence || 0.75,
         timeframe: '15m',
-        entry,
-        target,
-        stopLoss,
-        riskReward,
-        expectedReturn,
+        entry: analysis.action_plan?.entry_price || 0,
+        target: analysis.action_plan?.target_prices?.[0] || 0,
+        stopLoss: analysis.action_plan?.stop_loss || 0,
+        riskReward: analysis.action_plan?.risk_reward || 1,
+        expectedReturn: ((analysis.action_plan?.target_prices?.[0] || 0) - (analysis.action_plan?.entry_price || 0)) / (analysis.action_plan?.entry_price || 1) * 100,
         category: 'AI_PREDICTION',
         indicators: {
-          rsi: analysis.technicalFactors?.rsi || 50,
-          macd: analysis.technicalFactors?.trend === 'BULLISH' ? 'BULLISH' : 'BEARISH',
-          ema: analysis.technicalFactors?.trend === 'BULLISH' ? 'BULLISH' : 'BEARISH',
-          volume: analysis.technicalFactors?.volume || 'MEDIUM',
-          support: Math.random() > 0.5,
-          resistance: Math.random() > 0.5
+          rsi: analysis.market_context?.indicators?.rsi || 50,
+          macd: analysis.market_context?.trend === 'BULLISH' ? 'BULLISH' : 'BEARISH',
+          ema: analysis.market_context?.trend === 'BULLISH' ? 'BULLISH' : 'BEARISH',
+          volume: analysis.market_context?.volume || 'MEDIUM',
+          support: analysis.market_context?.key_levels?.support?.length > 0,
+          resistance: analysis.market_context?.key_levels?.resistance?.length > 0
         },
-        reasoning: analysis.reasoning || `AI-powered analysis suggests ${analysis.recommendation} signal`,
-        timestamp: new Date().toISOString(),
-        priority: analysis.strength > 85 ? 'HIGH' : analysis.strength > 75 ? 'MEDIUM' : 'LOW',
+        reasoning: analysis.llm_analysis?.llama_405b?.reasoning || analysis.consensus?.reasoning || `Advanced 4-LLM consensus suggests ${analysis.consensus?.action} signal`,
+        timestamp: analysis.timestamp || new Date().toISOString(),
+        priority: analysis.consensus?.urgency === 'HIGH' ? 'CRITICAL' :
+                 analysis.consensus?.urgency === 'MEDIUM' ? 'HIGH' :
+                 analysis.consensus?.strength > 85 ? 'HIGH' :
+                 analysis.consensus?.strength > 75 ? 'MEDIUM' : 'LOW',
         source: 'AI_AGENT',
-        marketCondition: 'TRENDING',
+        marketCondition: analysis.market_context?.trend === 'BULLISH' ? 'TRENDING' :
+                        analysis.market_context?.trend === 'BEARISH' ? 'TRENDING' :
+                        analysis.market_context?.trend === 'VOLATILE' ? 'VOLATILE' :
+                        'RANGING',
         followUp: {
-          checkIn: '10 minutes',
-          exitStrategy: analysis.recommendation === 'BUY' ? 'Scale out at targets' : 'Cover at targets',
-          riskManagement: `Agent-recommended ${analysis.riskLevel || 'MEDIUM'} risk position`
+          checkIn: analysis.action_plan?.time_horizon || '1 hour',
+          exitStrategy: analysis.action_plan?.target_prices?.length > 1 ?
+                       `Scale out at ${analysis.action_plan.target_prices.length} target levels` :
+                       'Take profit at target level',
+          riskManagement: `Position size: ${analysis.action_plan?.position_size || '2-3% of portfolio'}`
         },
-        agentData: {
-          agentName: 'crypto-trading-analyst',
-          llmConsensus: analysis.llmConsensus,
-          confidenceLevel: analysis.confidence
+        // Enhanced data for advanced LLM analysis
+        advancedLLMData: {
+          llmConsensus: analysis.llm_analysis || {},
+          actionPlan: analysis.action_plan || {},
+          opportunitySignals: analysis.opportunity_signals || [],
+          marketContext: analysis.market_context || {},
+          confidenceLevel: analysis.consensus?.confidence || 0,
+          urgency: analysis.consensus?.urgency || 'MEDIUM'
         }
       };
 
       return signal;
-    } catch (error) {
-      console.error(`Failed to convert agent analysis for ${symbol}:`, error);
-      return null;
-    }
+    }).filter(signal => signal.entry > 0 && signal.target > 0); // Filter out invalid signals
   };
-
-  const mergeSignals = (backendSignals: TradingSignal[], agentSignals: TradingSignal[]): TradingSignal[] => {
-    const merged = [...backendSignals];
-
-    // Add agent signals, avoiding duplicates by symbol
-    for (const agentSignal of agentSignals) {
-      const existingIndex = merged.findIndex(s => s.symbol === agentSignal.symbol);
-
-      if (existingIndex >= 0) {
-        // Merge with existing signal, prioritizing higher confidence
-        const existing = merged[existingIndex];
-        if (agentSignal.confidence > existing.confidence) {
-          // Enhance existing signal with agent data
-          merged[existingIndex] = {
-            ...existing,
-            confidence: Math.max(existing.confidence, agentSignal.confidence),
-            reasoning: `${existing.reasoning} • ${agentSignal.reasoning}`,
-            agentData: agentSignal.agentData,
-            priority: agentSignal.strength > existing.strength ? agentSignal.priority : existing.priority
-          };
-        }
-      } else {
-        // Add new agent signal
-        merged.push(agentSignal);
-      }
-    }
-
-    return merged;
-  };
-
-
-  // Simplified state management - no complex job tracking needed
-
-  const generateRealTradingSignals = async (): Promise<TradingSignal[]> => {
-    try {
-      console.log('📊 Fetching professional signals from backend API...');
-      logDebug('API', 'Calling getProfessionalSignals', { symbols, minStrength });
-
-      // Use the correct professional signals endpoint
-      const signalsResponse = await marketApi.getProfessionalSignals(symbols, minStrength);
-
-      if (!signalsResponse.success) {
-        console.warn('❌ Professional signals API failed:', signalsResponse.error);
-        throw new Error(signalsResponse.error || 'Failed to fetch professional signals');
-      }
-
-      const signals = signalsResponse.data || [];
-      console.log(`✅ Received ${signals.length} professional signals from API`);
-
-      if (signals.length === 0) {
-        console.warn('⚠️ No signals returned from professional signals API');
-        // Try to enhance with crypto-trading-analyst if no backend signals
-        return await enhanceWithAgentAnalysis([]);
-      }
-
-      // Enhance existing signals with crypto-trading-analyst
-      return await enhanceWithAgentAnalysis(signals);
-
-    } catch (error) {
-      console.error('❌ Error fetching professional signals:', error);
-      logDebug('API', 'Professional signals error', { error: error instanceof Error ? error.message : String(error) });
-
-      // Fallback: Try agent-only analysis
-      return await enhanceWithAgentAnalysis([]);
-    }
-  };
-
-  // Old signal generation removed - now using professional signals API + agent enhancement
-
-  // All signal generation helper functions removed - using backend API + agent analysis
 
   // Old reasoning functions removed - signals now come with reasoning from API/agent
 
@@ -829,38 +586,49 @@ Focus on ${request.analysisType} analysis using Binance live data and the specif
               </div>
             </div>
 
-            {/* Multi-LLM Processing Status */}
+            {/* Advanced Multi-LLM Processing Status */}
             <div className="bg-purple-50 border-l-4 border-purple-400 p-4 rounded">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-purple-400 rounded-full animate-pulse"></div>
                   <span className="text-purple-800 font-medium text-sm">
-                    🤖 Multi-LLM Analysis in Progress
+                    🧠 Advanced 4-LLM Analysis in Progress
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="text-xs text-purple-700">
-                    Processing with crypto-trading-analyst
+                    TogetherAI Multi-Model Consensus
                   </div>
                 </div>
               </div>
 
-              {/* LLM Model Status Indicators */}
-              <div className="mt-2 flex items-center gap-3">
+              {/* 4-LLM Model Status Indicators */}
+              <div className="mt-3 grid grid-cols-2 gap-2">
                 <div className="flex items-center gap-1">
                   <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                  <span className="text-xs text-purple-700">Llama-3.1-8B</span>
+                  <span className="text-xs text-purple-700">Llama-3.1-8B-Turbo</span>
+                  <span className="text-xs text-purple-600">(Fast)</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                  <span className="text-xs text-purple-700">Llama-3.1-70B</span>
+                  <span className="text-xs text-purple-700">Llama-3.1-70B-Turbo</span>
+                  <span className="text-xs text-purple-600">(Deep)</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                   <span className="text-xs text-purple-700">Mixtral-8x7B</span>
+                  <span className="text-xs text-purple-600">(Pattern)</span>
                 </div>
-                <div className="text-xs text-purple-600 ml-auto">
-                  Generating consensus...
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></div>
+                  <span className="text-xs text-purple-700">Llama-3.1-405B</span>
+                  <span className="text-xs text-purple-600">(Master)</span>
+                </div>
+              </div>
+
+              <div className="mt-2 text-center">
+                <div className="text-xs text-purple-600">
+                  Generating consensus & action plans...
                 </div>
               </div>
             </div>
@@ -1093,8 +861,45 @@ Focus on ${request.analysisType} analysis using Binance live data and the specif
                             {signal.type === 'BUY' ? '🚀 BUY' : signal.type === 'SELL' ? '📉 SELL' : '⏸️ HOLD'}
                           </div>
 
-                          {/* Multi-LLM Consensus Indicator */}
-                          {signal.agentData?.llmConsensus && (
+                          {/* Advanced 4-LLM Consensus Indicator */}
+                          {signal.advancedLLMData?.llmConsensus && (
+                            <div className="flex items-center gap-1 px-2 py-1 bg-purple-50 rounded-lg border border-purple-200">
+                              <span className="text-xs text-purple-700 font-medium">🧠 4-LLM Consensus</span>
+                              <div className="flex gap-1">
+                                {Object.entries(signal.advancedLLMData.llmConsensus).map(([model, analysis]) => {
+                                  const signal_type = analysis?.signal || analysis?.recommendation || 'HOLD';
+                                  const modelName = model.includes('llama') && model.includes('8') ? '8B' :
+                                                  model.includes('llama') && model.includes('70') ? '70B' :
+                                                  model.includes('llama') && model.includes('405') ? '405B' :
+                                                  model.includes('mixtral') ? 'MX' : model.slice(0, 2).toUpperCase();
+                                  return (
+                                    <span
+                                      key={model}
+                                      className={`px-1 py-0.5 text-xs font-medium rounded ${
+                                        signal_type === 'BUY' ? 'bg-green-500 text-white' :
+                                        signal_type === 'SELL' ? 'bg-red-500 text-white' : 'bg-yellow-500 text-white'
+                                      }`}
+                                      title={`${modelName}: ${signal_type} (${Math.round((analysis?.confidence || 0) * 100)}%)`}
+                                    >
+                                      {modelName}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                              {signal.advancedLLMData.urgency && (
+                                <span className={`px-1 py-0.5 text-xs font-bold rounded ${
+                                  signal.advancedLLMData.urgency === 'HIGH' ? 'bg-red-100 text-red-700' :
+                                  signal.advancedLLMData.urgency === 'MEDIUM' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-green-100 text-green-700'
+                                }`}>
+                                  {signal.advancedLLMData.urgency}
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Fallback for old agentData format */}
+                          {!signal.advancedLLMData?.llmConsensus && signal.agentData?.llmConsensus && (
                             <div className="flex items-center gap-1 px-2 py-1 bg-blue-50 rounded-lg border border-blue-200">
                               <span className="text-xs text-blue-700 font-medium">🤖 LLM Consensus</span>
                               <div className="flex gap-1">
@@ -1145,7 +950,7 @@ Focus on ${request.analysisType} analysis using Binance live data and the specif
                         </div>
 
                         {/* Levels */}
-                        <div className="grid grid-cols-3 gap-2 text-xs">
+                        <div className="grid grid-cols-3 gap-2 text-xs mb-3">
                           <div>
                             <span className="text-gray-500">Entry</span>
                             <div className="font-semibold">${safeNumber.toFixed(signal.entry, 4)}</div>
@@ -1159,6 +964,67 @@ Focus on ${request.analysisType} analysis using Binance live data and the specif
                             <div className="font-semibold text-red-600">${safeNumber.toFixed(signal.stopLoss, 4)}</div>
                           </div>
                         </div>
+
+                        {/* Advanced Action Plan */}
+                        {signal.advancedLLMData?.actionPlan && (
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
+                            <h4 className="text-xs font-semibold text-blue-800 mb-2">🎯 Action Plan</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                              {signal.advancedLLMData.actionPlan.target_prices?.length > 1 && (
+                                <div>
+                                  <span className="text-blue-600 font-medium">Multiple Targets:</span>
+                                  <div className="text-blue-700">
+                                    {signal.advancedLLMData.actionPlan.target_prices.map((price: number, idx: number) => (
+                                      <span key={idx}>${safeNumber.toFixed(price, 2)}{idx < (signal.advancedLLMData?.actionPlan?.target_prices?.length || 0) - 1 ? ', ' : ''}</span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {signal.advancedLLMData.actionPlan.position_size && (
+                                <div>
+                                  <span className="text-blue-600 font-medium">Position Size:</span>
+                                  <div className="text-blue-700">{signal.advancedLLMData.actionPlan.position_size}</div>
+                                </div>
+                              )}
+                              {signal.advancedLLMData.actionPlan.time_horizon && (
+                                <div>
+                                  <span className="text-blue-600 font-medium">Time Horizon:</span>
+                                  <div className="text-blue-700">{signal.advancedLLMData.actionPlan.time_horizon}</div>
+                                </div>
+                              )}
+                              {signal.advancedLLMData.actionPlan.risk_reward && (
+                                <div>
+                                  <span className="text-blue-600 font-medium">Risk/Reward:</span>
+                                  <div className="text-blue-700">{safeNumber.toFixed(signal.advancedLLMData.actionPlan.risk_reward, 1)}:1</div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Opportunity Signals */}
+                        {(signal.advancedLLMData?.opportunitySignals?.length || 0) > 0 && (
+                          <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                            <h4 className="text-xs font-semibold text-green-800 mb-2">⚡ Opportunity Signals</h4>
+                            <div className="space-y-1">
+                              {signal.advancedLLMData?.opportunitySignals?.slice(0, 2).map((opportunity: any, idx: number) => (
+                                <div key={idx} className="flex items-center justify-between text-xs">
+                                  <div className="flex items-center gap-1">
+                                    <span className={`w-2 h-2 rounded-full ${
+                                      opportunity.probability > 0.8 ? 'bg-green-500' :
+                                      opportunity.probability > 0.6 ? 'bg-yellow-500' : 'bg-orange-500'
+                                    }`}></span>
+                                    <span className="text-green-700 font-medium">{opportunity.type}:</span>
+                                    <span className="text-green-600">{opportunity.description}</span>
+                                  </div>
+                                  <span className="text-green-800 font-semibold">
+                                    {Math.round(opportunity.probability * 100)}%
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
 
