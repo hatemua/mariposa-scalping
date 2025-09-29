@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { enhancedMarketApi } from '@/lib/enhancedApi';
+import { io, Socket } from 'socket.io-client';
 import { safeNumber, safeObject, safeArray } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
 import { SignalFeedSkeleton } from '@/components/ui/LoadingSkeleton';
@@ -119,6 +120,11 @@ function ProfessionalSignalFeed({
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [isAIProcessing, setIsAIProcessing] = useState(false);
   const [processingStartTime, setProcessingStartTime] = useState<Date | null>(null);
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const [jobProgress, setJobProgress] = useState(0);
+  const [currentSymbol, setCurrentSymbol] = useState<string | undefined>(undefined);
+  const [estimatedRemainingTime, setEstimatedRemainingTime] = useState(0);
 
   const generateRealTradingSignals = async (): Promise<TradingSignal[]> => {
     const generatedSignals: TradingSignal[] = [];
@@ -450,8 +456,86 @@ function ProfessionalSignalFeed({
     return 'Monitor for directional signal';
   };
 
+  // Initialize WebSocket connection
+  const initializeWebSocket = () => {
+    if (socket) return;
+
+    const newSocket = io(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000', {
+      auth: {
+        token: localStorage.getItem('token')
+      },
+      transports: ['websocket', 'polling']
+    });
+
+    newSocket.on('connect', () => {
+      console.log('🔗 Connected to analysis WebSocket');
+    });
+
+    newSocket.on('jobUpdate', (data) => {
+      console.log('📊 Job update received:', data);
+      setJobProgress(data.progress);
+      setCurrentSymbol(data.currentSymbol);
+      setEstimatedRemainingTime(data.estimatedRemainingTime);
+
+      if (data.status === 'completed') {
+        // Fetch the results
+        fetchJobResults(data.jobId);
+      } else if (data.status === 'failed') {
+        setIsAIProcessing(false);
+        setCurrentJobId(null);
+        setError(data.error || 'Analysis failed');
+        toast.error('Analysis failed: ' + (data.error || 'Unknown error'));
+      }
+    });
+
+    newSocket.on('error', (error) => {
+      console.error('WebSocket error:', error);
+    });
+
+    setSocket(newSocket);
+  };
+
+  // Fetch job results when analysis is completed
+  const fetchJobResults = async (jobId: string) => {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/api/market/analysis-results/${jobId}`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setSignals(result.data || []);
+        setLastUpdate(new Date());
+
+        // Show notifications for critical signals
+        if (notificationsEnabled) {
+          const criticalSignals = (result.data || []).filter((s: TradingSignal) => s.priority === 'CRITICAL');
+          criticalSignals.forEach((signal: TradingSignal) => {
+            toast.success(`🚨 CRITICAL: ${signal.type} signal for ${signal.symbol.replace('USDT', '')}`, {
+              duration: 5000
+            });
+          });
+        }
+
+        console.log(`✅ Analysis completed with ${result.data?.length || 0} signals`);
+      } else {
+        setError(result.error || 'Failed to fetch analysis results');
+      }
+    } catch (error) {
+      console.error('Error fetching job results:', error);
+      setError('Failed to fetch analysis results');
+    } finally {
+      setIsAIProcessing(false);
+      setCurrentJobId(null);
+      setProcessingStartTime(null);
+    }
+  };
+
   const fetchSignals = async () => {
-    // Prevent refresh during active AI analysis
+    // Prevent new analysis during active AI processing
     if (isAIProcessing) {
       console.log('🔒 Analysis protection: Skipping refresh during AI processing');
       return;
@@ -460,46 +544,62 @@ function ProfessionalSignalFeed({
     try {
       setLoading(true);
       setError(null);
-      setIsAIProcessing(true);
-      setProcessingStartTime(new Date());
 
-      let newSignals: TradingSignal[] = [];
+      // Start new job-based analysis
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/api/market/start-professional-analysis`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          symbols,
+          minStrength
+        })
+      });
 
-      try {
-        // Try to use enhanced professional signals API first
-        const signalsResponse = await enhancedMarketApi.getProfessionalSignals(symbols, minStrength);
-        if (signalsResponse.success && Array.isArray(signalsResponse.data)) {
-          newSignals = signalsResponse.data;
-        } else {
-          throw new Error('Professional signals API returned invalid data');
+      const result = await response.json();
+
+      if (result.success) {
+        const jobId = result.data.jobId;
+        setCurrentJobId(jobId);
+        setIsAIProcessing(true);
+        setProcessingStartTime(new Date());
+        setJobProgress(5);
+
+        // Initialize WebSocket if not already connected
+        if (!socket) {
+          initializeWebSocket();
         }
-      } catch (apiError) {
-        console.warn('Enhanced signals API failed, falling back to real-time analysis:', apiError);
-        // Fallback: Generate signals from real-time analysis
-        newSignals = await generateRealTradingSignals();
+
+        // Subscribe to job updates
+        if (socket) {
+          socket.emit('subscribeToJob', { jobId });
+        }
+
+        console.log(`🚀 Started analysis job ${jobId}`);
+      } else if (response.status === 409) {
+        // User already has a running job
+        const existingJobId = result.data?.existingJobId;
+        if (existingJobId) {
+          setCurrentJobId(existingJobId);
+          setIsAIProcessing(true);
+          setProcessingStartTime(new Date());
+
+          if (socket) {
+            socket.emit('subscribeToJob', { jobId: existingJobId });
+          }
+
+          console.log(`🔄 Reconnected to existing job ${existingJobId}`);
+        }
+      } else {
+        throw new Error(result.error || 'Failed to start analysis');
       }
-
-      setSignals(newSignals);
-
-      // Show notifications for critical signals
-      if (notificationsEnabled) {
-        const criticalSignals = newSignals.filter(s => s.priority === 'CRITICAL');
-        criticalSignals.forEach(signal => {
-          toast.success(`🚨 CRITICAL: ${signal.type} signal for ${signal.symbol.replace('USDT', '')}`, {
-            duration: 5000
-          });
-        });
-      }
-
-      setLastUpdate(new Date());
     } catch (err) {
-      console.error('Error fetching signals:', err);
-      setError('Failed to fetch trading signals');
-      toast.error('Failed to fetch trading signals');
-    } finally {
+      console.error('Error starting analysis:', err);
+      setError('Failed to start professional analysis');
+      toast.error('Failed to start professional analysis');
       setLoading(false);
-      setIsAIProcessing(false);
-      setProcessingStartTime(null);
     }
   };
 
@@ -554,6 +654,17 @@ function ProfessionalSignalFeed({
     return `${diffHours}h ago`;
   };
 
+  // Initialize WebSocket on component mount
+  useEffect(() => {
+    initializeWebSocket();
+
+    return () => {
+      if (socket) {
+        socket.disconnect();
+      }
+    };
+  }, []);
+
   // Initial fetch when dependencies change
   useEffect(() => {
     // Only trigger if not currently processing
@@ -586,6 +697,37 @@ function ProfessionalSignalFeed({
       return;
     }
     protectedFetchSignals();
+  };
+
+  // Cancel current analysis
+  const handleCancelAnalysis = async () => {
+    if (!currentJobId) return;
+
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/api/market/analysis/${currentJobId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setIsAIProcessing(false);
+        setCurrentJobId(null);
+        setProcessingStartTime(null);
+        setJobProgress(0);
+        setCurrentSymbol(undefined);
+        toast.success('Analysis cancelled successfully');
+        console.log('❌ Analysis cancelled by user');
+      } else {
+        toast.error('Failed to cancel analysis');
+      }
+    } catch (error) {
+      console.error('Error cancelling analysis:', error);
+      toast.error('Failed to cancel analysis');
+    }
   };
 
   const filteredSignals = signals.filter(signal => {
@@ -706,14 +848,39 @@ function ProfessionalSignalFeed({
                 🔒 Analysis Protected - Refresh temporarily disabled
               </span>
             </div>
-            <AIProcessingIndicator
-              operation="Professional Signal Analysis"
-              symbol={symbols.length > 1 ? `${symbols.length} symbols` : symbols[0]}
-              estimatedTime={120}
-              stage="analyzing"
-              showProgress={true}
-              className=""
-            />
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-orange-800 font-medium">Analysis Progress</span>
+                <span className="text-orange-600 text-sm">{jobProgress}%</span>
+              </div>
+
+              <div className="w-full bg-orange-200 rounded-full h-3">
+                <div
+                  className="bg-orange-500 h-3 rounded-full transition-all duration-500"
+                  style={{ width: `${jobProgress}%` }}
+                />
+              </div>
+
+              {currentSymbol && (
+                <div className="text-sm text-orange-700">
+                  Currently analyzing: <span className="font-medium">{currentSymbol}</span>
+                </div>
+              )}
+
+              <div className="flex justify-between items-center text-xs text-orange-600">
+                <span>Job ID: {currentJobId?.slice(0, 8)}...</span>
+                <div className="flex items-center gap-2">
+                  <span>Est. {estimatedRemainingTime}s remaining</span>
+                  <button
+                    onClick={handleCancelAnalysis}
+                    className="px-2 py-1 bg-red-100 text-red-600 rounded text-xs hover:bg-red-200 transition-colors"
+                    title="Cancel Analysis"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
             <div className="text-xs text-orange-700 mt-2">
               Analysis will complete without interruption. Auto-refresh will resume afterwards.
             </div>

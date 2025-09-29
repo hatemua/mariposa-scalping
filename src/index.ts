@@ -8,6 +8,7 @@ import { redis } from './config/redis';
 import { rateLimitMiddleware } from './middleware/rateLimiter';
 import { agendaService } from './services/agendaService';
 import { initializeWebSocketService } from './services/websocketService';
+import { analysisWebSocketService } from './services/analysisWebSocket';
 import routes from './routes';
 
 const app = express();
@@ -102,6 +103,9 @@ const startServer = async (): Promise<void> => {
 
     initializeWebSocketService(server);
     console.log('✅ WebSocket service initialized');
+
+    analysisWebSocketService.initialize(server);
+    console.log('✅ Analysis WebSocket service initialized');
 
     // Set server timeout for long-running AI operations
     server.timeout = config.SERVER_TIMEOUT;

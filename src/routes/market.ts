@@ -22,6 +22,13 @@ import {
   getWhaleActivity,
   getOpportunityScanner
 } from '../controllers/tradingIntelligenceController';
+import {
+  startProfessionalAnalysis,
+  getAnalysisStatus,
+  getAnalysisResults,
+  cancelAnalysisJob,
+  getUserAnalysisJobs
+} from '../controllers/aiAnalysisController';
 import { authenticate } from '../middleware/auth';
 import {
   marketDataRateLimiter,
@@ -70,5 +77,12 @@ router.get('/:symbol/entry-signals', aiAnalysisRateLimiter, getEntrySignals);
 router.post('/professional-signals', professionalSignalsRateLimiter, getProfessionalSignals);
 router.post('/whale-activity', professionalSignalsRateLimiter, getWhaleActivity);
 router.post('/opportunity-scanner', professionalSignalsRateLimiter, getOpportunityScanner);
+
+// New AI Analysis Worker endpoints
+router.post('/start-professional-analysis', aiAnalysisRateLimiter, startProfessionalAnalysis);
+router.get('/analysis-status/:jobId', marketDataRateLimiter, getAnalysisStatus);
+router.get('/analysis-results/:jobId', marketDataRateLimiter, getAnalysisResults);
+router.delete('/analysis/:jobId', marketDataRateLimiter, cancelAnalysisJob);
+router.get('/analysis-jobs', marketDataRateLimiter, getUserAnalysisJobs);
 
 export default router;
