@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import { binanceService } from '../services/binanceService';
+import { aiAnalysisService } from '../services/aiAnalysisService';
 import { AuthRequest } from '../middleware/auth';
 import { ApiResponse } from '../types';
 import { SymbolConverter } from '../utils/symbolConverter';
@@ -387,6 +388,62 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
           const stopLossPercent = Math.max(1, Math.min(5, riskLevel * 0.5));
           const targetPercent = stopLossPercent * 2; // 2:1 risk/reward ratio
 
+          // Enhanced signal with LLM analysis for high-strength signals
+          let advancedLLMData = null;
+          if (signalStrength >= 70) {
+            try {
+              // Get orderbook data for LLM analysis
+              const orderBook = await binanceService.getOrderBook(normalizedSymbol, 20);
+
+              // Create market data object for AI analysis
+              const marketDataForAI: any = {
+                symbol: normalizedSymbol,
+                price: currentPrice,
+                change24h: parseFloat(marketData.change24h || '0'),
+                volume: volume24h,
+                high24h: parseFloat(marketData.high24h || currentPrice.toString()),
+                low24h: parseFloat(marketData.low24h || currentPrice.toString()),
+                timestamp: new Date()
+              };
+
+              // Get AI analysis with 4 cost-effective reasoning models
+              const llmAnalysis = await aiAnalysisService.analyzeMarketData(
+                marketDataForAI,
+                klineData,
+                orderBook
+              );
+
+              if (llmAnalysis && llmAnalysis.individualAnalyses && llmAnalysis.individualAnalyses.length > 0) {
+                // Create LLM consensus from individual analyses
+                const llmConsensus = llmAnalysis.individualAnalyses.reduce((acc: any, analysis: any, index: number) => {
+                  const modelName = `model_${index + 1}`;
+                  acc[modelName] = {
+                    signal: analysis.recommendation,
+                    confidence: analysis.confidence,
+                    reasoning: analysis.reasoning
+                  };
+                  return acc;
+                }, {});
+
+                advancedLLMData = {
+                  llmConsensus,
+                  consensus: {
+                    recommendation: llmAnalysis.recommendation,
+                    confidence: llmAnalysis.confidence,
+                    reasoning: llmAnalysis.reasoning || `Multi-LLM consensus: ${llmAnalysis.recommendation}`,
+                    targetPrice: llmAnalysis.targetPrice || (currentPrice * (action === 'BUY' ? 1 + targetPercent / 100 : 1 - targetPercent / 100)),
+                    stopLoss: llmAnalysis.stopLoss || (currentPrice * (action === 'BUY' ? 1 - stopLossPercent / 100 : 1 + stopLossPercent / 100)),
+                    timeToAction: '1h'
+                  },
+                  source: 'AI_AGENT',
+                  modelCount: llmAnalysis.individualAnalyses.length
+                };
+              }
+            } catch (error) {
+              console.warn(`Failed to get LLM analysis for ${normalizedSymbol}:`, error);
+            }
+          }
+
           professionalSignals.push({
             symbol: normalizedSymbol,
             type: signalType,
@@ -412,6 +469,7 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
               volume24h: volume24h,
               priceChange24h: priceChange24h
             },
+            advancedLLMData: advancedLLMData,
             timestamp: new Date().toISOString()
           });
         }

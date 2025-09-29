@@ -313,25 +313,6 @@ export const marketApi = {
     return response.data;
   },
 
-  // Advanced Multi-LLM Analysis with TogetherAI
-  getAdvancedLLMAnalysis: async (symbols: string[], options = {}): Promise<ApiResponse> => {
-    const response = await api.post('/market/advanced-llm-analysis', {
-      symbols,
-      timeframes: ['1m', '5m', '15m', '1h', '4h'],
-      analysisDepth: 'comprehensive',
-      strategy: 'multi_confluence',
-      llmModels: [
-        'meta-llama/Llama-3.1-8B-Instruct-Turbo',
-        'meta-llama/Llama-3.1-70B-Instruct-Turbo',
-        'mistralai/Mixtral-8x7B-Instruct-v0.1',
-        'meta-llama/Llama-3.1-405B-Instruct-Turbo'
-      ],
-      ...options
-    }, {
-      timeout: 180000 // 3 minutes timeout for advanced multi-LLM analysis
-    });
-    return response.data;
-  },
 };
 
 export const orderBookApi = {

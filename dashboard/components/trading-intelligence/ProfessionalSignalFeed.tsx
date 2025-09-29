@@ -168,28 +168,24 @@ function ProfessionalSignalFeed({
       console.log('🚀 Starting advanced multi-LLM analysis...');
       logDebug('API', 'Calling advanced LLM analysis', { symbols, minStrength });
 
-      // Call the new advanced LLM analysis endpoint
-      const analysisResponse = await marketApi.getAdvancedLLMAnalysis(symbols, {
-        minStrength,
-        analysisDepth: 'comprehensive',
-        strategy: 'multi_confluence'
-      });
+      // Call the existing professional signals endpoint with enhanced LLM integration
+      const analysisResponse = await marketApi.getProfessionalSignals(symbols, minStrength);
 
       if (!analysisResponse.success) {
-        console.warn('❌ Advanced LLM analysis API failed:', analysisResponse.error);
-        throw new Error(analysisResponse.error || 'Failed to fetch advanced LLM analysis');
+        console.warn('❌ Professional signals API failed:', analysisResponse.error);
+        throw new Error(analysisResponse.error || 'Failed to fetch professional signals');
       }
 
-      const analysisData = analysisResponse.data || [];
-      console.log(`✅ Received ${analysisData.length} advanced LLM analyses from API`);
+      const signalsData = analysisResponse.data?.signals || [];
+      console.log(`✅ Received ${signalsData.length} professional signals from API`);
 
-      if (analysisData.length === 0) {
-        console.warn('⚠️ No analysis returned from advanced LLM API');
+      if (signalsData.length === 0) {
+        console.warn('⚠️ No signals returned from professional signals API');
         return [];
       }
 
-      // Convert advanced LLM analysis to trading signals
-      const signals = convertAdvancedAnalysisToSignals(analysisData);
+      // Convert professional signals to frontend format
+      const signals = convertProfessionalSignalsToTradingSignals(signalsData);
 
       console.log(`🎯 Generated ${signals.length} enhanced trading signals with 4-LLM consensus`);
 
@@ -212,60 +208,58 @@ function ProfessionalSignalFeed({
     }
   };
 
-  // Convert advanced LLM analysis response to trading signals
-  const convertAdvancedAnalysisToSignals = (analysisData: any[]): TradingSignal[] => {
-    return analysisData.map((analysis: any) => {
-      const signal: TradingSignal = {
-        id: `llm-${analysis.symbol}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        symbol: analysis.symbol,
-        type: analysis.consensus?.action as 'BUY' | 'SELL' | 'HOLD',
-        strength: analysis.consensus?.strength || 75,
-        confidence: analysis.consensus?.confidence || 0.75,
-        timeframe: '15m',
-        entry: analysis.action_plan?.entry_price || 0,
-        target: analysis.action_plan?.target_prices?.[0] || 0,
-        stopLoss: analysis.action_plan?.stop_loss || 0,
-        riskReward: analysis.action_plan?.risk_reward || 1,
-        expectedReturn: ((analysis.action_plan?.target_prices?.[0] || 0) - (analysis.action_plan?.entry_price || 0)) / (analysis.action_plan?.entry_price || 1) * 100,
-        category: 'AI_PREDICTION',
+  // Convert professional signals response to trading signals
+  const convertProfessionalSignalsToTradingSignals = (signalsData: any[]): TradingSignal[] => {
+    return signalsData.map((signal: any) => {
+      const entryPrice = signal.entryZone?.min || 0;
+      const targetPrice = signal.targets?.[0] || 0;
+      const stopLossPrice = signal.stopLoss || 0;
+      const riskReward = targetPrice && stopLossPrice && entryPrice ?
+        Math.abs(targetPrice - entryPrice) / Math.abs(entryPrice - stopLossPrice) : 1;
+
+      const tradingSignal: TradingSignal = {
+        id: `prof-${signal.symbol}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        symbol: signal.symbol,
+        type: signal.action as 'BUY' | 'SELL' | 'HOLD',
+        strength: signal.strength || 75,
+        confidence: signal.confidence || 0.75,
+        timeframe: signal.timeHorizon === 'SCALP' ? '5m' : signal.timeHorizon === 'SWING' ? '1h' : '4h',
+        entry: entryPrice,
+        target: targetPrice,
+        stopLoss: stopLossPrice,
+        riskReward: riskReward,
+        expectedReturn: entryPrice > 0 ? ((targetPrice - entryPrice) / entryPrice) * 100 : 0,
+        category: signal.type === 'REVERSAL' ? 'REVERSAL' :
+                 signal.type === 'BREAKOUT' ? 'BREAKOUT' :
+                 signal.type === 'MOMENTUM' ? 'MOMENTUM' : 'AI_PREDICTION',
         indicators: {
-          rsi: analysis.market_context?.indicators?.rsi || 50,
-          macd: analysis.market_context?.trend === 'BULLISH' ? 'BULLISH' : 'BEARISH',
-          ema: analysis.market_context?.trend === 'BULLISH' ? 'BULLISH' : 'BEARISH',
-          volume: analysis.market_context?.volume || 'MEDIUM',
-          support: analysis.market_context?.key_levels?.support?.length > 0,
-          resistance: analysis.market_context?.key_levels?.resistance?.length > 0
+          rsi: signal.indicators?.rsi || 50,
+          macd: signal.indicators?.macd?.histogram > 0 ? 'BULLISH' : 'BEARISH',
+          ema: signal.indicators?.ema20 ? 'BULLISH' : 'BEARISH',
+          volume: signal.indicators?.volume24h > 50000000 ? 'HIGH' : 'MEDIUM',
+          support: true,
+          resistance: true
         },
-        reasoning: analysis.llm_analysis?.llama_405b?.reasoning || analysis.consensus?.reasoning || `Advanced 4-LLM consensus suggests ${analysis.consensus?.action} signal`,
-        timestamp: analysis.timestamp || new Date().toISOString(),
-        priority: analysis.consensus?.urgency === 'HIGH' ? 'CRITICAL' :
-                 analysis.consensus?.urgency === 'MEDIUM' ? 'HIGH' :
-                 analysis.consensus?.strength > 85 ? 'HIGH' :
-                 analysis.consensus?.strength > 75 ? 'MEDIUM' : 'LOW',
-        source: 'AI_AGENT',
-        marketCondition: analysis.market_context?.trend === 'BULLISH' ? 'TRENDING' :
-                        analysis.market_context?.trend === 'BEARISH' ? 'TRENDING' :
-                        analysis.market_context?.trend === 'VOLATILE' ? 'VOLATILE' :
-                        'RANGING',
+        reasoning: signal.reasoning || `${signal.type} signal with ${signal.strength}% strength`,
+        timestamp: signal.timestamp || new Date().toISOString(),
+        priority: signal.strength > 85 ? 'HIGH' :
+                 signal.strength > 75 ? 'MEDIUM' : 'LOW',
+        source: signal.advancedLLMData ? 'AI_AGENT' : 'TECHNICAL_SCAN',
+        marketCondition: signal.indicators?.priceChange24h > 3 ? 'TRENDING' :
+                        signal.indicators?.priceChange24h < -3 ? 'TRENDING' : 'RANGING',
         followUp: {
-          checkIn: analysis.action_plan?.time_horizon || '1 hour',
-          exitStrategy: analysis.action_plan?.target_prices?.length > 1 ?
-                       `Scale out at ${analysis.action_plan.target_prices.length} target levels` :
+          checkIn: signal.timeHorizon === 'SCALP' ? '15 minutes' :
+                   signal.timeHorizon === 'SWING' ? '2 hours' : '6 hours',
+          exitStrategy: signal.targets?.length > 1 ?
+                       `Scale out at ${signal.targets.length} target levels` :
                        'Take profit at target level',
-          riskManagement: `Position size: ${analysis.action_plan?.position_size || '2-3% of portfolio'}`
+          riskManagement: `Stop loss: ${((Math.abs(entryPrice - stopLossPrice) / entryPrice) * 100).toFixed(1)}%`
         },
-        // Enhanced data for advanced LLM analysis
-        advancedLLMData: {
-          llmConsensus: analysis.llm_analysis || {},
-          actionPlan: analysis.action_plan || {},
-          opportunitySignals: analysis.opportunity_signals || [],
-          marketContext: analysis.market_context || {},
-          confidenceLevel: analysis.consensus?.confidence || 0,
-          urgency: analysis.consensus?.urgency || 'MEDIUM'
-        }
+        // Enhanced data for LLM analysis (if available)
+        advancedLLMData: signal.advancedLLMData || null
       };
 
-      return signal;
+      return tradingSignal;
     }).filter(signal => signal.entry > 0 && signal.target > 0); // Filter out invalid signals
   };
 
