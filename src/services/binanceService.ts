@@ -16,7 +16,40 @@ export class BinanceService extends EventEmitter {
 
   constructor() {
     super();
-    this.initializeCommonSymbols();
+    // Note: initializeCommonSymbols() moved to start() method
+    // to prevent race conditions with Redis initialization
+  }
+
+  async start(): Promise<void> {
+    try {
+      // Wait for Redis to be ready before starting WebSocket connections
+      await this.waitForRedisReady();
+
+      // Now initialize common symbols and start WebSocket connections
+      this.initializeCommonSymbols();
+
+      console.log('✅ BinanceService started successfully with Redis integration');
+    } catch (error) {
+      console.error('❌ Failed to start BinanceService:', error);
+      throw error;
+    }
+  }
+
+  private async waitForRedisReady(timeoutMs: number = 30000): Promise<void> {
+    const { redis } = await import('../config/redis');
+    const startTime = Date.now();
+
+    while (!redis.areAllClientsReady()) {
+      if (Date.now() - startTime > timeoutMs) {
+        throw new Error(`Redis clients not ready within ${timeoutMs}ms timeout for BinanceService. ` +
+          `Status: Client=${redis.isClientReady()}, Publisher=${redis.isPublisherReady()}, Subscriber=${redis.isSubscriberReady()}`);
+      }
+
+      console.log('⏳ BinanceService waiting for Redis clients to be ready...');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    console.log('✅ Redis clients are ready for BinanceService');
   }
 
   private initializeCommonSymbols() {
@@ -186,39 +219,51 @@ export class BinanceService extends EventEmitter {
   }
 
   private async handleMessage(message: any) {
-    if (message.e === '24hrTicker') {
-      const marketData: MarketData = {
-        symbol: message.s,
-        price: parseFloat(message.c),
-        volume: parseFloat(message.v),
-        change24h: parseFloat(message.P),
-        high24h: parseFloat(message.h),
-        low24h: parseFloat(message.l),
-        timestamp: new Date(message.E)
-      };
+    try {
+      if (message.e === '24hrTicker') {
+        const marketData: MarketData = {
+          symbol: message.s,
+          price: parseFloat(message.c),
+          volume: parseFloat(message.v),
+          change24h: parseFloat(message.P),
+          high24h: parseFloat(message.h),
+          low24h: parseFloat(message.l),
+          timestamp: new Date(message.E)
+        };
 
-      // Cache the market data in Redis
-      await redisService.cacheMarketData(message.s, marketData);
-      await redisService.cacheTicker(message.s, {
-        lastPrice: message.c,
-        volume: message.v,
-        priceChangePercent: message.P,
-        highPrice: message.h,
-        lowPrice: message.l,
-        openPrice: message.o,
-        closeTime: message.E,
-        count: message.n
-      });
+        // Cache the market data in Redis with error resilience
+        // Redis operations now have built-in connection validation
+        try {
+          await redisService.cacheMarketData(message.s, marketData);
+          await redisService.cacheTicker(message.s, {
+            lastPrice: message.c,
+            volume: message.v,
+            priceChangePercent: message.P,
+            highPrice: message.h,
+            lowPrice: message.l,
+            openPrice: message.o,
+            closeTime: message.E,
+            count: message.n
+          });
+        } catch (redisError) {
+          // Redis errors are already logged by RedisService, just continue processing
+          console.debug(`Redis caching failed for ${message.s}, continuing with event emission`);
+        }
 
-      this.emit('ticker', marketData);
+        // Always emit the ticker event even if Redis fails
+        this.emit('ticker', marketData);
 
-      // Publish to Redis for WebSocket clients
-      await redisService.publish(`market:${message.s}`, {
-        type: 'ticker',
-        data: marketData
-      });
+        // Publish to Redis for WebSocket clients (with error handling)
+        try {
+          await redisService.publish(`market:${message.s}`, {
+            type: 'ticker',
+            data: marketData
+          });
+        } catch (publishError) {
+          console.debug(`Redis publish failed for market:${message.s}, continuing processing`);
+        }
 
-    } else if (message.e === 'kline') {
+      } else if (message.e === 'kline') {
       const klineData = {
         symbol: message.s,
         interval: message.k.i,
@@ -266,11 +311,15 @@ export class BinanceService extends EventEmitter {
 
       this.emit('kline', klineData);
 
-      // Publish to Redis for WebSocket clients
-      await redisService.publish(`kline:${message.s}:${message.k.i}`, {
-        type: 'kline',
-        data: klineData
-      });
+      // Publish to Redis for WebSocket clients (with error handling)
+      try {
+        await redisService.publish(`kline:${message.s}:${message.k.i}`, {
+          type: 'kline',
+          data: klineData
+        });
+      } catch (publishError) {
+        console.debug(`Redis publish failed for kline:${message.s}:${message.k.i}, continuing processing`);
+      }
 
     } else if (message.e === 'depthUpdate') {
       const orderBookData = {
@@ -287,16 +336,24 @@ export class BinanceService extends EventEmitter {
         timestamp: new Date(message.E)
       };
 
-      // Cache the order book update in Redis
-      await redisService.cacheOrderBook(message.s, orderBookData);
+      // Cache the order book update in Redis (with error handling)
+      try {
+        await redisService.cacheOrderBook(message.s, orderBookData);
+      } catch (redisError) {
+        console.debug(`Redis caching failed for orderbook ${message.s}, continuing with event emission`);
+      }
 
       this.emit('orderBook', orderBookData);
 
-      // Publish to Redis for WebSocket clients
-      await redisService.publish(`orderbook:${message.s}`, {
-        type: 'orderBook',
-        data: orderBookData
-      });
+      // Publish to Redis for WebSocket clients (with error handling)
+      try {
+        await redisService.publish(`orderbook:${message.s}`, {
+          type: 'orderBook',
+          data: orderBookData
+        });
+      } catch (publishError) {
+        console.debug(`Redis publish failed for orderbook:${message.s}, continuing processing`);
+      }
 
     } else if (message.e === 'trade') {
       const tradeData = {
@@ -311,11 +368,19 @@ export class BinanceService extends EventEmitter {
 
       this.emit('trade', tradeData);
 
-      // Publish to Redis for WebSocket clients
-      await redisService.publish(`trades:${message.s}`, {
-        type: 'trade',
-        data: tradeData
-      });
+      // Publish to Redis for WebSocket clients (with error handling)
+      try {
+        await redisService.publish(`trades:${message.s}`, {
+          type: 'trade',
+          data: tradeData
+        });
+      } catch (publishError) {
+        console.debug(`Redis publish failed for trades:${message.s}, continuing processing`);
+      }
+    }
+    } catch (error) {
+      console.error('Error processing WebSocket message:', error);
+      // Continue processing - don't crash the WebSocket connection
     }
   }
 

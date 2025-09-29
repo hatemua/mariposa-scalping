@@ -36,6 +36,11 @@ export class RedisService {
 
   async get(key: string): Promise<any> {
     try {
+      if (!redis.isClientReady()) {
+        console.warn(`Redis client not ready for GET ${key}, returning null`);
+        return null;
+      }
+
       const client = redis.getClient();
       const value = await client.get(key);
       return value ? JSON.parse(value) : null;
@@ -47,6 +52,11 @@ export class RedisService {
 
   async set(key: string, value: any, options: CacheOptions | number = {}): Promise<boolean> {
     try {
+      if (!redis.isClientReady()) {
+        console.warn(`Redis client not ready for SET ${key}, operation skipped`);
+        return false;
+      }
+
       const client = redis.getClient();
       const serialized = JSON.stringify(value);
 
@@ -78,6 +88,11 @@ export class RedisService {
 
   async delete(key: string): Promise<boolean> {
     try {
+      if (!redis.isClientReady()) {
+        console.warn(`Redis client not ready for DELETE ${key}, operation skipped`);
+        return false;
+      }
+
       const client = redis.getClient();
       const result = await client.del(key);
       return result > 0;
@@ -89,6 +104,11 @@ export class RedisService {
 
   async exists(key: string): Promise<boolean> {
     try {
+      if (!redis.isClientReady()) {
+        console.warn(`Redis client not ready for EXISTS ${key}, returning false`);
+        return false;
+      }
+
       const client = redis.getClient();
       const result = await client.exists(key);
       return result === 1;
@@ -368,6 +388,11 @@ export class RedisService {
 
   async publish(channel: string, message: any): Promise<boolean> {
     try {
+      if (!redis.isPublisherReady()) {
+        console.warn(`Redis publisher not ready for channel ${channel}, message skipped`);
+        return false;
+      }
+
       const publisher = redis.getPublisher();
       const result = await publisher.publish(channel, JSON.stringify(message));
       return result > 0;
@@ -379,6 +404,11 @@ export class RedisService {
 
   async subscribe(channel: string, callback: (message: any) => void): Promise<boolean> {
     try {
+      if (!redis.isSubscriberReady()) {
+        console.warn(`Redis subscriber not ready for channel ${channel}, subscription skipped`);
+        return false;
+      }
+
       const subscriber = redis.getSubscriber();
 
       subscriber.on('message', (receivedChannel, message) => {

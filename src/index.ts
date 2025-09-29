@@ -7,6 +7,7 @@ import { connectDatabase } from './config/database';
 import { redis } from './config/redis';
 import { rateLimitMiddleware } from './middleware/rateLimiter';
 import { agendaService } from './services/agendaService';
+import { binanceService } from './services/binanceService';
 import { initializeWebSocketService } from './services/websocketService';
 import { analysisWebSocketService } from './services/analysisWebSocket';
 import routes from './routes';
@@ -101,6 +102,9 @@ const startServer = async (): Promise<void> => {
     await agendaService.scheduleRecurringJobs();
     console.log('✅ Recurring jobs scheduled');
 
+    await binanceService.start();
+    console.log('✅ Binance service started with Redis integration');
+
     initializeWebSocketService(server);
     console.log('✅ WebSocket service initialized');
 
@@ -121,6 +125,9 @@ const startServer = async (): Promise<void> => {
     process.on('SIGTERM', async () => {
       console.log('SIGTERM received, shutting down gracefully');
       await agendaService.stop();
+      if (binanceService.disconnect) {
+        binanceService.disconnect();
+      }
       await redis.disconnect();
       process.exit(0);
     });
@@ -128,6 +135,9 @@ const startServer = async (): Promise<void> => {
     process.on('SIGINT', async () => {
       console.log('SIGINT received, shutting down gracefully');
       await agendaService.stop();
+      if (binanceService.disconnect) {
+        binanceService.disconnect();
+      }
       await redis.disconnect();
       process.exit(0);
     });
