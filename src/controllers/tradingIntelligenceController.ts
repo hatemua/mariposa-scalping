@@ -349,11 +349,33 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
         const indicators = calculateTechnicalIndicators(klineData, ['RSI', 'MACD', 'SMA20', 'EMA20']);
 
         // Parse market data from Binance API (handle both field name formats)
-        const currentPrice = parseFloat(marketData.lastPrice || marketData.price || marketData.c || '0');
-        const priceChange24h = parseFloat(marketData.priceChangePercent || marketData.change24h || marketData.P || '0');
-        const volume24h = parseFloat(marketData.volume || marketData.v || '0');
+        // Binance /ticker/24hr returns string values, so we need to parse them
+        let currentPrice = 0;
+        let priceChange24h = 0;
+        let volume24h = 0;
 
-        console.log(`📈 ${normalizedSymbol} raw market data (ALL FIELDS):`, JSON.stringify(marketData, null, 2));
+        // Try multiple field names for currentPrice (Binance uses different formats)
+        if (marketData.lastPrice) currentPrice = parseFloat(marketData.lastPrice);
+        else if (marketData.price) currentPrice = parseFloat(marketData.price);
+        else if (marketData.c) currentPrice = parseFloat(marketData.c);
+        else if (marketData.last) currentPrice = parseFloat(marketData.last);
+
+        // Try multiple field names for priceChange24h
+        if (marketData.priceChangePercent) priceChange24h = parseFloat(marketData.priceChangePercent);
+        else if (marketData.change24h) priceChange24h = parseFloat(marketData.change24h);
+        else if (marketData.P) priceChange24h = parseFloat(marketData.P);
+
+        // Try multiple field names for volume24h
+        if (marketData.volume) volume24h = parseFloat(marketData.volume);
+        else if (marketData.v) volume24h = parseFloat(marketData.v);
+        else if (marketData.quoteVolume) volume24h = parseFloat(marketData.quoteVolume);
+
+        console.log(`📈 ${normalizedSymbol} raw market data fields:`, {
+          lastPrice: marketData.lastPrice,
+          price: marketData.price,
+          priceChangePercent: marketData.priceChangePercent,
+          volume: marketData.volume
+        });
         console.log(`📈 ${normalizedSymbol} parsed data: Price=${currentPrice}, Change24h=${priceChange24h}%, Volume=${(volume24h/1000000).toFixed(1)}M, RSI=${indicators.RSI.toFixed(1)}`);
 
         // Verify if this is real-time data or stale data
@@ -521,6 +543,7 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
             strength: Math.round(signalStrength),
             confidence: Math.max(0.6, Math.min(0.95, signalStrength / 100)),
             timeHorizon: signalStrength > 80 ? 'SCALP' : signalStrength > 65 ? 'SWING' : 'POSITION',
+            currentPrice: validatedPrice, // Add current market price for frontend display
             entryZone,
             targets,
             stopLoss,

@@ -211,11 +211,15 @@ function ProfessionalSignalFeed({
   // Convert professional signals response to trading signals
   const convertProfessionalSignalsToTradingSignals = (signalsData: any[]): TradingSignal[] => {
     return signalsData.map((signal: any) => {
-      const entryPrice = signal.entryZone?.min || 0;
+      // Use currentPrice from API if available, otherwise fallback to entryZone.min
+      const currentPrice = signal.currentPrice || signal.entryZone?.min || 0;
+      const entryPrice = signal.entryZone?.min || currentPrice;
       const targetPrice = signal.targets?.[0] || 0;
       const stopLossPrice = signal.stopLoss || 0;
       const riskReward = targetPrice && stopLossPrice && entryPrice ?
         Math.abs(targetPrice - entryPrice) / Math.abs(entryPrice - stopLossPrice) : 1;
+
+      console.log(`📊 Signal for ${signal.symbol}: CurrentPrice=${currentPrice}, Entry=${entryPrice}, Target=${targetPrice}, Stop=${stopLossPrice}`);
 
       const tradingSignal: TradingSignal = {
         id: `prof-${signal.symbol}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
