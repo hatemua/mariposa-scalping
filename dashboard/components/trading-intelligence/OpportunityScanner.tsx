@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { enhancedMarketApi } from '@/lib/enhancedApi';
+import { marketApi } from '@/lib/api';
 import { safeNumber, safeObject, safeArray } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
 import {
@@ -201,7 +201,7 @@ export default function OpportunityScanner({
 
       try {
         // Try to use enhanced opportunity scanner API first
-        const opportunityResponse = await enhancedMarketApi.getOpportunityScanner(symbols, minScore);
+        const opportunityResponse = await marketApi.getOpportunityScanner(symbols, minScore);
         if (opportunityResponse.success && Array.isArray(opportunityResponse.data)) {
           realOpportunities = opportunityResponse.data;
         } else {
@@ -219,7 +219,7 @@ export default function OpportunityScanner({
         const batchPromises = batch.map(async (symbol) => {
           try {
             // Get real market data from enhanced API with fallback
-            const marketResponse = await enhancedMarketApi.getMarketData(symbol);
+            const marketResponse = await marketApi.getMarketData(symbol);
 
             if (!marketResponse.success) {
               return null;
@@ -230,7 +230,7 @@ export default function OpportunityScanner({
             // Try to get real-time analysis for confluence data, fallback to generated
             let confluenceData;
             try {
-              const realTimeResponse = await enhancedMarketApi.getRealTimeAnalysis(symbol);
+              const realTimeResponse = await marketApi.getRealTimeAnalysis(symbol);
               if (realTimeResponse.success && realTimeResponse.data?.consensus) {
                 confluenceData = {
                   score: (realTimeResponse.data.consensus.confidence || 0.5) * 100,

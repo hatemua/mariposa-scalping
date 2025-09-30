@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { enhancedMarketApi, enhancedOrderBookApi } from '@/lib/enhancedApi';
+import { marketApi, orderBookApi } from '@/lib/api';
 import { safeNumber, safeObject, safeArray } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
 import { useSmartRefresh } from '@/hooks/useSmartRefresh';
@@ -134,7 +134,7 @@ export default function OrderBookAnalyzer({
   const generateOrderBookData = async (symbol: string): Promise<OrderBookData> => {
     try {
       // Call the enhanced backend API to get real order book analysis with fallback
-      const response = await enhancedOrderBookApi.getAnalysis(symbol, levels);
+      const response = await orderBookApi.getAnalysis(symbol, levels);
 
       if (!response.success) {
         throw new Error(response.error || 'Failed to fetch order book data');
@@ -146,7 +146,7 @@ export default function OrderBookAnalyzer({
       console.error('Error fetching real order book data:', error);
       // Fallback to enhanced market API if direct order book fails
       try {
-        const marketData = await enhancedMarketApi.getMarketData(symbol);
+        const marketData = await marketApi.getMarketData(symbol);
         const mData = safeObject.get(marketData, 'data', {});
         const currentPrice = safeNumber.getValue(safeObject.get(mData, 'price', 0));
 
@@ -249,7 +249,7 @@ export default function OrderBookAnalyzer({
     // Subscribe to real-time order book updates
     const subscribeToOrderBook = async () => {
       try {
-        await enhancedOrderBookApi.subscribe(symbol, levels);
+        await orderBookApi.subscribe(symbol, levels);
         console.log(`📊 Subscribed to order book updates for ${symbol}`);
       } catch (error) {
         console.error('Failed to subscribe to order book:', error);

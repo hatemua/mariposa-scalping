@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { enhancedMarketApi } from '@/lib/enhancedApi';
+import { marketApi } from '@/lib/api';
 import { safeNumber, safeObject, safeArray } from '@/lib/formatters';
 import { toast } from 'react-hot-toast';
 import { WhaleActivitySkeleton } from '@/components/ui/LoadingSkeleton';
@@ -110,7 +110,7 @@ function WhaleActivityMonitor({
       for (const symbol of symbols) {
         try {
           // Get real market data and analysis with fallback
-          const marketResponse = await enhancedMarketApi.getMarketData(symbol);
+          const marketResponse = await marketApi.getMarketData(symbol);
           if (!marketResponse.success) {
             continue;
           }
@@ -290,7 +290,7 @@ function WhaleActivityMonitor({
 
       try {
         // Try to use enhanced whale activity API first
-        const whaleResponse = await enhancedMarketApi.getWhaleActivity(symbols, minWhaleSize);
+        const whaleResponse = await marketApi.getWhaleActivity(symbols, minWhaleSize);
         if (whaleResponse.success && Array.isArray(whaleResponse.data)) {
           activities = whaleResponse.data;
         } else {
