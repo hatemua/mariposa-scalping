@@ -4,6 +4,8 @@ import { aiAnalysisService } from '../services/aiAnalysisService';
 import { AuthRequest } from '../middleware/auth';
 import { ApiResponse } from '../types';
 import { SymbolConverter } from '../utils/symbolConverter';
+import OpportunityModel from '../models/Opportunity';
+import WhaleActivityModel from '../models/WhaleActivity';
 
 // Helper function to calculate technical indicators
 const calculateTechnicalIndicators = (klineData: any[], requestedIndicators: string[]) => {
@@ -651,7 +653,7 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
 
             const side = (priceDuringSpike > priceBefore || priceAfter > priceDuringSpike) ? 'BUY' : 'SELL';
 
-            whaleActivities.push({
+            const whaleData: any = {
               symbol: normalizedSymbol,
               type: whaleType,
               side: side,
@@ -662,6 +664,33 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
               volumeSpike: volumeSpike,
               description: `${whaleType.toLowerCase().replace('_', ' ')} detected with ${volumeSpike.toFixed(1)}x volume spike`,
               timestamp: new Date(Date.now() - (recentVolumes.length - spikeIndex) * 60 * 1000).toISOString() // Estimate time based on position
+            };
+
+            // Get LLM analysis for this whale activity
+            try {
+              const llmInsights = await aiAnalysisService.analyzeWhaleActivity(whaleData, {
+                price: currentPrice,
+                change24h: parseFloat(marketData.priceChangePercent || '0'),
+                volume: volume24h
+              });
+              whaleData.llmInsights = llmInsights;
+            } catch (llmError) {
+              console.warn(`LLM analysis failed for whale activity ${normalizedSymbol}, using fallback:`, llmError);
+            }
+
+            whaleActivities.push(whaleData);
+
+            // Save to database asynchronously (non-blocking)
+            const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // Expires in 30 minutes
+            WhaleActivityModel.create({
+              ...whaleData,
+              detectedAt: new Date(),
+              expiresAt,
+              isActive: true,
+              status: 'ACTIVE',
+              userId: req.user?._id
+            }).catch(dbError => {
+              console.error(`Failed to save whale activity ${normalizedSymbol} to database:`, dbError);
             });
           }
         }
@@ -670,10 +699,39 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
       }
     }
 
+    // Query database for recent active whale activities (combine with real-time)
+    try {
+      const dbWhaleActivities = await WhaleActivityModel.find({
+        isActive: true,
+        expiresAt: { $gt: new Date() },
+        value: { $gte: minSize }
+      })
+      .sort({ detectedAt: -1 })
+      .limit(20)
+      .lean();
+
+      // Merge with real-time activities (avoid duplicates)
+      const activitiesInRealtime = new Set(whaleActivities.map(w => `${w.symbol}-${w.timestamp}`));
+      dbWhaleActivities.forEach((dbWhale: any) => {
+        const key = `${dbWhale.symbol}-${dbWhale.detectedAt.toISOString()}`;
+        if (!activitiesInRealtime.has(key)) {
+          whaleActivities.push({
+            ...dbWhale,
+            timestamp: dbWhale.detectedAt.toISOString()
+          });
+        }
+      });
+    } catch (dbError) {
+      console.error('Failed to query whale activities from database:', dbError);
+    }
+
+    // Sort by timestamp descending (most recent first)
+    whaleActivities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
     res.json({
       success: true,
-      data: {
-        activities: whaleActivities,
+      data: whaleActivities.slice(0, 15), // Return array directly for frontend compatibility, limit to 15
+      metadata: {
         activityCount: whaleActivities.length,
         minSize,
         detectedAt: new Date().toISOString()
@@ -766,7 +824,7 @@ export const getOpportunityScanner = async (req: AuthRequest, res: Response): Pr
           else if (Math.abs(priceChange24h) > 5) category = 'BREAKOUT';
           else if (indicators.RSI < 30 || indicators.RSI > 70) category = 'REVERSAL';
 
-          opportunities.push({
+          const opportunityData: any = {
             symbol: normalizedSymbol,
             score: Math.min(100, Math.round(score)),
             confidence: Math.max(0.5, Math.min(0.9, score / 100)),
@@ -789,6 +847,29 @@ export const getOpportunityScanner = async (req: AuthRequest, res: Response): Pr
               macd: indicators.MACD.histogram
             },
             timestamp: new Date().toISOString()
+          };
+
+          // Get LLM analysis for this opportunity
+          try {
+            const llmInsights = await aiAnalysisService.analyzeOpportunity(opportunityData);
+            opportunityData.llmInsights = llmInsights;
+          } catch (llmError) {
+            console.warn(`LLM analysis failed for ${normalizedSymbol}, using fallback:`, llmError);
+          }
+
+          opportunities.push(opportunityData);
+
+          // Save to database asynchronously (non-blocking)
+          const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // Expires in 1 hour
+          OpportunityModel.create({
+            ...opportunityData,
+            detectedAt: new Date(),
+            expiresAt,
+            isActive: true,
+            status: 'ACTIVE',
+            userId: req.user?._id
+          }).catch(dbError => {
+            console.error(`Failed to save opportunity ${normalizedSymbol} to database:`, dbError);
           });
         }
       } catch (error) {
@@ -796,13 +877,38 @@ export const getOpportunityScanner = async (req: AuthRequest, res: Response): Pr
       }
     }
 
+    // Query database for recently active opportunities (combine with real-time)
+    try {
+      const dbOpportunities = await OpportunityModel.find({
+        isActive: true,
+        expiresAt: { $gt: new Date() },
+        score: { $gte: minScore }
+      })
+      .sort({ score: -1 })
+      .limit(20)
+      .lean();
+
+      // Merge with real-time opportunities (avoid duplicates)
+      const symbolsInRealtime = new Set(opportunities.map(o => o.symbol));
+      dbOpportunities.forEach((dbOpp: any) => {
+        if (!symbolsInRealtime.has(dbOpp.symbol)) {
+          opportunities.push({
+            ...dbOpp,
+            timestamp: dbOpp.detectedAt.toISOString()
+          });
+        }
+      });
+    } catch (dbError) {
+      console.error('Failed to query opportunities from database:', dbError);
+    }
+
     // Sort by score descending
     opportunities.sort((a, b) => b.score - a.score);
 
     res.json({
       success: true,
-      data: {
-        opportunities,
+      data: opportunities.slice(0, 12), // Return array directly for frontend compatibility, limit to 12
+      metadata: {
         opportunityCount: opportunities.length,
         minScore,
         scannedAt: new Date().toISOString()

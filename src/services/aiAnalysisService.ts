@@ -2877,6 +2877,174 @@ export class AIAnalysisService {
 
     return freshAnalysis;
   }
+
+  /**
+   * Analyze opportunity with professional trader insights
+   */
+  async analyzeOpportunity(opportunityData: any): Promise<any> {
+    try {
+      const prompt = `As a professional scalping trader, analyze this trading opportunity:
+
+Symbol: ${opportunityData.symbol}
+Category: ${opportunityData.category}
+Entry: $${opportunityData.entry}
+Target: $${opportunityData.target} (${opportunityData.expectedReturn}% expected return)
+Stop Loss: $${opportunityData.stopLoss}
+Risk/Reward: ${opportunityData.riskReward}:1
+Risk Level: ${opportunityData.riskLevel}
+Score: ${opportunityData.score}/100
+24h Volume: $${(opportunityData.volume24h / 1000000).toFixed(2)}M
+Price Change: ${opportunityData.priceChange.toFixed(2)}%
+
+Technical Indicators:
+- RSI: ${opportunityData.indicators.rsi}
+- Volatility: ${opportunityData.indicators.volatility}%
+- Volume Ratio: ${opportunityData.indicators.volume_ratio}x
+
+Provide a concise professional analysis with:
+1. Your trader thoughts on this opportunity (2-3 sentences)
+2. Your recommendation (BUY/SELL/HOLD)
+3. Your confidence level (0-1)
+4. 3-5 key factors to consider
+
+Keep it actionable and focused on risk-adjusted profitability for scalping.`;
+
+      const response = await this.retryWithBackoff(
+        () => this.httpClient.post<TogetherAIResponse>('/v1/chat/completions', {
+          model: this.models[1], // Use Qwen model for trader analysis
+          messages: [
+            {
+              role: 'system',
+              content: 'You are an expert scalping trader with 15+ years of experience in crypto markets. Provide concise, actionable trading insights.'
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          max_tokens: 400,
+          temperature: 0.3
+        }),
+        2,
+        3000,
+        `opportunity analysis for ${opportunityData.symbol}`
+      );
+
+      const content = response.data.choices[0].message.content;
+
+      // Parse the response
+      const thoughts = content.substring(0, Math.min(content.length, 300));
+      const recommendationMatch = content.match(/\b(BUY|SELL|HOLD)\b/i);
+      const recommendation = recommendationMatch ? recommendationMatch[0].toUpperCase() as 'BUY' | 'SELL' | 'HOLD' : 'HOLD';
+
+      // Extract key factors (look for numbered lists or bullet points)
+      const keyFactors: string[] = [];
+      const factorLines = content.split('\n').filter(line =>
+        /^[\d\-\*\•]/.test(line.trim()) || line.includes('Factor') || line.includes('factor')
+      );
+      factorLines.forEach(line => {
+        const cleaned = line.replace(/^[\d\-\*\•\.\)]\s*/, '').trim();
+        if (cleaned.length > 10 && cleaned.length < 150) {
+          keyFactors.push(cleaned);
+        }
+      });
+
+      return {
+        traderThoughts: thoughts,
+        recommendation,
+        confidence: Math.min(0.9, opportunityData.confidence * 1.1), // Slightly boost with LLM analysis
+        keyFactors: keyFactors.slice(0, 5)
+      };
+
+    } catch (error) {
+      console.error(`Error analyzing opportunity for ${opportunityData.symbol}:`, error);
+      // Return fallback insights
+      return {
+        traderThoughts: `${opportunityData.category} opportunity detected with ${opportunityData.score}/100 score. Entry at $${opportunityData.entry} with ${opportunityData.riskReward}:1 R/R ratio.`,
+        recommendation: opportunityData.score > 75 ? 'BUY' : 'HOLD' as 'BUY' | 'HOLD',
+        confidence: opportunityData.confidence,
+        keyFactors: [
+          `${opportunityData.riskLevel} risk level`,
+          `${opportunityData.riskReward}:1 risk/reward ratio`,
+          `${opportunityData.expectedReturn}% expected return`
+        ]
+      };
+    }
+  }
+
+  /**
+   * Analyze whale activity with institutional analyst perspective
+   */
+  async analyzeWhaleActivity(whaleData: any, marketData: any): Promise<any> {
+    try {
+      const prompt = `As an institutional trading analyst, analyze this whale activity:
+
+Symbol: ${whaleData.symbol}
+Type: ${whaleData.type}
+Side: ${whaleData.side}
+Size: ${Math.round(whaleData.size).toLocaleString()} tokens
+Value: $${Math.round(whaleData.value).toLocaleString()}
+Impact: ${whaleData.impact}
+Volume Spike: ${whaleData.volumeSpike.toFixed(1)}x
+Confidence: ${(whaleData.confidence * 100).toFixed(0)}%
+
+Market Context:
+- Current Price: $${marketData.price}
+- 24h Change: ${marketData.change24h}%
+- 24h Volume: $${(marketData.volume / 1000000).toFixed(2)}M
+
+Provide a concise institutional analysis with:
+1. Your analysis of this whale activity (2-3 sentences)
+2. Expected market impact (1-2 sentences)
+3. Trading strategy recommendation (2-3 sentences)
+4. Risk assessment (1-2 sentences)
+
+Focus on actionable insights for institutional-grade trading decisions.`;
+
+      const response = await this.retryWithBackoff(
+        () => this.httpClient.post<TogetherAIResponse>('/v1/chat/completions', {
+          model: this.models[1], // Use Qwen model for institutional analysis
+          messages: [
+            {
+              role: 'system',
+              content: 'You are an institutional trading analyst specializing in whale activity and market microstructure. Provide actionable, professional insights.'
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          max_tokens: 500,
+          temperature: 0.3
+        }),
+        2,
+        3000,
+        `whale activity analysis for ${whaleData.symbol}`
+      );
+
+      const content = response.data.choices[0].message.content;
+
+      // Parse sections
+      const sections = content.split('\n\n');
+
+      return {
+        traderAnalysis: sections[0]?.substring(0, 200) || `${whaleData.type} detected with ${whaleData.volumeSpike.toFixed(1)}x volume spike`,
+        marketImpact: sections[1]?.substring(0, 150) || `${whaleData.impact} impact expected on ${whaleData.symbol}`,
+        tradingStrategy: sections[2]?.substring(0, 200) || `Monitor for ${whaleData.side === 'BUY' ? 'bullish' : 'bearish'} continuation`,
+        riskAssessment: sections[3]?.substring(0, 150) || `${whaleData.confidence > 0.7 ? 'High' : 'Moderate'} confidence signal`
+      };
+
+    } catch (error) {
+      console.error(`Error analyzing whale activity for ${whaleData.symbol}:`, error);
+      // Return fallback insights
+      return {
+        traderAnalysis: `${whaleData.type} detected with ${whaleData.volumeSpike.toFixed(1)}x volume spike. ${whaleData.side === 'BUY' ? 'Bullish' : 'Bearish'} institutional positioning.`,
+        marketImpact: `${whaleData.impact} impact expected. Price likely to ${whaleData.side === 'BUY' ? 'increase' : 'decrease'} in near term.`,
+        tradingStrategy: `Consider ${whaleData.side === 'BUY' ? 'long' : 'short'} positions with tight stop losses. Monitor order book for follow-through.`,
+        riskAssessment: `${whaleData.confidence > 0.7 ? 'High confidence' : 'Moderate confidence'} signal. Manage position size accordingly.`
+      };
+    }
+  }
 }
 
 export const aiAnalysisService = new AIAnalysisService();

@@ -11,6 +11,8 @@ import { marketDataCacheService } from './marketDataCacheService';
 import { orderTrackingService } from './orderTrackingService';
 import { SymbolConverter } from '../utils/symbolConverter';
 import { ScalpingAgent, Trade } from '../models';
+import OpportunityModel from '../models/Opportunity';
+import WhaleActivityModel from '../models/WhaleActivity';
 import { ConsolidatedAnalysis, JobData } from '../types';
 
 export class AgendaService {
@@ -766,6 +768,52 @@ export class AgendaService {
         throw error;
       }
     });
+
+    // Expire Old Opportunities Job
+    this.agenda.define('expire-opportunities', async (job: any) => {
+      try {
+        const result = await OpportunityModel.updateMany(
+          {
+            expiresAt: { $lt: new Date() },
+            isActive: true
+          },
+          {
+            isActive: false,
+            status: 'EXPIRED'
+          }
+        );
+
+        console.log(`✅ Expired ${result.modifiedCount} old opportunities`);
+        await this.updateJobMetrics('expire-opportunities', 'success');
+
+      } catch (error) {
+        console.error('❌ Error expiring opportunities:', error);
+        await this.updateJobMetrics('expire-opportunities', 'error');
+      }
+    });
+
+    // Expire Old Whale Activities Job
+    this.agenda.define('expire-whale-activities', async (job: any) => {
+      try {
+        const result = await WhaleActivityModel.updateMany(
+          {
+            expiresAt: { $lt: new Date() },
+            isActive: true
+          },
+          {
+            isActive: false,
+            status: 'EXPIRED'
+          }
+        );
+
+        console.log(`✅ Expired ${result.modifiedCount} old whale activities`);
+        await this.updateJobMetrics('expire-whale-activities', 'success');
+
+      } catch (error) {
+        console.error('❌ Error expiring whale activities:', error);
+        await this.updateJobMetrics('expire-whale-activities', 'error');
+      }
+    });
   }
 
   private async performSystemHealthCheck(): Promise<void> {
@@ -888,6 +936,12 @@ export class AgendaService {
 
       // System health check every minute
       await this.agenda.every('1 minute', 'system-health-check');
+
+      // Expire old opportunities every 5 minutes
+      await this.agenda.every('5 minutes', 'expire-opportunities');
+
+      // Expire old whale activities every 5 minutes
+      await this.agenda.every('5 minutes', 'expire-whale-activities');
 
       console.log('Recurring jobs scheduled successfully');
     } catch (error) {
