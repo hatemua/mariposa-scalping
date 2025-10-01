@@ -290,15 +290,28 @@ function WhaleActivityMonitor({
 
       try {
         // Try to use enhanced whale activity API first
+        console.log('🐋 Calling whale activity API with symbols:', symbols, 'minSize:', minWhaleSize);
         const whaleResponse = await marketApi.getWhaleActivity(symbols, minWhaleSize);
+        console.log('🐋 Whale API response:', whaleResponse);
+
         if (whaleResponse.success && Array.isArray(whaleResponse.data)) {
+          console.log(`✅ Received ${whaleResponse.data.length} whale activities from API`);
           activities = whaleResponse.data;
         } else {
-          throw new Error('Whale activity API returned invalid data');
+          console.error('❌ Whale activity API returned invalid data:', whaleResponse);
+          throw new Error(`API Error: ${whaleResponse.error || 'Invalid response format'}`);
         }
       } catch (apiError) {
-        console.warn('Enhanced whale API failed, falling back to market analysis:', apiError);
-        // Fallback: Analyze real whale activity from market data
+        console.error('❌ Enhanced whale API failed:', apiError);
+        const errorMessage = apiError instanceof Error ? apiError.message : 'Unknown error';
+        console.error('Error details:', errorMessage);
+
+        // Show user-friendly error instead of fallback
+        setError(`API Error: ${errorMessage}. Please check backend logs.`);
+        toast.error(`Whale Activity API Error: ${errorMessage}`);
+
+        // Still try fallback but let user know
+        console.warn('Attempting fallback to market analysis...');
         activities = await analyzeRealWhaleActivity();
       }
 

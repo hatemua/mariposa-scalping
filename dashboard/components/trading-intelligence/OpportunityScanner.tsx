@@ -201,14 +201,27 @@ export default function OpportunityScanner({
 
       try {
         // Try to use enhanced opportunity scanner API first
+        console.log('🎯 Calling opportunity scanner API with symbols:', symbols, 'minScore:', minScore);
         const opportunityResponse = await marketApi.getOpportunityScanner(symbols, minScore);
+        console.log('🎯 Opportunity API response:', opportunityResponse);
+
         if (opportunityResponse.success && Array.isArray(opportunityResponse.data)) {
+          console.log(`✅ Received ${opportunityResponse.data.length} opportunities from API`);
           realOpportunities = opportunityResponse.data;
         } else {
-          throw new Error('Opportunity scanner API returned invalid data');
+          console.error('❌ Opportunity scanner API returned invalid data:', opportunityResponse);
+          throw new Error(`API Error: ${opportunityResponse.error || 'Invalid response format'}`);
         }
       } catch (apiError) {
-        console.warn('Enhanced opportunity API failed, falling back to market analysis:', apiError);
+        console.error('❌ Enhanced opportunity API failed:', apiError);
+        const errorMessage = apiError instanceof Error ? apiError.message : 'Unknown error';
+        console.error('Error details:', errorMessage);
+
+        // Show user-friendly error instead of silent fallback
+        setError(`API Error: ${errorMessage}. Please check backend logs.`);
+        toast.error(`Opportunity Scanner API Error: ${errorMessage}`);
+
+        console.warn('Attempting fallback to market analysis:', apiError);
 
         // Fallback: Fetch real market data for opportunity analysis
         // Process symbols in batches to avoid API rate limits

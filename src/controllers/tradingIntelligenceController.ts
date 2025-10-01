@@ -601,15 +601,22 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
 
 export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    console.log('🐋 Whale Activity Endpoint Called');
+    console.log('📥 Request body:', JSON.stringify(req.body));
+    console.log('👤 User:', req.user?._id || 'Not authenticated');
+
     const { symbols, minSize = 50000 } = req.body;
 
     if (!symbols || !Array.isArray(symbols) || symbols.length === 0) {
+      console.error('❌ Whale Activity: Invalid symbols array:', symbols);
       res.status(400).json({
         success: false,
         error: 'Symbols array is required'
       } as ApiResponse);
       return;
     }
+
+    console.log(`🔍 Analyzing whale activity for ${symbols.length} symbols with minSize: $${minSize}`);
 
     // Check cache for single-symbol requests
     if (symbols.length === 1) {
@@ -758,6 +765,15 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
 
     const finalActivities = whaleActivities.slice(0, 15);
 
+    console.log(`✅ Whale Activity Analysis Complete: Found ${finalActivities.length} activities`);
+    if (finalActivities.length > 0) {
+      console.log(`📊 Sample activity:`, {
+        symbol: finalActivities[0].symbol,
+        type: finalActivities[0].type,
+        value: finalActivities[0].value
+      });
+    }
+
     // Cache single-symbol responses for 30 seconds
     if (symbols.length === 1) {
       const cacheKey = `whale_activity:${symbols[0]}:${minSize}`;
@@ -769,6 +785,7 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
       }
     }
 
+    console.log(`📤 Sending response with ${finalActivities.length} whale activities`);
     res.json({
       success: true,
       data: finalActivities, // Return array directly for frontend compatibility, limit to 15
@@ -780,25 +797,34 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
     } as ApiResponse);
 
   } catch (error) {
-    console.error('Error detecting whale activity:', error);
+    console.error('❌ Error detecting whale activity:', error);
+    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     res.status(500).json({
       success: false,
-      error: 'Failed to detect whale activity'
+      error: 'Failed to detect whale activity',
+      details: error instanceof Error ? error.message : 'Unknown error'
     } as ApiResponse);
   }
 };
 
 export const getOpportunityScanner = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    console.log('🎯 Opportunity Scanner Endpoint Called');
+    console.log('📥 Request body:', JSON.stringify(req.body));
+    console.log('👤 User:', req.user?._id || 'Not authenticated');
+
     const { symbols, minScore = 70 } = req.body;
 
     if (!symbols || !Array.isArray(symbols) || symbols.length === 0) {
+      console.error('❌ Opportunity Scanner: Invalid symbols array:', symbols);
       res.status(400).json({
         success: false,
         error: 'Symbols array is required'
       } as ApiResponse);
       return;
     }
+
+    console.log(`🔍 Scanning opportunities for ${symbols.length} symbols with minScore: ${minScore}`);
 
     // Check cache for single-symbol requests
     if (symbols.length === 1) {
@@ -975,6 +1001,15 @@ export const getOpportunityScanner = async (req: AuthRequest, res: Response): Pr
 
     const finalOpportunities = opportunities.slice(0, 12);
 
+    console.log(`✅ Opportunity Scan Complete: Found ${finalOpportunities.length} opportunities`);
+    if (finalOpportunities.length > 0) {
+      console.log(`📊 Sample opportunity:`, {
+        symbol: finalOpportunities[0].symbol,
+        score: finalOpportunities[0].score,
+        category: finalOpportunities[0].category
+      });
+    }
+
     // Cache single-symbol responses for 30 seconds
     if (symbols.length === 1) {
       const cacheKey = `opportunity_scan:${symbols[0]}:${minScore}`;
@@ -986,6 +1021,7 @@ export const getOpportunityScanner = async (req: AuthRequest, res: Response): Pr
       }
     }
 
+    console.log(`📤 Sending response with ${finalOpportunities.length} opportunities`);
     res.json({
       success: true,
       data: finalOpportunities, // Return array directly for frontend compatibility, limit to 12
@@ -997,10 +1033,12 @@ export const getOpportunityScanner = async (req: AuthRequest, res: Response): Pr
     } as ApiResponse);
 
   } catch (error) {
-    console.error('Error scanning opportunities:', error);
+    console.error('❌ Error scanning opportunities:', error);
+    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     res.status(500).json({
       success: false,
-      error: 'Failed to scan opportunities'
+      error: 'Failed to scan opportunities',
+      details: error instanceof Error ? error.message : 'Unknown error'
     } as ApiResponse);
   }
 };
