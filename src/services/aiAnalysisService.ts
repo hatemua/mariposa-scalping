@@ -16,7 +16,7 @@ interface TogetherAIResponse {
 
 export class AIAnalysisService {
   private apiKey: string;
-  private baseURL = 'https://api.together.xyz/v1/chat/completions';
+  private baseURL = 'https://api.together.xyz'; // Base URL only, path added in requests
   private httpClient: AxiosInstance;
 
   private models = [
@@ -107,7 +107,9 @@ export class AIAnalysisService {
         console.error(`❌ ${context} attempt ${attempt} failed:`, {
           code: error.code,
           status: error.response?.status,
+          statusText: error.response?.statusText,
           message: error.message?.substring(0, 100),
+          responseData: error.response?.data ? JSON.stringify(error.response.data).substring(0, 200) : undefined,
           isRetriable: isRetriableError
         });
 
@@ -202,7 +204,7 @@ export class AIAnalysisService {
   private async getModelAnalysis(model: string, prompt: string): Promise<LLMAnalysis> {
     return await this.retryWithBackoff(
       async () => {
-        const response = await this.httpClient.post<TogetherAIResponse>('', {
+        const response = await this.httpClient.post<TogetherAIResponse>('/v1/chat/completions', {
           model,
           messages: [
             {
@@ -328,7 +330,7 @@ export class AIAnalysisService {
       `;
 
       const response = await this.retryWithBackoff(
-        () => this.httpClient.post<TogetherAIResponse>('', {
+        () => this.httpClient.post<TogetherAIResponse>('/v1/chat/completions', {
           model: this.models[1], // Use the most capable model for consolidation
           messages: [
             {
@@ -1223,7 +1225,7 @@ export class AIAnalysisService {
       `;
 
       const response = await this.retryWithBackoff(
-        () => this.httpClient.post<TogetherAIResponse>('', {
+        () => this.httpClient.post<TogetherAIResponse>('/v1/chat/completions', {
           model: this.models[1], // Use most capable model
           messages: [
             {
@@ -1668,7 +1670,7 @@ export class AIAnalysisService {
 
       // Get consolidated analysis from the most capable model
       const response = await this.retryWithBackoff(
-        () => this.httpClient.post<TogetherAIResponse>('', {
+        () => this.httpClient.post<TogetherAIResponse>('/v1/chat/completions', {
           model: this.models[1], // Use most capable model
           messages: [
             {
