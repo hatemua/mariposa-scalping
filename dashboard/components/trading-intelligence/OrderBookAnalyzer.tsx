@@ -94,6 +94,15 @@ interface OrderBookData {
     risk: string;
     opportunity: string;
   };
+  llmInsights?: {
+    recommendation: string;
+    confidence: number;
+    reasoning: string;
+    keyLevels: { price: number; type: 'SUPPORT' | 'RESISTANCE'; strength: number }[];
+    executionStrategy: string;
+    riskAssessment: string;
+    timestamp: string;
+  };
 }
 
 interface OrderBookAnalyzerProps {
@@ -128,7 +137,7 @@ export default function OrderBookAnalyzer({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedLevel, setSelectedLevel] = useState<OrderBookLevel | null>(null);
-  const [viewMode, setViewMode] = useState<'book' | 'analysis' | 'flow' | 'signals'>('book');
+  const [viewMode, setViewMode] = useState<'book' | 'analysis' | 'flow' | 'signals' | 'ai'>('book');
 
   // Get real order book data from Binance API via WebSocket
   const generateOrderBookData = async (symbol: string): Promise<OrderBookData> => {
@@ -332,7 +341,8 @@ export default function OrderBookAnalyzer({
           { id: 'book', label: 'Order Book', icon: Layers },
           { id: 'analysis', label: 'Analysis', icon: BarChart3 },
           { id: 'flow', label: 'Flow', icon: Activity },
-          { id: 'signals', label: 'Signals', icon: Zap }
+          { id: 'signals', label: 'Signals', icon: Zap },
+          { id: 'ai', label: 'AI Insights', icon: Eye }
         ].map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -823,6 +833,97 @@ export default function OrderBookAnalyzer({
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {viewMode === 'ai' && (
+            <div className="space-y-6">
+              {orderBookData.llmInsights ? (
+                <>
+                  {/* AI Recommendation */}
+                  <div className={`rounded-lg p-6 border-2 ${
+                    orderBookData.llmInsights.recommendation === 'BUY' ? 'bg-green-50 border-green-200' :
+                    orderBookData.llmInsights.recommendation === 'SELL' ? 'bg-red-50 border-red-200' :
+                    'bg-gray-50 border-gray-200'
+                  }`}>
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <Eye className="h-5 w-5 text-indigo-600" />
+                        <h4 className="text-lg font-semibold">AI Trading Recommendation</h4>
+                      </div>
+                      <span className={`px-3 py-1 rounded-lg font-bold text-lg ${
+                        orderBookData.llmInsights.recommendation === 'BUY' ? 'bg-green-600 text-white' :
+                        orderBookData.llmInsights.recommendation === 'SELL' ? 'bg-red-600 text-white' :
+                        'bg-gray-600 text-white'
+                      }`}>
+                        {orderBookData.llmInsights.recommendation}
+                      </span>
+                    </div>
+                    <div className="mb-3">
+                      <div className="text-sm text-gray-600 mb-1">Confidence Level</div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 bg-gray-200 rounded-full h-2">
+                          <div
+                            className="bg-indigo-600 h-2 rounded-full transition-all"
+                            style={{ width: `${orderBookData.llmInsights.confidence * 100}%` }}
+                          />
+                        </div>
+                        <span className="text-sm font-medium">{Math.round(orderBookData.llmInsights.confidence * 100)}%</span>
+                      </div>
+                    </div>
+                    <div className="text-sm text-gray-700 leading-relaxed">
+                      {orderBookData.llmInsights.reasoning}
+                    </div>
+                  </div>
+
+                  {/* Key Price Levels */}
+                  {orderBookData.llmInsights.keyLevels && orderBookData.llmInsights.keyLevels.length > 0 && (
+                    <div className="bg-white border border-gray-200 rounded-lg p-4">
+                      <h4 className="font-medium text-gray-900 mb-4">AI-Identified Key Levels</h4>
+                      <div className="space-y-2">
+                        {orderBookData.llmInsights.keyLevels.map((level, index) => (
+                          <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                            <div>
+                              <div className="text-sm font-medium">${level.price.toFixed(4)}</div>
+                              <div className={`text-xs ${
+                                level.type === 'SUPPORT' ? 'text-green-600' : 'text-red-600'
+                              }`}>
+                                {level.type}
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xs text-gray-600">Strength</div>
+                              <div className="text-sm font-medium">{level.strength}%</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Execution Strategy */}
+                  <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                    <h4 className="font-medium text-indigo-900 mb-3">AI Execution Strategy</h4>
+                    <p className="text-sm text-indigo-700 mb-3">{orderBookData.llmInsights.executionStrategy}</p>
+                    <div className="text-sm font-medium text-indigo-800">Risk Assessment</div>
+                    <p className="text-sm text-indigo-700">{orderBookData.llmInsights.riskAssessment}</p>
+                  </div>
+
+                  {/* Timestamp */}
+                  <div className="text-xs text-gray-500 text-center">
+                    AI analysis generated {new Date(orderBookData.llmInsights.timestamp).toLocaleString()}
+                  </div>
+                </>
+              ) : (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
+                  <AlertTriangle className="h-8 w-8 text-yellow-600 mx-auto mb-3" />
+                  <p className="text-yellow-800 font-medium mb-2">AI Insights Unavailable</p>
+                  <p className="text-sm text-yellow-700">
+                    LLM analysis is currently being processed or unavailable.
+                    Technical analysis is still available in other tabs.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

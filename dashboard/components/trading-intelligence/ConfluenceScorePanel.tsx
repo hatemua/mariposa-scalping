@@ -86,17 +86,53 @@ export default function ConfluenceScorePanel({
   // Calculate confluence score from available data
   const calculateConfluenceScore = async (symbol: string): Promise<ConfluenceData> => {
     try {
-      // Get real-time analysis and market data
-      const [rtAnalysis, marketData] = await Promise.all([
-        marketApi.getRealTimeAnalysis(symbol),
-        marketApi.getMarketData(symbol)
-      ]);
-
-      const rtData = safeObject.get(rtAnalysis, 'data', {});
+      // Get market data first (fast and reliable)
+      const marketData = await marketApi.getMarketData(symbol);
       const mData = safeObject.get(marketData, 'data', {});
-      const consensus = safeObject.get(rtData, 'consensus', {});
-      const marketConditions = safeObject.get(rtData, 'marketConditions', {});
-      const individualModels = safeObject.get(rtData, 'individualModels', []);
+
+      // Try to get real-time LLM analysis, but use fallback if it fails or times out
+      let rtAnalysis: any = null;
+      let rtData: any = {};
+      let consensus: any = {};
+      let marketConditions: any = {};
+      let individualModels: any[] = [];
+
+      try {
+        // Set a shorter timeout for LLM analysis (30 seconds)
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('LLM analysis timeout')), 30000)
+        );
+
+        rtAnalysis = await Promise.race([
+          marketApi.getRealTimeAnalysis(symbol),
+          timeoutPromise
+        ]);
+
+        rtData = safeObject.get(rtAnalysis, 'data', {});
+        consensus = safeObject.get(rtData, 'consensus', {});
+        marketConditions = safeObject.get(rtData, 'marketConditions', {});
+        individualModels = safeObject.get(rtData, 'individualModels', []);
+      } catch (llmError: any) {
+        console.warn(`⚠️ LLM analysis unavailable for ${symbol}, using fallback:`, llmError.message);
+
+        // Fallback: Generate basic market conditions from market data
+        const priceChange = safeNumber.getValue(safeObject.get(mData, 'change24h', 0));
+        const volume = safeNumber.getValue(safeObject.get(mData, 'volume', 0));
+
+        consensus = {
+          recommendation: priceChange > 2 ? 'BUY' : priceChange < -2 ? 'SELL' : 'HOLD',
+          confidence: 0.5,
+          modelAgreement: 0.5,
+          urgency: Math.abs(priceChange) > 5 ? 8 : 5
+        };
+
+        marketConditions = {
+          volatility: Math.abs(priceChange) / 10,
+          spread: 0.001,
+          tradingCondition: volume > 50000000 ? 'EXCELLENT' : volume > 10000000 ? 'FAIR' : 'MODERATE',
+          priceAction: priceChange > 0 ? 'BULLISH' : priceChange < 0 ? 'BEARISH' : 'SIDEWAYS'
+        };
+      }
 
       // Calculate individual factor scores (0-100)
       const factors: ConfluenceFactors = {

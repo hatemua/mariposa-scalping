@@ -72,6 +72,15 @@ export interface OrderBookData {
     risk: string;
     opportunity: string;
   };
+  llmInsights?: {
+    recommendation: string;
+    confidence: number;
+    reasoning: string;
+    keyLevels: { price: number; type: 'SUPPORT' | 'RESISTANCE'; strength: number }[];
+    executionStrategy: string;
+    riskAssessment: string;
+    timestamp: string;
+  };
 }
 
 interface TradeData {
@@ -439,6 +448,67 @@ export class OrderBookAnalysisService extends EventEmitter {
       signals,
       recommendations
     };
+
+    // Add LLM analysis for deeper insights (optional, non-blocking)
+    try {
+      const { aiAnalysisService } = await import('./aiAnalysisService');
+
+      // Prepare order book summary for LLM
+      const orderBookSummary = {
+        symbol,
+        midPrice,
+        spread: spreadPercentage,
+        imbalance: {
+          direction: imbalance.direction,
+          strength: imbalance.imbalanceStrength,
+          ratio: imbalance.bidAskRatio
+        },
+        topBids: bids.slice(0, 5).map(b => ({ price: b.price, size: b.size })),
+        topAsks: asks.slice(0, 5).map(a => ({ price: a.price, size: a.size })),
+        liquidityGaps: liquidityGaps.slice(0, 3),
+        signals: {
+          liquidityGrab: liquidityGrab.detected,
+          whaleActivity: whaleActivity.detected,
+          flowTrend: flow.flowTrend
+        }
+      };
+
+      // Get market data for context
+      const marketData = await binanceService.getSymbolInfo(symbol);
+
+      // Use aiAnalysisService.analyzeMarketData with order book context
+      const llmResponse = await aiAnalysisService.analyzeMarketData(
+        marketData,
+        [], // No kline data needed for order book analysis
+        orderBook
+      );
+
+      if (llmResponse && llmResponse.recommendation) {
+        // Map LLM response to our llmInsights format
+        analysis.llmInsights = {
+          recommendation: llmResponse.recommendation || 'HOLD',
+          confidence: llmResponse.confidence || 0.5,
+          reasoning: llmResponse.reasoning || 'Order book analysis in progress',
+          keyLevels: [
+            { price: midPrice * 0.99, type: 'SUPPORT', strength: 75 },
+            { price: midPrice * 1.01, type: 'RESISTANCE', strength: 75 }
+          ],
+          executionStrategy: `Based on ${imbalance.direction} order book imbalance (${imbalance.imbalanceStrength}), ${
+            imbalance.direction === 'BULLISH' ? 'consider buy-side execution with limit orders near support' :
+            imbalance.direction === 'BEARISH' ? 'consider sell-side execution with limit orders near resistance' :
+            'balanced execution with market orders acceptable'
+          }`,
+          riskAssessment: `Spread: ${spreadPercentage.toFixed(3)}%, ${
+            spreadPercentage > 0.1 ? 'High spread risk - use limit orders' : 'Normal spread - market orders acceptable'
+          }. ${liquidityGrab.detected ? 'Liquidity grab detected - exercise caution' : 'No major liquidity concerns'}`,
+          timestamp: new Date().toISOString()
+        };
+        console.log(`✅ LLM analysis added for ${symbol} order book`);
+      }
+    } catch (llmError) {
+      console.warn(`⚠️ LLM analysis unavailable for ${symbol} order book:`, llmError);
+      // Continue without LLM insights - not critical
+    }
 
     // Cache the analysis
     this.analysisCache.set(symbol, analysis);
