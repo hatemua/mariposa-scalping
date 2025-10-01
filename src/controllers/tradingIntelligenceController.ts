@@ -660,11 +660,20 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
         const maxVolume = Math.max(...recentVolumes);
         const volumeSpike = maxVolume / avgVolume;
 
-        // Only detect whale activity in liquid markets
-        if (volume24h > minSize * 10 && volumeSpike > 2) {
+        // Calculate volume in USD for threshold comparison
+        const volume24hUSD = volume24h * currentPrice;
+        const minLiquidityUSD = minSize * 10; // Need 10x minSize for liquid market
+
+        console.log(`🔍 ${normalizedSymbol} - Volume24h: $${(volume24hUSD / 1000000).toFixed(2)}M, VolumeSpike: ${volumeSpike.toFixed(2)}x, MinLiquidity: $${(minLiquidityUSD / 1000000).toFixed(2)}M`);
+
+        // Only detect whale activity in liquid markets (fix: use USD value, not coin volume)
+        if (volume24hUSD > minLiquidityUSD && volumeSpike > 2) {
           const whaleTradeValue = maxVolume * currentPrice;
+          console.log(`✅ ${normalizedSymbol} - Potential whale detected: $${(whaleTradeValue / 1000).toFixed(0)}K trade, ${volumeSpike.toFixed(1)}x volume spike`);
 
           if (whaleTradeValue > minSize) {
+            console.log(`💰 ${normalizedSymbol} - Whale trade value $${(whaleTradeValue / 1000).toFixed(0)}K exceeds minSize $${(minSize / 1000).toFixed(0)}K`);
+
             // Determine whale activity type based on price action and volume
             const priceMovement = parseFloat(marketData.change24h || '0');
             let whaleType = 'LARGE_TRADE';
@@ -677,6 +686,8 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
               whaleType = 'ACCUMULATION';
               impact = 'MEDIUM';
             }
+
+            console.log(`🐋 ${normalizedSymbol} - Whale type: ${whaleType}, Impact: ${impact}`);
 
             // Determine side based on price action during volume spike
             const spikeIndex = recentVolumes.indexOf(maxVolume);
@@ -725,7 +736,11 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
             }).catch(dbError => {
               console.error(`Failed to save whale activity ${normalizedSymbol} to database:`, dbError);
             });
+          } else {
+            console.log(`⚠️ ${normalizedSymbol} - Whale trade value $${(whaleTradeValue / 1000).toFixed(0)}K below minSize $${(minSize / 1000).toFixed(0)}K`);
           }
+        } else {
+          console.log(`⚠️ ${normalizedSymbol} - No whale detected: Volume24hUSD=$${(volume24hUSD / 1000000).toFixed(2)}M (need >$${(minLiquidityUSD / 1000000).toFixed(2)}M) or VolumeSpike=${volumeSpike.toFixed(2)}x (need >2x)`);
         }
       } catch (error) {
         console.warn(`Failed to analyze whale activity for ${symbol}:`, error);
@@ -908,8 +923,11 @@ export const getOpportunityScanner = async (req: AuthRequest, res: Response): Pr
         const stopLoss = entry * (1 - stopLossPercent / 100);
         const riskReward = Math.abs(target - entry) / Math.abs(entry - stopLoss);
 
-        // Only include opportunities with good risk/reward and above minimum score
-        if (score >= minScore && riskReward > 1.5) {
+        console.log(`🎯 ${normalizedSymbol} - Score: ${score.toFixed(0)}, R/R: ${riskReward.toFixed(2)}, MinScore: ${minScore}`);
+
+        // Only include opportunities with good risk/reward and above minimum score (lowered from 1.5 to 1.2)
+        if (score >= minScore && riskReward > 1.2) {
+          console.log(`✅ ${normalizedSymbol} - Opportunity qualified! Score=${score.toFixed(0)}, R/R=${riskReward.toFixed(2)}`);
           // Determine category based on dominant factor
           let category = 'MOMENTUM';
           if (volume24h > 50000000) category = 'VOLUME_SURGE';
@@ -963,6 +981,8 @@ export const getOpportunityScanner = async (req: AuthRequest, res: Response): Pr
           }).catch(dbError => {
             console.error(`Failed to save opportunity ${normalizedSymbol} to database:`, dbError);
           });
+        } else {
+          console.log(`⚠️ ${normalizedSymbol} - Opportunity filtered: Score=${score.toFixed(0)} (need >=${minScore}), R/R=${riskReward.toFixed(2)} (need >1.2)`);
         }
       } catch (error) {
         console.warn(`Failed to analyze opportunity for ${symbol}:`, error);
