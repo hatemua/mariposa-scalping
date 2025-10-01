@@ -85,10 +85,33 @@ export default function ConfluenceScorePanel({
 
   // Calculate confluence score from available data
   const calculateConfluenceScore = async (symbol: string): Promise<ConfluenceData> => {
+    // Validate symbol first
+    if (!symbol || symbol.trim() === '') {
+      throw new Error('Invalid symbol provided');
+    }
+
     try {
-      // Get market data first (fast and reliable)
-      const marketData = await marketApi.getMarketData(symbol);
+      // Get market data first (fast and reliable) with error handling
+      let marketData;
+      try {
+        marketData = await marketApi.getMarketData(symbol);
+
+        // Validate market data response
+        if (!marketData || !marketData.success || !marketData.data) {
+          throw new Error(`No market data available for ${symbol}`);
+        }
+      } catch (mdError: any) {
+        console.error('Failed to fetch market data:', mdError);
+        throw new Error(`Unable to fetch market data for ${symbol}. ${mdError.message || 'Backend may be unavailable.'}`);
+      }
+
       const mData = safeObject.get(marketData, 'data', {});
+
+      // Additional validation - ensure we have price data
+      const currentPrice = safeNumber.getValue(safeObject.get(mData, 'price', 0));
+      if (!currentPrice || currentPrice === 0) {
+        throw new Error(`Invalid price data for ${symbol}. Please verify the symbol is correct.`);
+      }
 
       // Try to get real-time LLM analysis, but use fallback if it fails or times out
       let rtAnalysis: any = null;
