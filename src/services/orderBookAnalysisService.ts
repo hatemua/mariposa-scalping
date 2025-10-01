@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { binanceService } from './binanceService';
 import { redisService } from './redisService';
 import { SymbolConverter } from '../utils/symbolConverter';
+import { MarketData } from '../types';
 
 export interface OrderBookLevel {
   price: number;
@@ -474,8 +475,19 @@ export class OrderBookAnalysisService extends EventEmitter {
       };
 
       // Get market data AND kline data for LLM context
-      const marketData = await binanceService.getSymbolInfo(symbol);
+      const binanceData = await binanceService.getSymbolInfo(symbol);
       const klineData = await binanceService.getKlineData(symbol, '1m', 20); // Get 20 recent 1m candles for context
+
+      // Convert Binance data to MarketData format
+      const marketData: MarketData = {
+        symbol: symbol, // Use the symbol parameter, not binanceData.symbol
+        price: parseFloat(binanceData.lastPrice || binanceData.price || '0'),
+        volume: parseFloat(binanceData.volume || '0'),
+        change24h: parseFloat(binanceData.priceChangePercent || '0'),
+        high24h: parseFloat(binanceData.highPrice || '0'),
+        low24h: parseFloat(binanceData.lowPrice || '0'),
+        timestamp: new Date()
+      };
 
       // Use aiAnalysisService.analyzeMarketData with full context
       const llmResponse = await aiAnalysisService.analyzeMarketData(
