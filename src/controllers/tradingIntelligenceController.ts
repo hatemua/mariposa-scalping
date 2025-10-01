@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { binanceService } from '../services/binanceService';
 import { aiAnalysisService } from '../services/aiAnalysisService';
+import { redisService } from '../services/redisService';
 import { AuthRequest } from '../middleware/auth';
 import { ApiResponse } from '../types';
 import { SymbolConverter } from '../utils/symbolConverter';
@@ -610,6 +611,31 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
       return;
     }
 
+    // Check cache for single-symbol requests
+    if (symbols.length === 1) {
+      const cacheKey = `whale_activity:${symbols[0]}:${minSize}`;
+      try {
+        const cached = await redisService.get(cacheKey);
+        if (cached) {
+          const cachedData = JSON.parse(cached);
+          console.log(`✅ Cache hit for whale activity: ${symbols[0]}`);
+          res.json({
+            success: true,
+            data: cachedData,
+            metadata: {
+              cached: true,
+              activityCount: cachedData.length,
+              minSize,
+              detectedAt: new Date().toISOString()
+            }
+          } as ApiResponse);
+          return;
+        }
+      } catch (cacheError) {
+        console.warn('Cache read failed, continuing with fresh analysis:', cacheError);
+      }
+    }
+
     const whaleActivities: any[] = [];
 
     for (const symbol of symbols.slice(0, 8)) { // Limit for performance
@@ -701,7 +727,9 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
 
     // Query database for recent active whale activities (combine with real-time)
     try {
+      const normalizedSymbols = symbols.map(s => SymbolConverter.normalize(s));
       const dbWhaleActivities = await WhaleActivityModel.find({
+        symbol: { $in: normalizedSymbols }, // Filter by requested symbols only
         isActive: true,
         expiresAt: { $gt: new Date() },
         value: { $gte: minSize }
@@ -728,9 +756,22 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
     // Sort by timestamp descending (most recent first)
     whaleActivities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
+    const finalActivities = whaleActivities.slice(0, 15);
+
+    // Cache single-symbol responses for 30 seconds
+    if (symbols.length === 1) {
+      const cacheKey = `whale_activity:${symbols[0]}:${minSize}`;
+      try {
+        await redisService.set(cacheKey, JSON.stringify(finalActivities), { ttl: 30 });
+        console.log(`✅ Cached whale activity for ${symbols[0]} (30s TTL)`);
+      } catch (cacheError) {
+        console.warn('Cache write failed:', cacheError);
+      }
+    }
+
     res.json({
       success: true,
-      data: whaleActivities.slice(0, 15), // Return array directly for frontend compatibility, limit to 15
+      data: finalActivities, // Return array directly for frontend compatibility, limit to 15
       metadata: {
         activityCount: whaleActivities.length,
         minSize,
@@ -757,6 +798,31 @@ export const getOpportunityScanner = async (req: AuthRequest, res: Response): Pr
         error: 'Symbols array is required'
       } as ApiResponse);
       return;
+    }
+
+    // Check cache for single-symbol requests
+    if (symbols.length === 1) {
+      const cacheKey = `opportunity_scan:${symbols[0]}:${minScore}`;
+      try {
+        const cached = await redisService.get(cacheKey);
+        if (cached) {
+          const cachedData = JSON.parse(cached);
+          console.log(`✅ Cache hit for opportunity scan: ${symbols[0]}`);
+          res.json({
+            success: true,
+            data: cachedData,
+            metadata: {
+              cached: true,
+              opportunityCount: cachedData.length,
+              minScore,
+              scannedAt: new Date().toISOString()
+            }
+          } as ApiResponse);
+          return;
+        }
+      } catch (cacheError) {
+        console.warn('Cache read failed, continuing with fresh analysis:', cacheError);
+      }
     }
 
     const opportunities: any[] = [];
@@ -879,7 +945,9 @@ export const getOpportunityScanner = async (req: AuthRequest, res: Response): Pr
 
     // Query database for recently active opportunities (combine with real-time)
     try {
+      const normalizedSymbols = symbols.map(s => SymbolConverter.normalize(s));
       const dbOpportunities = await OpportunityModel.find({
+        symbol: { $in: normalizedSymbols }, // Filter by requested symbols only
         isActive: true,
         expiresAt: { $gt: new Date() },
         score: { $gte: minScore }
@@ -905,9 +973,22 @@ export const getOpportunityScanner = async (req: AuthRequest, res: Response): Pr
     // Sort by score descending
     opportunities.sort((a, b) => b.score - a.score);
 
+    const finalOpportunities = opportunities.slice(0, 12);
+
+    // Cache single-symbol responses for 30 seconds
+    if (symbols.length === 1) {
+      const cacheKey = `opportunity_scan:${symbols[0]}:${minScore}`;
+      try {
+        await redisService.set(cacheKey, JSON.stringify(finalOpportunities), { ttl: 30 });
+        console.log(`✅ Cached opportunity scan for ${symbols[0]} (30s TTL)`);
+      } catch (cacheError) {
+        console.warn('Cache write failed:', cacheError);
+      }
+    }
+
     res.json({
       success: true,
-      data: opportunities.slice(0, 12), // Return array directly for frontend compatibility, limit to 12
+      data: finalOpportunities, // Return array directly for frontend compatibility, limit to 12
       metadata: {
         opportunityCount: opportunities.length,
         minScore,
