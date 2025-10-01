@@ -1100,6 +1100,7 @@ export const getChartData = async (req: AuthRequest, res: Response): Promise<voi
         symbol: normalizedSymbol,
         timeframe,
         chartData,
+        klines: klineData, // Raw Binance format for frontend components
         technicalIndicators: formatIndicatorsForChart(technicalIndicators),
         llmAnalyses: formatAnalysisForChart(llmAnalyses),
         volumeProfile: calculateVolumeProfile(klineData),
