@@ -702,15 +702,42 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
 
             const side = (priceDuringSpike > priceBefore || priceAfter > priceDuringSpike) ? 'BUY' : 'SELL';
 
+            // Determine unusual activity patterns
+            const unusualActivity: string[] = [];
+            if (volumeSpike > 5) unusualActivity.push('Massive volume spike detected');
+            if (Math.abs(priceMovement) > 10) unusualActivity.push('Large price impact identified');
+            if (volumeSpike > 3 && Math.abs(priceMovement) < 2) unusualActivity.push('Stealth accumulation pattern');
+            if (unusualActivity.length === 0) unusualActivity.push('Significant volume activity');
+
+            // Determine order type based on execution pattern
+            const orderType = volumeSpike > 4 ? 'MARKET' : volumeSpike > 3 ? 'ICEBERG' : 'TWAP';
+
             const whaleData: any = {
               symbol: normalizedSymbol,
               type: whaleType,
               side: side,
               size: Math.round(maxVolume),
+              price: currentPrice, // Add price field for frontend
               value: Math.round(whaleTradeValue),
               impact: impact,
               confidence: Math.min(0.95, 0.6 + (volumeSpike - 2) * 0.1),
+              priceImpact: Math.abs(priceMovement), // Add priceImpact field
               volumeSpike: volumeSpike,
+              volumeRatio: volumeSpike, // Add volumeRatio alias for frontend compatibility
+              exchange: 'Binance', // Add exchange field
+              orderType: orderType, // Add orderType field
+              unusualActivity: unusualActivity, // Add unusual activity patterns
+              marketBehavior: {
+                followThrough: Math.abs(priceMovement) > 1,
+                resistanceBreak: priceMovement > 5,
+                supportHold: priceMovement < -5 && priceMovement > -10,
+                volumeSpike: volumeSpike > 2
+              },
+              prediction: {
+                direction: side === 'BUY' ? 'BULLISH' : 'BEARISH',
+                timeframe: volumeSpike > 5 ? '1h' : '4h',
+                probability: Math.min(0.95, 0.6 + (volumeSpike - 2) * 0.1)
+              },
               description: `${whaleType.toLowerCase().replace('_', ' ')} detected with ${volumeSpike.toFixed(1)}x volume spike`,
               timestamp: new Date(Date.now() - (recentVolumes.length - spikeIndex) * 60 * 1000).toISOString() // Estimate time based on position
             };
