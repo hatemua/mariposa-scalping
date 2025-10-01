@@ -652,7 +652,12 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
         const klineData = await binanceService.getKlineData(normalizedSymbol, '1m', 20);
 
         const volume24h = parseFloat(marketData.volume || '0');
-        const currentPrice = parseFloat(marketData.price);
+        const currentPrice = parseFloat(marketData.lastPrice || marketData.price || '0');
+
+        if (!currentPrice || isNaN(currentPrice)) {
+          console.error(`❌ ${normalizedSymbol} - Invalid price data:`, marketData);
+          continue;
+        }
 
         // Analyze recent volume spikes for whale activity
         const recentVolumes = klineData.map((k: any) => parseFloat(k[5]));
@@ -675,7 +680,7 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
             console.log(`💰 ${normalizedSymbol} - Whale trade value $${(whaleTradeValue / 1000).toFixed(0)}K exceeds minSize $${(minSize / 1000).toFixed(0)}K`);
 
             // Determine whale activity type based on price action and volume
-            const priceMovement = parseFloat(marketData.change24h || '0');
+            const priceMovement = parseFloat(marketData.priceChangePercent || marketData.change24h || '0');
             let whaleType = 'LARGE_TRADE';
             let impact = 'LOW';
 
@@ -714,7 +719,7 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
             try {
               const llmInsights = await aiAnalysisService.analyzeWhaleActivity(whaleData, {
                 price: currentPrice,
-                change24h: parseFloat(marketData.priceChangePercent || '0'),
+                change24h: parseFloat(marketData.priceChangePercent || marketData.change24h || '0'),
                 volume: volume24h
               });
               whaleData.llmInsights = llmInsights;
@@ -875,11 +880,22 @@ export const getOpportunityScanner = async (req: AuthRequest, res: Response): Pr
         const klineData = await binanceService.getKlineData(normalizedSymbol, '1h', 24);
 
         // Calculate opportunity score based on multiple real factors
-        const priceChange24h = parseFloat(marketData.change24h || '0');
+        const priceChange24h = parseFloat(marketData.priceChangePercent || marketData.change24h || '0');
         const volume24h = parseFloat(marketData.volume || '0');
-        const currentPrice = parseFloat(marketData.price);
-        const high24h = parseFloat(marketData.high24h);
-        const low24h = parseFloat(marketData.low24h);
+        const currentPrice = parseFloat(marketData.lastPrice || marketData.price || '0');
+        const high24h = parseFloat(marketData.highPrice || marketData.high24h || '0');
+        const low24h = parseFloat(marketData.lowPrice || marketData.low24h || '0');
+
+        if (!currentPrice || isNaN(currentPrice) || currentPrice === 0) {
+          console.error(`❌ ${normalizedSymbol} - Invalid price data:`, { currentPrice, lastPrice: marketData.lastPrice, price: marketData.price });
+          continue;
+        }
+
+        if (!high24h || !low24h || high24h === low24h) {
+          console.error(`❌ ${normalizedSymbol} - Invalid high/low data:`, { high24h, low24h });
+          continue;
+        }
+
         const volatility = ((high24h - low24h) / currentPrice) * 100;
 
         // Calculate technical indicators
