@@ -21,9 +21,9 @@ export class AIAnalysisService {
 
   private models = [
     'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
-    'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',
-    'mistralai/Mixtral-8x22B-Instruct-v0.1',
-    'Qwen/QwQ-32B'
+    'Qwen/Qwen3-235B-A22B-Instruct-2507-tput',  // Updated to valid model
+    'Qwen/QwQ-32B-Preview',  // Fixed model name
+    'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo'
   ];
 
   constructor() {
@@ -144,13 +144,19 @@ export class AIAnalysisService {
 
       // Check rate limiting to avoid overwhelming AI APIs
       const rateLimitKey = `ai_analysis:${symbol}`;
-      const rateCheck = await redisService.checkRateLimit(rateLimitKey, 2, 60); // Max 2 analyses per minute
+      const rateCheck = await redisService.checkRateLimit(rateLimitKey, 10, 60); // Max 10 analyses per minute (increased from 2)
       if (!rateCheck.allowed) {
-        console.log(`Rate limited for ${symbol}, using cached analysis if available`);
+        console.log(`⚠️ Rate limited for ${symbol}, using fallback`);
+
+        // Try cached analysis first
         if (cachedAnalysis) {
+          console.log(`📦 Returning cached analysis for ${symbol}`);
           return cachedAnalysis;
         }
-        throw new Error(`Rate limited for AI analysis of ${symbol}`);
+
+        // If no cache, generate basic analysis without LLM
+        console.log(`📊 Generating basic analysis for ${symbol} (LLM rate limited)`);
+        return this.generateBasicAnalysis(symbol, marketData, klineData, orderBook);
       }
 
       const prompt = this.generateAnalysisPrompt(marketData, klineData, orderBook);
@@ -199,6 +205,66 @@ export class AIAnalysisService {
 
       throw error;
     }
+  }
+
+  private generateBasicAnalysis(
+    symbol: string,
+    marketData: any,
+    klineData: any[],
+    orderBook: any
+  ): any {
+    // Generate basic analysis from technical data without LLM (used when rate limited)
+    const currentPrice = parseFloat(marketData.lastPrice || marketData.price || '0');
+    const priceChange = parseFloat(marketData.priceChangePercent || '0');
+    const volume = parseFloat(String(marketData.volume || '0'));
+
+    // Simple recommendation logic based on price change
+    let recommendation: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
+    if (priceChange > 2) recommendation = 'BUY';
+    else if (priceChange < -2) recommendation = 'SELL';
+
+    // Calculate target and stop loss
+    const targetPrice = currentPrice * (recommendation === 'BUY' ? 1.02 : recommendation === 'SELL' ? 0.98 : 1.0);
+    const stopLoss = currentPrice * (recommendation === 'BUY' ? 0.98 : recommendation === 'SELL' ? 1.02 : 1.0);
+
+    const basicAnalysis = {
+      symbol,
+      recommendation,
+      confidence: 0.5, // Lower confidence for non-LLM analysis
+      reasoning: `Basic technical analysis: 24h price change ${priceChange.toFixed(2)}%, volume ${(volume / 1000000).toFixed(1)}M. LLM analysis temporarily unavailable due to rate limiting.`,
+      targetPrice,
+      stopLoss,
+      timeToAction: '1h',
+      riskLevel: Math.abs(priceChange) > 5 ? 'HIGH' : Math.abs(priceChange) > 3 ? 'MEDIUM' : 'LOW',
+      consensus: {
+        recommendation,
+        confidence: 0.5,
+        reasoning: `Basic analysis based on ${priceChange > 0 ? 'positive' : priceChange < 0 ? 'negative' : 'neutral'} price momentum`,
+        targetPrice,
+        stopLoss,
+        timeToAction: '1h',
+        modelAgreement: 0,
+        urgency: Math.abs(priceChange) > 5 ? 8 : Math.abs(priceChange) > 3 ? 6 : 4
+      },
+      individualModels: [],
+      marketConditions: {
+        volatility: Math.abs(priceChange) / 100,
+        trend: priceChange > 1 ? 'UPTREND' : priceChange < -1 ? 'DOWNTREND' : 'SIDEWAYS',
+        volume: volume,
+        liquidity: volume > 50000000 ? 'HIGH' : volume > 10000000 ? 'MODERATE' : 'LOW',
+        spread: 0.001,
+        priceAction: priceChange > 0 ? 'BULLISH' : priceChange < 0 ? 'BEARISH' : 'SIDEWAYS',
+        tradingCondition: volume > 50000000 ? 'EXCELLENT' : volume > 10000000 ? 'FAIR' : 'MODERATE'
+      },
+      riskWarnings: [
+        'This is a basic technical analysis without LLM insights',
+        'LLM analysis was rate limited - consider waiting before trading'
+      ],
+      timestamp: new Date()
+    };
+
+    console.log(`📊 Generated basic analysis for ${symbol}: ${recommendation} (${priceChange.toFixed(2)}%)`);
+    return basicAnalysis;
   }
 
   private async getModelAnalysis(model: string, prompt: string): Promise<LLMAnalysis> {
