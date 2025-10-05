@@ -28,27 +28,31 @@ import {
 } from 'lucide-react';
 
 interface WhaleActivity {
-  id: string;
+  id?: string;
+  _id?: string;
   symbol: string;
-  type: 'BUY' | 'SELL';
+  type?: 'BUY' | 'SELL' | 'LARGE_TRADE' | 'ACCUMULATION' | 'BUY_WALL' | 'SELL_WALL';
+  side?: 'BUY' | 'SELL';
   size: number;
-  price: number;
+  price?: number;
   value: number;
   impact: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   confidence: number;
   timestamp: string;
-  exchange: string;
-  orderType: 'MARKET' | 'LIMIT' | 'ICEBERG' | 'TWAP' | 'VWAP';
-  priceImpact: number;
-  volumeRatio: number;
-  unusualActivity: string[];
-  marketBehavior: {
+  exchange?: string;
+  orderType?: 'MARKET' | 'LIMIT' | 'ICEBERG' | 'TWAP' | 'VWAP';
+  priceImpact?: number;
+  volumeRatio?: number;
+  volumeSpike?: number;
+  description?: string;
+  unusualActivity?: string[];
+  marketBehavior?: {
     followThrough: boolean;
     resistanceBreak: boolean;
     supportHold: boolean;
     volumeSpike: boolean;
   };
-  prediction: {
+  prediction?: {
     direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     timeframe: string;
     probability: number;
@@ -246,14 +250,15 @@ function WhaleActivityMonitor({
 
     activities.forEach(activity => {
       if (activity.impact === 'CRITICAL' || activity.impact === 'HIGH') {
+        const activityType = (activity.type || activity.side || 'TRADE').toLowerCase();
         const alertMessages = {
           CRITICAL: [
-            `🚨 CRITICAL: ${activity.value > 1000000 ? 'Mega' : 'Large'} whale ${activity.type.toLowerCase()} detected`,
-            `🐋 Institutional-size ${activity.type.toLowerCase()} order spotted`,
+            `🚨 CRITICAL: ${activity.value > 1000000 ? 'Mega' : 'Large'} whale ${activityType} detected`,
+            `🐋 Institutional-size ${activityType} order spotted`,
             `⚡ Market-moving whale activity identified`
           ],
           HIGH: [
-            `⚠️ HIGH: Significant whale ${activity.type.toLowerCase()} detected`,
+            `⚠️ HIGH: Significant whale ${activityType} detected`,
             `🎯 Large player entering ${activity.symbol}`,
             `📈 Major volume spike from whale activity`
           ]
@@ -484,65 +489,78 @@ function WhaleActivityMonitor({
         ) : (
           <div className="space-y-4">
             {filteredActivities.map((activity) => {
-              const DirectionIcon = activity.type === 'BUY' ? ArrowUp : ArrowDown;
+              const isBuy = activity.type === 'BUY' || activity.side === 'BUY';
+              const DirectionIcon = isBuy ? ArrowUp : ArrowDown;
 
               return (
-                <div key={activity.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                <div key={activity.id || activity._id || `${activity.symbol}-${activity.timestamp}`} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
                   <div className="flex items-start justify-between">
                     <div className="flex items-start gap-3 flex-1">
                       <DirectionIcon className={`h-5 w-5 mt-0.5 ${
-                        activity.type === 'BUY' ? 'text-green-600' : 'text-red-600'
+                        isBuy ? 'text-green-600' : 'text-red-600'
                       }`} />
 
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
                           <span className="font-semibold text-gray-900">{activity.symbol.replace('USDT', '')}</span>
                           <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                            activity.type === 'BUY' ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'
+                            activity.type === 'BUY' || activity.side === 'BUY' ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'
                           }`}>
-                            {activity.type}
+                            {activity.type || activity.side}
                           </span>
                           <span className={`px-2 py-1 text-xs font-medium rounded-full ${IMPACT_COLORS[activity.impact]}`}>
                             {activity.impact}
                           </span>
-                          <span className="text-xs text-gray-500">{activity.exchange}</span>
+                          {activity.exchange && <span className="text-xs text-gray-500">{activity.exchange}</span>}
                         </div>
 
                         <div className="text-sm text-gray-600 mb-2">
-                          {formatValue(activity.value)} • {activity.size.toFixed(4)} @ ${activity.price.toFixed(2)} •
-                          {activity.orderType} • {formatTimeAgo(activity.timestamp)}
+                          {formatValue(activity.value)} • {activity.size.toFixed(4)}
+                          {activity.price && ` @ $${activity.price.toFixed(2)}`}
+                          {activity.orderType && ` • ${activity.orderType}`} • {formatTimeAgo(activity.timestamp)}
                         </div>
 
                         {/* Metrics */}
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs mb-2">
-                          <div>
-                            <span className="text-gray-500">Price Impact</span>
-                            <div className="font-semibold text-purple-600">{activity.priceImpact.toFixed(2)}%</div>
-                          </div>
+                          {activity.priceImpact !== undefined && (
+                            <div>
+                              <span className="text-gray-500">Price Impact</span>
+                              <div className="font-semibold text-purple-600">{activity.priceImpact.toFixed(2)}%</div>
+                            </div>
+                          )}
                           <div>
                             <span className="text-gray-500">Volume Ratio</span>
-                            <div className="font-semibold text-blue-600">{activity.volumeRatio.toFixed(1)}x</div>
+                            <div className="font-semibold text-blue-600">
+                              {(activity.volumeRatio || activity.volumeSpike || 0).toFixed(1)}x
+                            </div>
                           </div>
                           <div>
                             <span className="text-gray-500">Confidence</span>
                             <div className="font-semibold text-orange-600">{(activity.confidence * 100).toFixed(0)}%</div>
                           </div>
-                          <div>
-                            <span className="text-gray-500">Prediction</span>
-                            <div className={`font-semibold ${
-                              activity.prediction.direction === 'BULLISH' ? 'text-green-600' :
-                              activity.prediction.direction === 'BEARISH' ? 'text-red-600' : 'text-gray-600'
-                            }`}>
-                              {activity.prediction.direction} ({(activity.prediction.probability * 100).toFixed(0)}%)
+                          {activity.prediction && (
+                            <div>
+                              <span className="text-gray-500">Prediction</span>
+                              <div className={`font-semibold ${
+                                activity.prediction.direction === 'BULLISH' ? 'text-green-600' :
+                                activity.prediction.direction === 'BEARISH' ? 'text-red-600' : 'text-gray-600'
+                              }`}>
+                                {activity.prediction.direction} ({(activity.prediction.probability * 100).toFixed(0)}%)
+                              </div>
                             </div>
-                          </div>
+                          )}
                         </div>
 
                         {/* Unusual Activity */}
-                        {activity.unusualActivity.length > 0 && (
+                        {activity.unusualActivity && activity.unusualActivity.length > 0 && (
                           <div className="p-2 bg-yellow-50 border border-yellow-200 rounded text-xs">
                             <span className="font-medium text-yellow-800">Pattern: </span>
                             <span className="text-yellow-700">{activity.unusualActivity.join(', ')}</span>
+                          </div>
+                        )}
+                        {activity.description && !activity.unusualActivity && (
+                          <div className="p-2 bg-gray-50 border border-gray-200 rounded text-xs text-gray-700">
+                            {activity.description}
                           </div>
                         )}
                       </div>

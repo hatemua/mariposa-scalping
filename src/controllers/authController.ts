@@ -63,7 +63,10 @@ export const updateOkxKeys = async (req: AuthRequest, res: Response): Promise<vo
     const { okxApiKey, okxSecretKey, okxPassphrase } = req.body;
     const userId = req.user._id;
 
+    console.log('Update OKX keys request for user:', userId);
+
     if (!okxApiKey || !okxSecretKey || !okxPassphrase) {
+      console.log('Missing credentials in request body');
       res.status(400).json({
         success: false,
         error: 'All OKX API credentials are required'
@@ -71,21 +74,27 @@ export const updateOkxKeys = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
+    console.log('Encrypting OKX credentials...');
     const encryptedApiKey = encrypt(okxApiKey);
     const encryptedSecretKey = encrypt(okxSecretKey);
     const encryptedPassphrase = encrypt(okxPassphrase);
+    console.log('Encryption completed successfully');
 
+    console.log('Updating user in database...');
     await User.findByIdAndUpdate(userId, {
       okxApiKey: JSON.stringify(encryptedApiKey),
       okxSecretKey: JSON.stringify(encryptedSecretKey),
       okxPassphrase: JSON.stringify(encryptedPassphrase)
     });
+    console.log('Database update completed successfully');
 
     res.json({
       success: true,
       message: 'OKX API keys updated successfully'
     } as ApiResponse);
   } catch (error) {
+    console.error('Update OKX keys error:', error);
+    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     res.status(500).json({
       success: false,
       error: 'Server error'
