@@ -39,11 +39,19 @@ export default function CreateAgentPage() {
   const loadSymbols = async () => {
     try {
       const response = await marketApi.getSymbols();
-      if (response.success) {
-        setSymbols(response.data);
+      if (response.success && response.data) {
+        // Ensure data is an array
+        const symbolsArray = Array.isArray(response.data) ? response.data : [];
+        setSymbols(symbolsArray);
+      } else {
+        // Fallback to default symbols if API fails
+        setSymbols(['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT']);
       }
     } catch (error) {
-      toast.error('Failed to load symbols');
+      console.error('Failed to load symbols:', error);
+      // Fallback to default symbols
+      setSymbols(['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT']);
+      toast.error('Using default symbols');
     }
   };
 
@@ -199,9 +207,13 @@ export default function CreateAgentPage() {
                   onChange={(e) => handleInputChange('symbol', e.target.value)}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
                 >
-                  {symbols.map(symbol => (
-                    <option key={symbol} value={symbol}>{symbol}</option>
-                  ))}
+                  {Array.isArray(symbols) && symbols.length > 0 ? (
+                    symbols.map(symbol => (
+                      <option key={symbol} value={symbol}>{symbol}</option>
+                    ))
+                  ) : (
+                    <option value="BTCUSDT">BTCUSDT</option>
+                  )}
                 </select>
               </div>
             </div>
