@@ -46,13 +46,12 @@ export class SignalBroadcastService {
     try {
       console.log(`Broadcasting signal ${signal.id} for ${signal.symbol} to all active agents`);
 
-      // Get all active agents for this symbol
+      // Get ALL active agents (not filtered by symbol - intelligent agents trade any symbol)
       const activeAgents = await ScalpingAgent.find({
         isActive: true,
-        symbol: signal.symbol,
       });
 
-      console.log(`Found ${activeAgents.length} active agents for ${signal.symbol}`);
+      console.log(`Found ${activeAgents.length} active agents (broadcasting to all regardless of symbol)`);
 
       const validatedSignals: ValidatedSignalForAgent[] = [];
       let validatedCount = 0;

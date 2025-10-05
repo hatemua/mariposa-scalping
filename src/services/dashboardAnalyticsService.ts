@@ -190,8 +190,8 @@ export class DashboardAnalyticsService {
       return {
         agentId: (agent._id as any).toString(),
         agentName: agent.name,
-        symbol: agent.symbol,
-        strategyType: agent.strategyType,
+        symbol: agent.symbol || 'ALL',
+        strategyType: agent.strategyType || agent.category || 'INTELLIGENT',
         status: agent.isActive ? 'RUNNING' : 'STOPPED',
         pnl,
         todayPnL,
@@ -288,7 +288,7 @@ export class DashboardAnalyticsService {
           status: 'filled',
         });
 
-        const strategy = agent.strategyType;
+        const strategy = agent.strategyType || agent.category || 'INTELLIGENT';
         const existing = strategies.get(strategy) || {
           pnl: 0,
           trades: 0,

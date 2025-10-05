@@ -28,6 +28,8 @@ interface ValidationResult {
     spread: number;
     volatility: number;
   };
+  positionSize?: number; // Calculated position size in USDT
+  availableBalance?: number; // Agent's current available balance
 }
 
 export class SignalValidationService {
@@ -63,11 +65,11 @@ export class SignalValidationService {
         };
       }
 
-      // Step 2: Check signal category compatibility
-      if (agent.allowedSignalCategories.length > 0 && signal.category) {
+      // Step 2: Check signal category compatibility (intelligent agents)
+      if (agent.allowedSignalCategories && agent.allowedSignalCategories.length > 0 && signal.category) {
         if (!agent.allowedSignalCategories.includes(signal.category)) {
           rejectionReasons.push(
-            `Signal category '${signal.category}' not allowed for this agent`
+            `Signal category '${signal.category}' not compatible with agent category '${agent.category}'`
           );
         }
       }
@@ -80,7 +82,19 @@ export class SignalValidationService {
         );
       }
 
-      // Step 4: Check agent performance (stop if too many losses)
+      // Step 4: Calculate available balance
+      const { availableBalance, totalAllocated } = await this.getAgentBalance(agent);
+      if (availableBalance < 10) {
+        // Minimum $10 per trade
+        rejectionReasons.push(
+          `Insufficient available balance: $${availableBalance.toFixed(2)} (min $10 required)`
+        );
+      }
+
+      // Step 5: Calculate position size based on available balance and risk level
+      const positionSize = this.calculatePositionSize(agent, availableBalance);
+
+      // Step 6: Check agent performance (stop if too many losses)
       const recentPerformance = await this.getRecentPerformance(agentId);
       if (recentPerformance.consecutiveLosses >= 5) {
         rejectionReasons.push(
@@ -88,41 +102,48 @@ export class SignalValidationService {
         );
       }
 
-      // Step 5: Check drawdown limits
-      if (agent.performance.maxDrawdown < -1000) {
-        // Example: -$1000 max drawdown
+      // Step 7: Check drawdown limits based on risk level
+      const maxDrawdownThreshold = this.getMaxDrawdownThreshold(agent.riskLevel);
+      if (agent.performance.maxDrawdown < maxDrawdownThreshold) {
         rejectionReasons.push(
-          `Agent exceeded max drawdown limit: $${agent.performance.maxDrawdown}`
+          `Agent exceeded max drawdown limit: $${agent.performance.maxDrawdown} (threshold: $${maxDrawdownThreshold})`
         );
       }
 
-      // Step 6: Get market conditions from OKX
+      // Step 8: Get market conditions from OKX
       const marketConditions = await this.getMarketConditions(
         signal.symbol,
         agent.userId.toString()
       );
 
-      // Step 7: LLM-based signal validation
-      const llmValidation = await this.llmValidateSignal(signal, agent, marketConditions);
+      // Step 9: LLM-based signal validation (intelligent agents)
+      const llmValidation = await this.llmValidateSignal(signal, agent, marketConditions, positionSize);
 
-      // Step 8: Check if LLM confidence meets minimum threshold
+      // Step 10: Check if LLM confidence meets minimum threshold
       if (llmValidation.winProbability < agent.minLLMConfidence) {
         rejectionReasons.push(
           `LLM win probability (${(llmValidation.winProbability * 100).toFixed(1)}%) below minimum confidence (${(agent.minLLMConfidence * 100).toFixed(1)}%)`
         );
       }
 
-      // Step 9: Calculate risk/reward ratio
+      // Step 11: Calculate risk/reward ratio
       const riskRewardRatio = this.calculateRiskReward(signal, agent);
-      if (riskRewardRatio < 1.5 && agent.riskTolerance === 'LOW') {
+
+      // Risk/reward threshold varies by risk level (1=conservative, 5=aggressive)
+      const minRiskReward = [3.0, 2.5, 2.0, 1.5, 1.2][agent.riskLevel - 1];
+      if (riskRewardRatio < minRiskReward) {
         rejectionReasons.push(
-          `Risk/reward ratio (${riskRewardRatio.toFixed(2)}) too low for LOW risk tolerance`
+          `Risk/reward ratio (${riskRewardRatio.toFixed(2)}) too low for risk level ${agent.riskLevel} (min ${minRiskReward})`
         );
       }
 
-      // Step 10: Check liquidity
-      if (marketConditions.liquidity === 'LOW' && agent.tradingCategory === 'CONSERVATIVE') {
-        rejectionReasons.push('Low liquidity detected - not suitable for conservative trading');
+      // Step 12: Check liquidity based on agent category
+      if (marketConditions.liquidity === 'LOW') {
+        if (agent.category === 'SCALPING') {
+          rejectionReasons.push('Low liquidity detected - not suitable for scalping');
+        } else if (agent.riskLevel <= 2) {
+          rejectionReasons.push('Low liquidity detected - not suitable for conservative trading');
+        }
       }
 
       const isValid = rejectionReasons.length === 0;
@@ -135,6 +156,8 @@ export class SignalValidationService {
         rejectionReasons,
         riskRewardRatio,
         marketConditions,
+        positionSize,
+        availableBalance,
       };
     } catch (error) {
       console.error('Error validating signal:', error);
@@ -143,52 +166,60 @@ export class SignalValidationService {
   }
 
   /**
-   * Use LLM to analyze the signal and predict win probability
+   * Use LLM to analyze the signal and predict win probability (intelligent agents)
    */
   private async llmValidateSignal(
     signal: ValidationSignal,
     agent: any,
-    marketConditions: any
+    marketConditions: any,
+    positionSize: number
   ): Promise<{
     score: number;
     winProbability: number;
     reasoning: string;
   }> {
     try {
-      const prompt = `You are an expert crypto trading analyst. Analyze this trading signal and provide a win probability assessment.
+      const prompt = `You are an expert crypto trading analyst. Analyze this trading signal for an intelligent AI trading agent and provide a win probability assessment.
 
 Signal Details:
 - Symbol: ${signal.symbol}
 - Recommendation: ${signal.recommendation}
-- Entry Price: ${signal.targetPrice}
-- Stop Loss: ${signal.stopLoss}
+- Category: ${signal.category || 'UNKNOWN'}
+- Entry Price: ${signal.targetPrice || 'Market Price'}
+- Stop Loss: ${signal.stopLoss || 'Dynamic'}
 - Initial Confidence: ${(signal.confidence * 100).toFixed(1)}%
 - Reasoning: ${signal.reasoning}
 
-Agent Configuration:
-- Strategy: ${agent.strategyType}
-- Risk Tolerance: ${agent.riskTolerance}
-- Trading Category: ${agent.tradingCategory}
-- Stop Loss %: ${agent.config.stopLossPercentage}%
-- Take Profit %: ${agent.config.takeProfitPercentage}%
+Intelligent Agent Profile:
+- Category: ${agent.category} (trading style)
+- Risk Level: ${agent.riskLevel}/5 (1=Very Conservative, 5=Very Aggressive)
+- Budget: $${agent.budget} USDT
+- Position Size: $${positionSize.toFixed(2)} USDT for this trade
+- Min Confidence Required: ${(agent.minLLMConfidence * 100).toFixed(0)}%
+- Max Open Positions: ${agent.maxOpenPositions}
+- Allowed Signal Types: ${agent.allowedSignalCategories?.join(', ') || 'ALL'}
 
 Market Conditions:
 - Liquidity: ${marketConditions.liquidity}
 - Spread: ${marketConditions.spread.toFixed(4)}%
 - Volatility: ${marketConditions.volatility.toFixed(2)}%
 
-Analyze the following:
-1. Does the signal align with the agent's strategy type?
-2. Is the risk/reward favorable given the agent's configuration?
-3. Are market conditions suitable for this trade?
-4. What is the probability of this trade being profitable?
-5. What are the main risks and opportunities?
+Analyze the following as an experienced trader:
+1. Does this signal align with the agent's ${agent.category} trading category?
+2. Is the signal category compatible with the agent's allowed types?
+3. Given the agent's risk level (${agent.riskLevel}/5), is this trade appropriate?
+4. Are market conditions favorable for this position size ($${positionSize.toFixed(2)})?
+5. What is the realistic probability of profit on this trade?
+6. What entry, exit, stop-loss, and take-profit levels would you recommend?
 
 Respond in JSON format:
 {
   "winProbability": <number between 0 and 1>,
   "score": <validation score 0-100>,
-  "reasoning": "<detailed analysis in 2-3 sentences>",
+  "reasoning": "<detailed analysis in 2-3 sentences explaining why this trade matches or doesn't match the agent's profile>",
+  "recommendedEntry": <number or null>,
+  "recommendedStopLoss": <number or null>,
+  "recommendedTakeProfit": <number or null>,
   "keyRisks": ["<risk1>", "<risk2>"],
   "keyOpportunities": ["<opportunity1>", "<opportunity2>"]
 }`;
@@ -327,21 +358,99 @@ Respond in JSON format:
   }
 
   /**
-   * Calculate risk/reward ratio
+   * Calculate risk/reward ratio (intelligent agents)
    */
   private calculateRiskReward(signal: ValidationSignal, agent: any): number {
     if (!signal.targetPrice || !signal.stopLoss) {
-      return 0;
+      // If no specific targets, estimate based on agent's risk level
+      // Higher risk = willing to accept lower R/R ratios
+      return agent.riskLevel <= 2 ? 2.5 : agent.riskLevel <= 3 ? 2.0 : 1.5;
     }
 
     const entry = signal.targetPrice;
     const stop = signal.stopLoss;
-    const target = entry * (1 + agent.config.takeProfitPercentage / 100);
+
+    // Estimate target based on agent config or use default multiplier
+    let target: number;
+    if (agent.config?.takeProfitPercentage) {
+      target = entry * (1 + agent.config.takeProfitPercentage / 100);
+    } else {
+      // Default: risk level determines profit target (conservative = higher targets)
+      const profitMultiplier = [1.03, 1.025, 1.02, 1.015, 1.01][agent.riskLevel - 1];
+      target = entry * profitMultiplier;
+    }
 
     const risk = Math.abs(entry - stop);
     const reward = Math.abs(target - entry);
 
     return risk > 0 ? reward / risk : 0;
+  }
+
+  /**
+   * Get agent's available balance (budget - allocated to open positions)
+   */
+  private async getAgentBalance(agent: any): Promise<{
+    availableBalance: number;
+    totalAllocated: number;
+  }> {
+    try {
+      // Get all pending/open trades for this agent
+      const openTrades = await Trade.find({
+        agentId: agent._id,
+        status: { $in: ['pending', 'filled'] },
+      });
+
+      // Calculate total allocated (position size of all open trades)
+      const totalAllocated = openTrades.reduce((sum, trade) => {
+        return sum + (trade.quantity * trade.price);
+      }, 0);
+
+      // Available balance = budget - allocated
+      const availableBalance = Math.max(0, agent.budget - totalAllocated);
+
+      return {
+        availableBalance,
+        totalAllocated,
+      };
+    } catch (error) {
+      console.error('Error calculating agent balance:', error);
+      return {
+        availableBalance: agent.budget || 0,
+        totalAllocated: 0,
+      };
+    }
+  }
+
+  /**
+   * Calculate position size based on agent's risk level and available balance
+   */
+  private calculatePositionSize(agent: any, availableBalance: number): number {
+    // Position size as percentage of available balance based on risk level
+    // Risk 1 (Very Conservative): 10% per trade
+    // Risk 2 (Conservative): 15% per trade
+    // Risk 3 (Moderate): 20% per trade
+    // Risk 4 (Aggressive): 30% per trade
+    // Risk 5 (Very Aggressive): 40% per trade
+    const positionPercentages = [0.10, 0.15, 0.20, 0.30, 0.40];
+    const percentage = positionPercentages[agent.riskLevel - 1] || 0.20;
+
+    const positionSize = availableBalance * percentage;
+
+    // Ensure minimum position size of $10 and maximum of available balance
+    return Math.max(10, Math.min(positionSize, availableBalance));
+  }
+
+  /**
+   * Get max drawdown threshold based on risk level
+   */
+  private getMaxDrawdownThreshold(riskLevel: number): number {
+    // Risk 1 (Very Conservative): -5% max drawdown
+    // Risk 2 (Conservative): -10% max drawdown
+    // Risk 3 (Moderate): -15% max drawdown
+    // Risk 4 (Aggressive): -25% max drawdown
+    // Risk 5 (Very Aggressive): -40% max drawdown
+    const drawdownPercentages = [-0.05, -0.10, -0.15, -0.25, -0.40];
+    return drawdownPercentages[riskLevel - 1] || -0.15;
   }
 
   /**

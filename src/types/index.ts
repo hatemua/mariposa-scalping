@@ -18,18 +18,33 @@ export interface ScalpingAgent {
   _id: string;
   userId: string;
   name: string;
-  symbol: string;
+
+  // Simplified intelligent configuration
+  category: 'SCALPING' | 'SWING' | 'DAY_TRADING' | 'LONG_TERM' | 'ARBITRAGE' | 'ALL';
+  riskLevel: 1 | 2 | 3 | 4 | 5; // 1 = Very Conservative, 5 = Very Aggressive
+  budget: number; // Total USDT allocation for this agent
+
+  // Status
   isActive: boolean;
-  strategyType: 'SCALPING' | 'MOMENTUM' | 'BREAKOUT' | 'MEAN_REVERSION' | 'ARBITRAGE';
-  tradingCategory: 'CONSERVATIVE' | 'MODERATE' | 'AGGRESSIVE';
-  riskTolerance: 'LOW' | 'MEDIUM' | 'HIGH';
-  maxOpenPositions: number;
-  enableLLMValidation: boolean;
-  minLLMConfidence: number;
-  allowedSignalCategories: string[];
+
+  // LLM-managed settings (no manual configuration needed)
+  enableLLMValidation: boolean; // Always true for intelligent agents
+  minLLMConfidence: number; // Auto-calculated based on risk level
+
+  // Optional advanced settings
+  maxOpenPositions: number; // Auto-calculated based on budget and risk
+  allowedSignalCategories: string[]; // Auto-set based on category
   tags: string[];
   description?: string;
-  config: AgentConfig;
+
+  // Legacy fields (deprecated but kept for backward compatibility)
+  symbol?: string; // No longer used - agents trade any symbol
+  strategyType?: 'SCALPING' | 'MOMENTUM' | 'BREAKOUT' | 'MEAN_REVERSION' | 'ARBITRAGE';
+  tradingCategory?: 'CONSERVATIVE' | 'MODERATE' | 'AGGRESSIVE';
+  riskTolerance?: 'LOW' | 'MEDIUM' | 'HIGH';
+  config?: AgentConfig;
+
+  // Performance tracking
   performance: AgentPerformance;
   createdAt: Date;
   updatedAt: Date;

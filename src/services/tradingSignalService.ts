@@ -64,7 +64,7 @@ export class TradingSignalService {
         targetPrice: signalData.targetPrice,
         stopLoss: signalData.stopLoss,
         reasoning: signalData.reasoning,
-        priority: this.calculatePriority(signalData.confidence, agent.config.riskPercentage),
+        priority: this.calculatePriority(signalData.confidence, agent.config?.riskPercentage || agent.riskLevel * 20),
         timestamp: new Date(),
         analysisId: signalData.analysisId,
         status: 'pending'
@@ -232,15 +232,25 @@ export class TradingSignalService {
 
       // Calculate position size based on risk management
       const currentPrice = signal.targetPrice || 0;
-      const positionSize = okxService.calculatePositionSize(
-        availableBalance,
-        currentPrice,
-        agent.config.riskPercentage,
-        agent.config.stopLossPercentage
-      );
+      let finalQuantity: number;
 
-      const maxPositionValue = agent.config.maxPositionSize;
-      const finalQuantity = Math.min(positionSize, maxPositionValue / currentPrice);
+      if (agent.config) {
+        // Legacy agent
+        const positionSize = okxService.calculatePositionSize(
+          availableBalance,
+          currentPrice,
+          agent.config.riskPercentage,
+          agent.config.stopLossPercentage
+        );
+        const maxPositionValue = agent.config.maxPositionSize;
+        finalQuantity = Math.min(positionSize, maxPositionValue / currentPrice);
+      } else {
+        // Intelligent agent - use risk level based calculation
+        const riskPercentages = [0.10, 0.15, 0.20, 0.30, 0.40];
+        const positionPercentage = riskPercentages[agent.riskLevel - 1] || 0.20;
+        const positionValue = availableBalance * positionPercentage;
+        finalQuantity = currentPrice > 0 ? positionValue / currentPrice : 0;
+      }
 
       if (finalQuantity < 0.01) {
         console.log(`Position size too small for agent ${agent._id}: ${finalQuantity}`);

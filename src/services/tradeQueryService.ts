@@ -287,12 +287,12 @@ export class TradeQueryService {
       const agentOptions = agents.map(a => ({
         id: a._id.toString(),
         name: a.name,
-        symbol: a.symbol,
+        symbol: a.symbol || 'ALL',
       }));
 
-      const symbols = [...new Set(agents.map(a => a.symbol))];
-      const strategyTypes = [...new Set(agents.map(a => a.strategyType))];
-      const tradingCategories = [...new Set(agents.map(a => a.tradingCategory))];
+      const symbols = [...new Set(agents.map(a => a.symbol || 'ALL').filter(Boolean))];
+      const strategyTypes = [...new Set(agents.map(a => a.strategyType || a.category || 'INTELLIGENT').filter(Boolean))];
+      const tradingCategories = [...new Set(agents.map(a => a.tradingCategory || (a.riskLevel ? `RISK_${a.riskLevel}` : 'UNKNOWN')).filter(Boolean))];
 
       return {
         agents: agentOptions,

@@ -8,41 +8,65 @@ import { ApiResponse, AgentConfig } from '../types';
 
 export const createAgent = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { name, symbol, config } = req.body;
+    const { name, category, riskLevel, budget, description } = req.body;
     const userId = req.user._id;
 
-    if (!name || !symbol || !config) {
+    // Validate required fields
+    if (!name || !category || riskLevel === undefined || !budget) {
       res.status(400).json({
         success: false,
-        error: 'Name, symbol, and config are required'
+        error: 'Name, category, riskLevel, and budget are required'
       } as ApiResponse);
       return;
     }
 
-    const existingAgent = await ScalpingAgent.findOne({ userId, symbol });
-    if (existingAgent) {
+    // Validate risk level (1-5)
+    if (riskLevel < 1 || riskLevel > 5) {
       res.status(400).json({
         success: false,
-        error: 'Agent for this symbol already exists'
+        error: 'Risk level must be between 1 and 5'
       } as ApiResponse);
       return;
     }
 
+    // Validate budget
+    if (budget < 10) {
+      res.status(400).json({
+        success: false,
+        error: 'Budget must be at least $10'
+      } as ApiResponse);
+      return;
+    }
+
+    // Check if user has enough balance (optional - you can add OKX balance check here)
+    // const userBalance = await okxService.getBalance(userId.toString());
+    // if (userBalance.free.USDT < budget) { ... }
+
+    // Create intelligent agent with simplified config
     const agent = new ScalpingAgent({
       userId,
       name,
-      symbol: symbol.toUpperCase(),
-      config: config as AgentConfig,
-      isActive: false
+      category,
+      riskLevel,
+      budget,
+      description: description || '',
+      isActive: false,
+      enableLLMValidation: true, // Always enabled for intelligent agents
+      // All other settings are auto-calculated in pre-save hook
     });
 
     await agent.save();
 
+    console.log(`Intelligent agent created: ${name}, Category: ${category}, Risk: ${riskLevel}, Budget: $${budget}`);
+    console.log(`Auto-calculated settings: minConfidence=${agent.minLLMConfidence}, maxPositions=${agent.maxOpenPositions}`);
+
     res.status(201).json({
       success: true,
-      data: agent
+      data: agent,
+      message: `Intelligent agent created with ${agent.maxOpenPositions} max positions and ${(agent.minLLMConfidence * 100).toFixed(0)}% min confidence`
     } as ApiResponse);
   } catch (error) {
+    console.error('Error creating agent:', error);
     res.status(500).json({
       success: false,
       error: 'Server error'
@@ -120,10 +144,10 @@ export const getUserAgents = async (req: AuthRequest, res: Response): Promise<vo
         let currentPrice = entryPrice; // Fallback to entry price
         try {
           const { binanceService } = await import('../services/binanceService');
-          const symbolInfo = await binanceService.getSymbolInfo(agent.symbol);
+          const symbolInfo = await binanceService.getSymbolInfo(agent.symbol || 'BTCUSDT');
           currentPrice = parseFloat(symbolInfo.lastPrice || symbolInfo.price || entryPrice.toString());
         } catch (error) {
-          console.warn(`Failed to get current price for ${agent.symbol}, using entry price`);
+          console.warn(`Failed to get current price for ${agent.symbol || 'BTCUSDT'}, using entry price`);
         }
 
         const unrealizedPnL = (currentPrice - entryPrice) * position;
@@ -139,10 +163,10 @@ export const getUserAgents = async (req: AuthRequest, res: Response): Promise<vo
         let currentPrice = entryPrice; // Fallback to entry price
         try {
           const { binanceService } = await import('../services/binanceService');
-          const symbolInfo = await binanceService.getSymbolInfo(agent.symbol);
+          const symbolInfo = await binanceService.getSymbolInfo(agent.symbol || 'BTCUSDT');
           currentPrice = parseFloat(symbolInfo.lastPrice || symbolInfo.price || entryPrice.toString());
         } catch (error) {
-          console.warn(`Failed to get current price for ${agent.symbol}, using entry price`);
+          console.warn(`Failed to get current price for ${agent.symbol || 'BTCUSDT'}, using entry price`);
         }
 
         const unrealizedPnL = (entryPrice - currentPrice) * Math.abs(position);
@@ -156,30 +180,40 @@ export const getUserAgents = async (req: AuthRequest, res: Response): Promise<vo
         };
       }
 
-      // Generate real technical analysis signal
+      // Generate real technical analysis signal (only for legacy agents with config)
       let lastSignal;
-      try {
-        lastSignal = await technicalAnalysisService.generateSignal(agent.symbol, agent.config);
-      } catch (error) {
-        console.warn(`Failed to generate signal for ${agent.symbol}:`, error);
-        // Fallback signal if technical analysis fails
+      if (agent.symbol && agent.config) {
+        try {
+          lastSignal = await technicalAnalysisService.generateSignal(agent.symbol, agent.config);
+        } catch (error) {
+          console.warn(`Failed to generate signal for ${agent.symbol}:`, error);
+          // Fallback signal if technical analysis fails
+          lastSignal = {
+            type: 'HOLD' as const,
+            confidence: 0.5,
+            timestamp: new Date().toISOString(),
+            reasoning: totalTrades > 0 ?
+              'Technical analysis unavailable - based on recent trading activity' :
+              'Waiting for market data to generate signals'
+          };
+        }
+      } else {
+        // Intelligent agent - no manual technical analysis
         lastSignal = {
           type: 'HOLD' as const,
           confidence: 0.5,
           timestamp: new Date().toISOString(),
-          reasoning: totalTrades > 0 ?
-            'Technical analysis unavailable - based on recent trading activity' :
-            'Waiting for market data to generate signals'
+          reasoning: 'Intelligent agent - waiting for validated signals'
         };
       }
 
       return {
         id: (agent._id as any).toString(),
         name: agent.name,
-        symbol: agent.symbol,
+        symbol: agent.symbol || 'ALL', // Intelligent agents trade all symbols
         status: agent.isActive ? 'RUNNING' : 'STOPPED' as const,
-        strategy: getStrategyName(agent.config),
-        timeframe: agent.config.timeframes[0] || '5m',
+        strategy: agent.config ? getStrategyName(agent.config) : agent.category || 'INTELLIGENT',
+        timeframe: agent.config?.timeframes[0] || '5m',
         performance: {
           totalPnL,
           winRate,
@@ -193,11 +227,16 @@ export const getUserAgents = async (req: AuthRequest, res: Response): Promise<vo
         },
         currentPosition,
         lastSignal,
-        config: {
+        config: agent.config ? {
           maxPosition: agent.config.maxPositionSize,
           stopLoss: agent.config.stopLossPercentage,
           takeProfit: agent.config.takeProfitPercentage,
           riskPerTrade: agent.config.riskPercentage
+        } : {
+          maxPosition: 0,
+          stopLoss: 0,
+          takeProfit: 0,
+          riskPerTrade: 0
         },
         createdAt: agent.createdAt.toISOString(),
         lastUpdate: agent.updatedAt.toISOString()

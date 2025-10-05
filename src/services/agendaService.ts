@@ -269,15 +269,26 @@ export class AgendaService {
       }
 
       const currentPrice = analysis.targetPrice || 0;
-      const positionSize = okxService.calculatePositionSize(
-        availableBalance,
-        currentPrice,
-        agent.config.riskPercentage,
-        agent.config.stopLossPercentage
-      );
 
-      const maxPositionValue = agent.config.maxPositionSize;
-      const finalAmount = Math.min(positionSize, maxPositionValue / currentPrice);
+      // For intelligent agents, position size is calculated differently
+      let finalAmount: number;
+      if (agent.config) {
+        // Legacy agent with config
+        const positionSize = okxService.calculatePositionSize(
+          availableBalance,
+          currentPrice,
+          agent.config.riskPercentage,
+          agent.config.stopLossPercentage
+        );
+        const maxPositionValue = agent.config.maxPositionSize;
+        finalAmount = Math.min(positionSize, maxPositionValue / currentPrice);
+      } else {
+        // Intelligent agent - use risk level based calculation
+        const riskPercentages = [0.10, 0.15, 0.20, 0.30, 0.40];
+        const positionPercentage = riskPercentages[agent.riskLevel - 1] || 0.20;
+        const positionValue = availableBalance * positionPercentage;
+        finalAmount = currentPrice > 0 ? positionValue / currentPrice : 0;
+      }
 
       if (finalAmount < 0.01) {
         console.log(`Position size too small for agent ${agentId}: ${finalAmount}`);
@@ -330,17 +341,22 @@ export class AgendaService {
       agent.isActive = true;
       await agent.save();
 
-      await this.agenda.every('1 minute', 'analyze-market', {
-        agentId,
-        symbol: SymbolConverter.normalize(agent.symbol)
-      }, { timezone: 'UTC' });
+      // Only schedule market analysis for legacy agents with symbols
+      if (agent.symbol) {
+        await this.agenda.every('1 minute', 'analyze-market', {
+          agentId,
+          symbol: SymbolConverter.normalize(agent.symbol)
+        }, { timezone: 'UTC' });
+        console.log(`Started scalping agent ${agentId} for ${agent.symbol}`);
+      } else {
+        // Intelligent agents wait for broadcast signals
+        console.log(`Started intelligent agent ${agentId} (${agent.category}) - listening for signals`);
+      }
 
       await this.agenda.every('30 seconds', 'monitor-positions', {
         userId: agent.userId.toString(),
         agentId
       }, { timezone: 'UTC' });
-
-      console.log(`Started scalping agent ${agentId} for ${agent.symbol}`);
     } catch (error) {
       console.error(`Error starting agent ${agentId}:`, error);
       throw error;

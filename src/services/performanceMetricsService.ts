@@ -237,7 +237,7 @@ export class PerformanceMetricsService {
         .map(agent => ({
           agentId: (agent._id as any).toString(),
           name: agent.name,
-          symbol: agent.symbol,
+          symbol: agent.symbol || 'ALL',
           pnl: agent.performance?.totalPnL || 0,
           winRate: agent.performance?.winRate || 0
         }));
@@ -356,7 +356,7 @@ export class PerformanceMetricsService {
         .map(agent => ({
           agentId: (agent._id as any).toString(),
           name: agent.name,
-          symbol: agent.symbol,
+          symbol: agent.symbol || 'ALL',
           userEmail: (agent.userId as any)?.email || 'Unknown',
           totalPnL: agent.performance!.totalPnL,
           winRate: agent.performance!.winRate,
