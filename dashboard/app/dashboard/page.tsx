@@ -50,7 +50,12 @@ export default function Dashboard() {
       if (agentsResponse.success) {
         setAgents(agentsResponse.data);
 
-        const uniqueSymbols = new Set(agentsResponse.data.map((a: Agent) => a.symbol));
+        // Extract unique symbols, filtering out intelligent agents (no symbol or symbol='ALL')
+        const uniqueSymbols = new Set(
+          agentsResponse.data
+            .map((a: Agent) => a.symbol)
+            .filter((symbol): symbol is string => symbol != null && symbol !== 'ALL')
+        );
         const symbols = Array.from(uniqueSymbols) as string[];
         const marketPromises = symbols.map((symbol: string) =>
           marketApi.getMarketData(symbol).catch(() => null)
@@ -319,10 +324,11 @@ export default function Dashboard() {
 
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
             {agents.map((agent, index) => {
-              const market = marketData[agent.symbol];
+              const market = agent.symbol && agent.symbol !== 'ALL' ? marketData[agent.symbol] : null;
               const pnl = agent.performance?.totalPnL || 0;
               const winRate = agent.performance?.winRate || 0;
               const trades = agent.performance?.totalTrades || 0;
+              const isIntelligent = !agent.symbol || agent.symbol === 'ALL';
 
               return (
                 <div
@@ -336,14 +342,27 @@ export default function Dashboard() {
                       <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors duration-200">
                         {agent.name}
                       </h3>
-                      <div className="flex items-center gap-2">
-                        <span className="text-gray-600 dark:text-gray-400 font-medium">{agent.symbol}</span>
-                        {market && (
-                          <span className={`text-sm font-medium ${
-                            market.change24h >= 0 ? 'price-positive' : 'price-negative'
-                          }`}>
-                            {market.change24h >= 0 ? '+' : ''}{market.change24h.toFixed(2)}%
-                          </span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {isIntelligent ? (
+                          <>
+                            <span className="px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 text-xs font-semibold rounded-full">
+                              {agent.category || 'INTELLIGENT'}
+                            </span>
+                            <span className="text-gray-600 dark:text-gray-400 text-xs font-medium">
+                              Risk {agent.riskLevel || 3}/5
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-gray-600 dark:text-gray-400 font-medium">{agent.symbol}</span>
+                            {market && (
+                              <span className={`text-sm font-medium ${
+                                market.change24h >= 0 ? 'price-positive' : 'price-negative'
+                              }`}>
+                                {market.change24h >= 0 ? '+' : ''}{market.change24h.toFixed(2)}%
+                              </span>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>

@@ -8,9 +8,25 @@ export interface User {
 export interface Agent {
   _id: string;
   name: string;
-  symbol: string;
   isActive: boolean;
-  config: AgentConfig;
+
+  // Intelligent agent fields
+  category?: 'SCALPING' | 'SWING' | 'DAY_TRADING' | 'LONG_TERM' | 'ARBITRAGE' | 'ALL';
+  riskLevel?: 1 | 2 | 3 | 4 | 5;
+  budget?: number;
+  description?: string;
+
+  // Auto-calculated settings
+  enableLLMValidation?: boolean;
+  minLLMConfidence?: number;
+  maxOpenPositions?: number;
+  allowedSignalCategories?: string[];
+
+  // Legacy fields (for backward compatibility)
+  symbol?: string;
+  config?: AgentConfig;
+  strategyType?: string;
+
   performance: AgentPerformance;
   createdAt: string;
   updatedAt: string;

@@ -91,8 +91,14 @@ export const agentApi = {
 
   createAgent: async (data: {
     name: string;
-    symbol: string;
-    config: any;
+    // Intelligent agent fields (new)
+    category?: 'SCALPING' | 'SWING' | 'DAY_TRADING' | 'LONG_TERM' | 'ARBITRAGE' | 'ALL';
+    riskLevel?: 1 | 2 | 3 | 4 | 5;
+    budget?: number;
+    description?: string;
+    // Legacy fields (backward compatibility)
+    symbol?: string;
+    config?: any;
   }): Promise<ApiResponse> => {
     const response = await api.post('/agents', data);
     return response.data;
