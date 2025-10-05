@@ -8,7 +8,9 @@ import {
   startAgent,
   stopAgent,
   pauseAgent,
-  getAgentTrades
+  getAgentTrades,
+  getAgentSignalHistory,
+  updateAgentPreferences,
 } from '../controllers/agentController';
 import { authenticate } from '../middleware/auth';
 
@@ -25,5 +27,7 @@ router.post('/:agentId/start', startAgent);
 router.post('/:agentId/stop', stopAgent);
 router.post('/:agentId/pause', pauseAgent);
 router.get('/:agentId/trades', getAgentTrades);
+router.get('/:agentId/signals', getAgentSignalHistory);
+router.put('/:agentId/preferences', updateAgentPreferences);
 
 export default router;

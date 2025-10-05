@@ -3045,6 +3045,21 @@ Focus on actionable insights for institutional-grade trading decisions.`;
       };
     }
   }
+
+  /**
+   * Generic LLM analysis helper for custom prompts
+   */
+  async analyzeWithLLM(prompt: string, symbol?: string): Promise<string> {
+    try {
+      // Use the first model for quick analysis
+      const model = this.models[0];
+      const analysis = await this.getModelAnalysis(model, prompt);
+      return analysis.reasoning;
+    } catch (error) {
+      console.error('Error in analyzeWithLLM:', error);
+      return 'Analysis unavailable due to LLM error';
+    }
+  }
 }
 
 export const aiAnalysisService = new AIAnalysisService();

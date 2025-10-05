@@ -66,6 +66,26 @@ const TradeSchema = new Schema<TradeDocument>({
   okxOrderId: {
     type: String,
   },
+  signalId: {
+    type: String,
+  },
+  llmValidationScore: {
+    type: Number,
+    min: 0,
+    max: 100,
+  },
+  expectedWinProbability: {
+    type: Number,
+    min: 0,
+    max: 1,
+  },
+  actualOutcome: {
+    type: String,
+    enum: ['WIN', 'LOSS', 'BREAKEVEN'],
+  },
+  performanceNotes: {
+    type: String,
+  },
 }, {
   timestamps: true,
 });

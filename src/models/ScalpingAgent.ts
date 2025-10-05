@@ -88,6 +88,50 @@ const ScalpingAgentSchema = new Schema<ScalpingAgentDocument>({
     type: Boolean,
     default: false,
   },
+  strategyType: {
+    type: String,
+    enum: ['SCALPING', 'MOMENTUM', 'BREAKOUT', 'MEAN_REVERSION', 'ARBITRAGE'],
+    default: 'SCALPING',
+  },
+  tradingCategory: {
+    type: String,
+    enum: ['CONSERVATIVE', 'MODERATE', 'AGGRESSIVE'],
+    default: 'MODERATE',
+  },
+  riskTolerance: {
+    type: String,
+    enum: ['LOW', 'MEDIUM', 'HIGH'],
+    default: 'MEDIUM',
+  },
+  maxOpenPositions: {
+    type: Number,
+    default: 3,
+    min: 1,
+    max: 20,
+  },
+  enableLLMValidation: {
+    type: Boolean,
+    default: true,
+  },
+  minLLMConfidence: {
+    type: Number,
+    default: 0.7,
+    min: 0,
+    max: 1,
+  },
+  allowedSignalCategories: [{
+    type: String,
+    enum: ['BREAKOUT', 'REVERSAL', 'MOMENTUM', 'ARBITRAGE', 'VOLUME_SURGE', 'WHALE_ACTIVITY'],
+  }],
+  tags: [{
+    type: String,
+    trim: true,
+  }],
+  description: {
+    type: String,
+    trim: true,
+    maxlength: 500,
+  },
   config: {
     type: AgentConfigSchema,
     required: true,

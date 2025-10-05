@@ -20,6 +20,15 @@ export interface ScalpingAgent {
   name: string;
   symbol: string;
   isActive: boolean;
+  strategyType: 'SCALPING' | 'MOMENTUM' | 'BREAKOUT' | 'MEAN_REVERSION' | 'ARBITRAGE';
+  tradingCategory: 'CONSERVATIVE' | 'MODERATE' | 'AGGRESSIVE';
+  riskTolerance: 'LOW' | 'MEDIUM' | 'HIGH';
+  maxOpenPositions: number;
+  enableLLMValidation: boolean;
+  minLLMConfidence: number;
+  allowedSignalCategories: string[];
+  tags: string[];
+  description?: string;
   config: AgentConfig;
   performance: AgentPerformance;
   createdAt: Date;
@@ -59,6 +68,11 @@ export interface Trade {
   pnl?: number;
   fees?: number;
   okxOrderId?: string;
+  signalId?: string;
+  llmValidationScore?: number;
+  expectedWinProbability?: number;
+  actualOutcome?: 'WIN' | 'LOSS' | 'BREAKEVEN';
+  performanceNotes?: string;
   createdAt: Date;
   updatedAt: Date;
 }

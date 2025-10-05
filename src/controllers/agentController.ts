@@ -519,3 +519,97 @@ export const getAgentTrades = async (req: AuthRequest, res: Response): Promise<v
     } as ApiResponse);
   }
 };
+
+export const getAgentSignalHistory = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { agentId } = req.params;
+    const { limit = 20 } = req.query;
+    const userId = req.user._id;
+
+    const agent = await ScalpingAgent.findOne({ _id: agentId, userId });
+    if (!agent) {
+      res.status(404).json({
+        success: false,
+        error: 'Agent not found'
+      } as ApiResponse);
+      return;
+    }
+
+    const { signalBroadcastService } = await import('../services/signalBroadcastService');
+    const signals = await signalBroadcastService.getValidatedSignalsForAgent(
+      agentId,
+      Number(limit)
+    );
+
+    res.json({
+      success: true,
+      data: signals
+    } as ApiResponse);
+  } catch (error) {
+    console.error('Error getting agent signal history:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error'
+    } as ApiResponse);
+  }
+};
+
+export const updateAgentPreferences = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { agentId } = req.params;
+    const userId = req.user._id;
+    const {
+      strategyType,
+      tradingCategory,
+      riskTolerance,
+      maxOpenPositions,
+      enableLLMValidation,
+      minLLMConfidence,
+      allowedSignalCategories,
+      tags,
+      description,
+    } = req.body;
+
+    const agent = await ScalpingAgent.findOne({ _id: agentId, userId });
+    if (!agent) {
+      res.status(404).json({
+        success: false,
+        error: 'Agent not found'
+      } as ApiResponse);
+      return;
+    }
+
+    if (agent.isActive) {
+      res.status(400).json({
+        success: false,
+        error: 'Cannot update preferences while agent is active. Stop the agent first.'
+      } as ApiResponse);
+      return;
+    }
+
+    // Update preferences
+    if (strategyType) agent.strategyType = strategyType;
+    if (tradingCategory) agent.tradingCategory = tradingCategory;
+    if (riskTolerance) agent.riskTolerance = riskTolerance;
+    if (maxOpenPositions !== undefined) agent.maxOpenPositions = maxOpenPositions;
+    if (enableLLMValidation !== undefined) agent.enableLLMValidation = enableLLMValidation;
+    if (minLLMConfidence !== undefined) agent.minLLMConfidence = minLLMConfidence;
+    if (allowedSignalCategories) agent.allowedSignalCategories = allowedSignalCategories;
+    if (tags) agent.tags = tags;
+    if (description !== undefined) agent.description = description;
+
+    await agent.save();
+
+    res.json({
+      success: true,
+      data: agent,
+      message: 'Agent preferences updated successfully'
+    } as ApiResponse);
+  } catch (error) {
+    console.error('Error updating agent preferences:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error'
+    } as ApiResponse);
+  }
+};

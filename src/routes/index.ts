@@ -3,6 +3,7 @@ import authRoutes from './auth';
 import agentRoutes from './agents';
 import marketRoutes from './market';
 import orderBookRoutes from './orderbook';
+import dashboardRoutes from './dashboard';
 
 const router = express.Router();
 
@@ -10,6 +11,7 @@ router.use('/auth', authRoutes);
 router.use('/agents', agentRoutes);
 router.use('/market', marketRoutes);
 router.use('/orderbook', orderBookRoutes);
+router.use('/dashboard', dashboardRoutes);
 
 router.get('/health', (req, res) => {
   res.json({
