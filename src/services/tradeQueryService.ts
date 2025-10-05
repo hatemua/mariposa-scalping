@@ -133,7 +133,7 @@ export class TradeQueryService {
         // Intersect with existing agentId filter
         const existingIds = Array.isArray(query.agentId.$in) ? query.agentId.$in : [query.agentId];
         query.agentId = {
-          $in: agentIds.filter(id => existingIds.some(eid => eid.equals(id))),
+          $in: agentIds.filter(id => existingIds.some((eid: any) => eid.equals(id))),
         };
       } else {
         query.agentId = { $in: agentIds };
@@ -151,7 +151,7 @@ export class TradeQueryService {
       if (query.agentId) {
         const existingIds = Array.isArray(query.agentId.$in) ? query.agentId.$in : [query.agentId];
         query.agentId = {
-          $in: agentIds.filter(id => existingIds.some(eid => eid.equals(id))),
+          $in: agentIds.filter(id => existingIds.some((eid: any) => eid.equals(id))),
         };
       } else {
         query.agentId = { $in: agentIds };

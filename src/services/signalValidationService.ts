@@ -236,7 +236,7 @@ Respond in JSON format:
   }> {
     try {
       // Try to get order book data from OKX
-      const ticker = await okxService.getTicker(userId, symbol);
+      const ticker = await okxService.getTicker(symbol);
 
       // Calculate spread
       const bid = parseFloat(ticker.bidPrice || '0');

@@ -79,7 +79,7 @@ export class DashboardAnalyticsService {
       const agentPerformances = await Promise.all(
         agents.map(async agent => {
           const agentTrades = allTrades.filter(
-            t => t.agentId.toString() === agent._id.toString()
+            t => t.agentId.toString() === (agent._id as any).toString()
           );
           const agentPnL = agentTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
           return { name: agent.name, pnl: agentPnL };
@@ -116,7 +116,7 @@ export class DashboardAnalyticsService {
       const agents = await ScalpingAgent.find({ userId });
 
       const metricsPromises = agents.map(agent =>
-        this.getAgentDetailedMetrics(agent._id.toString())
+        this.getAgentDetailedMetrics((agent._id as any).toString())
       );
 
       const metrics = await Promise.all(metricsPromises);
@@ -188,7 +188,7 @@ export class DashboardAnalyticsService {
       const lastTrade = trades.length > 0 ? trades[trades.length - 1] : null;
 
       return {
-        agentId: agent._id.toString(),
+        agentId: (agent._id as any).toString(),
         agentName: agent.name,
         symbol: agent.symbol,
         strategyType: agent.strategyType,
@@ -303,7 +303,7 @@ export class DashboardAnalyticsService {
           pnl: existing.pnl + pnl,
           trades: existing.trades + agentTrades.length,
           wins: existing.wins + wins,
-          agentIds: existing.agentIds.add(agent._id.toString()),
+          agentIds: existing.agentIds.add((agent._id as any).toString()),
         });
       }
 

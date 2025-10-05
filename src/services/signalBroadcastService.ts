@@ -61,8 +61,14 @@ export class SignalBroadcastService {
       // Validate signal for each agent concurrently
       const validationPromises = activeAgents.map(async (agent) => {
         try {
+          // Create validation signal with agentId
+          const validationSignal = {
+            ...signal,
+            agentId: (agent._id as any).toString(),
+          };
+
           const validationResult = await signalValidationService.validateSignalForAgent(
-            signal,
+            validationSignal,
             (agent._id as any).toString()
           );
 
