@@ -54,7 +54,7 @@ export default function Dashboard() {
         const uniqueSymbols = new Set(
           agentsResponse.data
             .map((a: Agent) => a.symbol)
-            .filter((symbol): symbol is string => symbol != null && symbol !== 'ALL')
+            .filter((symbol: string | undefined): symbol is string => symbol != null && symbol !== 'ALL')
         );
         const symbols = Array.from(uniqueSymbols) as string[];
         const marketPromises = symbols.map((symbol: string) =>
