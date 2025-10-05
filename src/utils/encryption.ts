@@ -2,7 +2,21 @@ import crypto from 'crypto';
 import { config } from '../config/environment';
 
 const algorithm = 'aes-256-gcm';
-const key = Buffer.from(config.ENCRYPTION_KEY, 'hex');
+
+// Generate a proper 32-byte key from the encryption key
+const getKey = (): Buffer => {
+  const encryptionKey = config.ENCRYPTION_KEY;
+
+  // If the key is already 64 hex characters (32 bytes), use it as-is
+  if (encryptionKey.length === 64 && /^[0-9a-fA-F]+$/.test(encryptionKey)) {
+    return Buffer.from(encryptionKey, 'hex');
+  }
+
+  // Otherwise, hash it to get a consistent 32-byte key
+  return crypto.createHash('sha256').update(encryptionKey).digest();
+};
+
+const key = getKey();
 
 export const encrypt = (text: string): { encrypted: string; iv: string; tag: string } => {
   const iv = crypto.randomBytes(16);
