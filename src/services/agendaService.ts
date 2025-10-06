@@ -901,6 +901,50 @@ export class AgendaService {
       }
     });
 
+    // Broadcast Active Opportunities Job (backup to ensure signals are sent)
+    this.agenda.define('broadcast-opportunities', async (job: any) => {
+      try {
+        // Find high-quality active opportunities that haven't been broadcasted recently
+        const opportunities = await OpportunityModel.find({
+          isActive: true,
+          expiresAt: { $gt: new Date() },
+          score: { $gte: 60 } // Only broadcast good opportunities
+        })
+        .sort({ score: -1 })
+        .limit(10)
+        .lean();
+
+        let broadcastCount = 0;
+        for (const opp of opportunities) {
+          try {
+            await signalBroadcastService.broadcastSignal({
+              id: `opp_${opp._id}_${Date.now()}`,
+              symbol: opp.symbol,
+              recommendation: (opp.llmInsights?.recommendation ||
+                             (opp.priceChange > 0 ? 'BUY' : 'SELL')) as 'BUY' | 'SELL' | 'HOLD',
+              confidence: opp.confidence,
+              category: opp.category as any,
+              reasoning: opp.reasoning,
+              targetPrice: opp.target,
+              stopLoss: opp.stopLoss,
+              priority: opp.score,
+              timestamp: new Date()
+            });
+            broadcastCount++;
+          } catch (broadcastError) {
+            console.error(`Failed to broadcast opportunity ${opp.symbol}:`, broadcastError);
+          }
+        }
+
+        console.log(`✅ Broadcasted ${broadcastCount} opportunities to agents`);
+        await this.updateJobMetrics('broadcast-opportunities', 'success');
+
+      } catch (error) {
+        console.error('❌ Error broadcasting opportunities:', error);
+        await this.updateJobMetrics('broadcast-opportunities', 'error');
+      }
+    });
+
     // Expire Old Whale Activities Job
     this.agenda.define('expire-whale-activities', async (job: any) => {
       try {
@@ -1013,6 +1057,9 @@ export class AgendaService {
       // Process trading queues every 30 seconds
       await this.agenda.every('30 seconds', 'process-signal-queue');
       await this.agenda.every('15 seconds', 'process-execution-queue');
+
+      // Broadcast active opportunities every 3 minutes (backup signal broadcaster)
+      await this.agenda.every('3 minutes', 'broadcast-opportunities');
 
       // Update performance metrics every 5 minutes
       await this.agenda.every('5 minutes', 'update-performance-metrics');

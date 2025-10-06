@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { binanceService } from '../services/binanceService';
 import { aiAnalysisService } from '../services/aiAnalysisService';
 import { redisService } from '../services/redisService';
+import { signalBroadcastService } from '../services/signalBroadcastService';
 import { AuthRequest } from '../middleware/auth';
 import { ApiResponse } from '../types';
 import { SymbolConverter } from '../utils/symbolConverter';
@@ -1021,6 +1022,26 @@ export const getOpportunityScanner = async (req: AuthRequest, res: Response): Pr
             isActive: true,
             status: 'ACTIVE',
             userId: req.user?._id
+          }).then(async (savedOpp) => {
+            // ⭐ BROADCAST opportunity as signal to all intelligent agents
+            try {
+              await signalBroadcastService.broadcastSignal({
+                id: `opp_${savedOpp._id}`,
+                symbol: savedOpp.symbol,
+                recommendation: savedOpp.llmInsights?.recommendation ||
+                               (savedOpp.priceChange > 0 ? 'BUY' : 'SELL') as 'BUY' | 'SELL' | 'HOLD',
+                confidence: savedOpp.confidence,
+                category: savedOpp.category as any,
+                reasoning: savedOpp.reasoning,
+                targetPrice: savedOpp.target,
+                stopLoss: savedOpp.stopLoss,
+                priority: savedOpp.score,
+                timestamp: new Date()
+              });
+              console.log(`📡 Broadcasted opportunity ${savedOpp.symbol} (score: ${savedOpp.score}) to all agents`);
+            } catch (broadcastError) {
+              console.error(`Failed to broadcast opportunity ${savedOpp.symbol}:`, broadcastError);
+            }
           }).catch(dbError => {
             console.error(`Failed to save opportunity ${normalizedSymbol} to database:`, dbError);
           });
