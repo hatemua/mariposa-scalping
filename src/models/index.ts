@@ -6,3 +6,5 @@ export { default as Opportunity } from './Opportunity';
 export { default as WhaleActivity } from './WhaleActivity';
 export { default as UserDashboardMetrics } from './UserDashboardMetrics';
 export { default as OrderPerformance } from './OrderPerformance';
+export { default as BroadcastedSignal } from './BroadcastedSignal';
+export { default as AgentSignalLog } from './AgentSignalLog';

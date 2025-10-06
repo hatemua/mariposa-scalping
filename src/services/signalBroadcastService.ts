@@ -1,5 +1,6 @@
 import { redisService } from './redisService';
 import { signalValidationService } from './signalValidationService';
+import { signalLoggingService } from './signalLoggingService';
 import { ScalpingAgent } from '../models';
 
 interface BroadcastSignal {
@@ -99,6 +100,30 @@ export class SignalBroadcastService {
 
           validatedSignals.push(validatedSignal);
 
+          // Log agent validation to file
+          await signalLoggingService.logAgentValidation({
+            timestamp: new Date(),
+            signalId: signal.id,
+            agentId: (agent._id as any).toString(),
+            agentName: agent.name,
+            agentCategory: agent.category || 'ALL',
+            agentRiskLevel: agent.riskLevel,
+            agentBudget: agent.budget,
+            symbol: signal.symbol,
+            recommendation: signal.recommendation,
+            isValid: validationResult.isValid,
+            llmValidationScore: validationResult.llmValidationScore,
+            winProbability: validationResult.winProbability,
+            reasoning: validationResult.reasoning,
+            rejectionReasons: validationResult.rejectionReasons,
+            riskRewardRatio: validationResult.riskRewardRatio,
+            marketLiquidity: validationResult.marketConditions.liquidity,
+            marketSpread: validationResult.marketConditions.spread,
+            marketVolatility: validationResult.marketConditions.volatility,
+            positionSize: validationResult.positionSize,
+            availableBalance: validationResult.availableBalance
+          });
+
           // Publish to agent-specific channel
           await redisService.publish(`signal:agent:${agent._id}`, {
             type: 'signal_validated',
@@ -129,6 +154,22 @@ export class SignalBroadcastService {
       console.log(
         `Broadcast complete: ${validatedCount} validated, ${rejectedCount} rejected out of ${activeAgents.length} agents`
       );
+
+      // Log the broadcast to file
+      await signalLoggingService.logSignalBroadcast({
+        timestamp: new Date(),
+        signalId: signal.id,
+        symbol: signal.symbol,
+        recommendation: signal.recommendation,
+        confidence: signal.confidence,
+        category: signal.category,
+        reasoning: signal.reasoning,
+        targetPrice: signal.targetPrice,
+        stopLoss: signal.stopLoss,
+        totalAgents: activeAgents.length,
+        validatedAgents: validatedCount,
+        rejectedAgents: rejectedCount
+      });
 
       return {
         totalAgents: activeAgents.length,
