@@ -45,21 +45,53 @@ export class SignalBroadcastService {
     validatedSignals: ValidatedSignalForAgent[];
   }> {
     try {
-      console.log(`Broadcasting signal ${signal.id} for ${signal.symbol} to all active agents`);
+      console.log(`Broadcasting signal ${signal.id} for ${signal.symbol} to all agents`);
 
-      // Get ALL active agents (not filtered by symbol - intelligent agents trade any symbol)
-      const activeAgents = await ScalpingAgent.find({
-        isActive: true,
-      });
+      // Get ALL agents (including inactive) to track exclusions
+      const allAgents = await ScalpingAgent.find({});
 
-      console.log(`Found ${activeAgents.length} active agents (broadcasting to all regardless of symbol)`);
+      console.log(`Found ${allAgents.length} total agents in system`);
 
+      const eligibleAgents = [];
       const validatedSignals: ValidatedSignalForAgent[] = [];
       let validatedCount = 0;
       let rejectedCount = 0;
+      let excludedCount = 0;
 
-      // Validate signal for each agent concurrently
-      const validationPromises = activeAgents.map(async (agent) => {
+      // FIRST PASS: Filter eligibility and log exclusions
+      for (const agent of allAgents) {
+        const exclusionReasons = await this.checkAgentEligibility(agent, signal);
+
+        if (exclusionReasons.length > 0) {
+          // Agent is EXCLUDED
+          excludedCount++;
+
+          await signalDatabaseLoggingService.logAgentExclusion({
+            signalId: signal.id,
+            agentId: (agent._id as any).toString(),
+            agentName: agent.name,
+            agentCategory: agent.category || 'ALL',
+            agentRiskLevel: agent.riskLevel,
+            agentBudget: agent.budget,
+            agentStatus: agent.isActive ? 'RUNNING' : 'STOPPED',
+            symbol: signal.symbol,
+            recommendation: signal.recommendation,
+            signalCategory: signal.category,
+            exclusionReasons,
+            processedAt: new Date()
+          });
+
+          console.log(`Agent ${agent.name} excluded: ${exclusionReasons.join(', ')}`);
+        } else {
+          // Agent is ELIGIBLE
+          eligibleAgents.push(agent);
+        }
+      }
+
+      console.log(`Eligible agents: ${eligibleAgents.length}, Excluded agents: ${excludedCount}`);
+
+      // SECOND PASS: Validate signal for each eligible agent concurrently
+      const validationPromises = eligibleAgents.map(async (agent) => {
         try {
           // Create validation signal with agentId
           const validationSignal = {
@@ -146,17 +178,17 @@ export class SignalBroadcastService {
         type: 'broadcast_complete',
         signalId: signal.id,
         symbol: signal.symbol,
-        totalAgents: activeAgents.length,
+        totalAgents: eligibleAgents.length,
         validatedAgents: validatedCount,
         rejectedAgents: rejectedCount,
         timestamp: new Date(),
       });
 
       console.log(
-        `Broadcast complete: ${validatedCount} validated, ${rejectedCount} rejected out of ${activeAgents.length} agents`
+        `Broadcast complete: ${validatedCount} validated, ${rejectedCount} rejected out of ${eligibleAgents.length} eligible agents`
       );
 
-      // Log the broadcast to database
+      // Log the broadcast to database with correct counts
       await signalDatabaseLoggingService.logBroadcastedSignal({
         signalId: signal.id,
         symbol: signal.symbol,
@@ -166,16 +198,16 @@ export class SignalBroadcastService {
         reasoning: signal.reasoning,
         targetPrice: signal.targetPrice,
         stopLoss: signal.stopLoss,
-        totalAgentsConsidered: activeAgents.length,
-        totalAgentsEligible: activeAgents.length, // Will be updated later with exclusion logic
+        totalAgentsConsidered: allAgents.length,
+        totalAgentsEligible: eligibleAgents.length,
         validatedAgents: validatedCount,
         rejectedAgents: rejectedCount,
-        excludedAgents: 0, // Will be updated later with exclusion logic
+        excludedAgents: excludedCount,
         broadcastedAt: new Date()
       });
 
       return {
-        totalAgents: activeAgents.length,
+        totalAgents: allAgents.length,
         validatedAgents: validatedCount,
         rejectedAgents: rejectedCount,
         validatedSignals: validatedSignals.filter(s => s !== null) as ValidatedSignalForAgent[],
@@ -339,6 +371,92 @@ export class SignalBroadcastService {
    */
   async subscribeToBroadcasts(callback: (message: any) => void): Promise<void> {
     await redisService.subscribe(this.BROADCAST_CHANNEL, callback);
+  }
+
+  /**
+   * Check if agent is eligible to receive signal
+   * Returns array of exclusion reasons (empty if eligible)
+   */
+  private async checkAgentEligibility(agent: any, signal: BroadcastSignal): Promise<string[]> {
+    const reasons = [];
+
+    // Check 1: Is agent active?
+    if (!agent.isActive) {
+      reasons.push(`Agent not active (status: STOPPED)`);
+      return reasons; // Skip other checks if inactive
+    }
+
+    // Check 2: Category compatibility (for intelligent agents)
+    if (signal.category && agent.allowedSignalCategories && agent.allowedSignalCategories.length > 0) {
+      if (!agent.allowedSignalCategories.includes(signal.category)) {
+        reasons.push(
+          `Signal category '${signal.category}' not in allowed [${agent.allowedSignalCategories.join(', ')}]`
+        );
+      }
+    }
+
+    // Check 3: Available balance
+    try {
+      const balance = await this.getAgentAvailableBalance(agent);
+      if (balance < 10) {
+        reasons.push(`Insufficient balance: $${balance.toFixed(2)} (min $10)`);
+      }
+    } catch (error) {
+      console.error(`Error checking balance for agent ${agent.name}:`, error);
+      reasons.push('Failed to check balance');
+    }
+
+    // Check 4: Max open positions
+    try {
+      const openPositions = await this.getAgentOpenPositions((agent._id as any).toString());
+      if (openPositions >= agent.maxOpenPositions) {
+        reasons.push(
+          `Max open positions reached (${openPositions}/${agent.maxOpenPositions})`
+        );
+      }
+    } catch (error) {
+      console.error(`Error checking open positions for agent ${agent.name}:`, error);
+    }
+
+    // Check 5: Signal confidence vs agent minimum
+    if (agent.minLLMConfidence && signal.confidence < agent.minLLMConfidence) {
+      reasons.push(
+        `Signal confidence ${(signal.confidence * 100).toFixed(0)}% below min ${(agent.minLLMConfidence * 100).toFixed(0)}%`
+      );
+    }
+
+    return reasons;
+  }
+
+  /**
+   * Get agent's available balance
+   */
+  private async getAgentAvailableBalance(agent: any): Promise<number> {
+    try {
+      // Use the method from signalValidationService
+      const balanceInfo = await signalValidationService['getAgentBalance'](agent);
+      return balanceInfo.availableBalance;
+    } catch (error) {
+      console.error('Error getting agent balance:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Get number of open positions for agent
+   */
+  private async getAgentOpenPositions(agentId: string): Promise<number> {
+    try {
+      const { Trade } = await import('../models');
+      const count = await Trade.countDocuments({
+        agentId,
+        status: { $in: ['pending', 'filled'] }
+      });
+      return count;
+    } catch (error) {
+      console.error('Error getting open positions:', error);
+      return 0;
+    }
   }
 }
 

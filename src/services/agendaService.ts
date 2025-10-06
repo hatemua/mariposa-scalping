@@ -6,6 +6,7 @@ import { okxService } from './okxService';
 import { redisService } from './redisService';
 import { redis } from '../config/redis';
 import { tradingSignalService } from './tradingSignalService';
+import { signalBroadcastService } from './signalBroadcastService';
 import { performanceMetricsService } from './performanceMetricsService';
 import { marketDataCacheService } from './marketDataCacheService';
 import { orderTrackingService } from './orderTrackingService';
@@ -343,63 +344,36 @@ export class AgendaService {
   ): Promise<void> {
     try {
       const agent = await ScalpingAgent.findById(agentId).populate('userId');
-      if (!agent || !agent.isActive) return;
+      if (!agent) return;
 
       const { recommendation, confidence, targetPrice, stopLoss } = analysis;
 
       if (confidence < 0.6) {
-        console.log(`Low confidence analysis (${confidence}) for agent ${agentId}, skipping trade`);
+        console.log(`Low confidence analysis (${confidence}) for agent ${agentId}, skipping broadcast`);
         return;
       }
 
       if (recommendation === 'HOLD') {
-        console.log(`HOLD recommendation for agent ${agentId}, no action taken`);
+        console.log(`HOLD recommendation for agent ${agentId}, no signal broadcast`);
         return;
       }
 
-      const balance = await okxService.getBalance(agent.userId.toString());
-      const availableBalance = balance.free.USDT || 0;
-
-      if (availableBalance < 10) {
-        console.log(`Insufficient balance for agent ${agentId}: $${availableBalance}`);
-        return;
-      }
-
-      const currentPrice = analysis.targetPrice || 0;
-
-      // For intelligent agents, position size is calculated differently
-      let finalAmount: number;
-      if (agent.config) {
-        // Legacy agent with config
-        const positionSize = okxService.calculatePositionSize(
-          availableBalance,
-          currentPrice,
-          agent.config.riskPercentage,
-          agent.config.stopLossPercentage
-        );
-        const maxPositionValue = agent.config.maxPositionSize;
-        finalAmount = Math.min(positionSize, maxPositionValue / currentPrice);
-      } else {
-        // Intelligent agent - use risk level based calculation
-        const riskPercentages = [0.10, 0.15, 0.20, 0.30, 0.40];
-        const positionPercentage = riskPercentages[agent.riskLevel - 1] || 0.20;
-        const positionValue = availableBalance * positionPercentage;
-        finalAmount = currentPrice > 0 ? positionValue / currentPrice : 0;
-      }
-
-      if (finalAmount < 0.01) {
-        console.log(`Position size too small for agent ${agentId}: ${finalAmount}`);
-        return;
-      }
-
-      await this.scheduleTradeExecution({
-        userId: agent.userId.toString(),
-        agentId: agentId,
+      // ⭐ BROADCAST signal to ALL agents (automatic multi-agent system)
+      const signal = {
+        id: `sig_${agentId}_${Date.now()}`,
         symbol: SymbolConverter.normalize(analysis.symbol),
-        side: recommendation === 'BUY' ? 'buy' : 'sell',
-        type: 'market',
-        amount: finalAmount
-      });
+        recommendation: recommendation as 'BUY' | 'SELL' | 'HOLD',
+        confidence: confidence,
+        category: this.determineSignalCategory(analysis),
+        reasoning: analysis.reasoning || 'AI market analysis',
+        targetPrice: targetPrice,
+        stopLoss: stopLoss,
+        priority: confidence * 100,
+        timestamp: new Date()
+      };
+
+      console.log(`Broadcasting signal ${signal.id} from agent ${agentId} to all agents`);
+      await signalBroadcastService.broadcastSignal(signal);
 
     } catch (error) {
       console.error(`Error processing analysis result for agent ${agentId}:`, error);
@@ -510,6 +484,20 @@ export class AgendaService {
   async stop(): Promise<void> {
     await this.agenda.stop();
     console.log('Agenda service stopped');
+  }
+
+  // Helper method to determine signal category from analysis
+  private determineSignalCategory(analysis: ConsolidatedAnalysis): string | undefined {
+    // Try to extract category from reasoning or other fields
+    const reasoning = analysis.reasoning?.toLowerCase() || '';
+
+    if (reasoning.includes('whale') || reasoning.includes('large order')) return 'whale_activity';
+    if (reasoning.includes('breakout') || reasoning.includes('resistance')) return 'breakout';
+    if (reasoning.includes('momentum') || reasoning.includes('trend')) return 'momentum';
+    if (reasoning.includes('volume') || reasoning.includes('spike')) return 'volume';
+    if (reasoning.includes('reversal') || reasoning.includes('oversold') || reasoning.includes('overbought')) return 'reversal';
+
+    return 'technical_analysis';
   }
 
   async getJobStats(): Promise<any> {
