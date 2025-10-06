@@ -2,7 +2,7 @@ import { redisService } from './redisService';
 import { aiAnalysisService } from './aiAnalysisService';
 import { okxService } from './okxService';
 import { orderTrackingService } from './orderTrackingService';
-import { signalLoggingService } from './signalLoggingService';
+import { signalDatabaseLoggingService } from './signalDatabaseLoggingService';
 import { ScalpingAgent, Trade } from '../models';
 import { ConsolidatedAnalysis } from '../types';
 import { SymbolConverter } from '../utils/symbolConverter';
@@ -399,39 +399,26 @@ export class TradingSignalService {
 
       console.log(`Trade executed successfully: ${(order as any).id || order.orderId}`);
 
-      // Log successful execution
-      await signalLoggingService.logExecution({
-        timestamp: new Date(),
-        signalId: execution.signalId,
-        agentId: execution.agentId,
-        agentName: agent.name,
-        symbol: execution.symbol,
-        side: execution.side,
-        quantity: execution.quantity,
-        price: execution.price,
-        orderType: execution.type,
-        success: true,
-        orderId: order.orderId
-      });
+      // Log successful execution to database
+      await signalDatabaseLoggingService.updateExecutionStatus(
+        execution.signalId,
+        execution.agentId,
+        {
+          executed: true,
+          executedAt: new Date(),
+          orderId: order.orderId,
+          executionPrice: order.avgFillPrice,
+          executionQuantity: order.filled
+        }
+      );
 
     } catch (error) {
+      const errorAgent = await ScalpingAgent.findById(execution.agentId);
+
       execution.status = 'failed';
       await this.cacheExecution(execution);
 
-      // Log failed execution
-      await signalLoggingService.logExecution({
-        timestamp: new Date(),
-        signalId: execution.signalId,
-        agentId: execution.agentId,
-        agentName: agent?.name || 'Unknown',
-        symbol: execution.symbol,
-        side: execution.side,
-        quantity: execution.quantity,
-        price: execution.price,
-        orderType: execution.type,
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
+      console.error(`Failed to execute trade for agent ${errorAgent?.name || execution.agentId}:`, error);
 
       throw error;
     }

@@ -1,6 +1,6 @@
 import { redisService } from './redisService';
 import { signalValidationService } from './signalValidationService';
-import { signalLoggingService } from './signalLoggingService';
+import { signalDatabaseLoggingService } from './signalDatabaseLoggingService';
 import { ScalpingAgent } from '../models';
 
 interface BroadcastSignal {
@@ -100,28 +100,29 @@ export class SignalBroadcastService {
 
           validatedSignals.push(validatedSignal);
 
-          // Log agent validation to file
-          await signalLoggingService.logAgentValidation({
-            timestamp: new Date(),
+          // Log agent validation to database
+          await signalDatabaseLoggingService.logAgentValidation({
             signalId: signal.id,
             agentId: (agent._id as any).toString(),
             agentName: agent.name,
             agentCategory: agent.category || 'ALL',
             agentRiskLevel: agent.riskLevel,
             agentBudget: agent.budget,
+            agentStatus: agent.isActive ? 'RUNNING' : 'STOPPED',
             symbol: signal.symbol,
             recommendation: signal.recommendation,
+            signalCategory: signal.category,
             isValid: validationResult.isValid,
             llmValidationScore: validationResult.llmValidationScore,
             winProbability: validationResult.winProbability,
             reasoning: validationResult.reasoning,
             rejectionReasons: validationResult.rejectionReasons,
             riskRewardRatio: validationResult.riskRewardRatio,
-            marketLiquidity: validationResult.marketConditions.liquidity,
-            marketSpread: validationResult.marketConditions.spread,
-            marketVolatility: validationResult.marketConditions.volatility,
+            marketConditions: validationResult.marketConditions,
             positionSize: validationResult.positionSize,
-            availableBalance: validationResult.availableBalance
+            availableBalance: validationResult.availableBalance,
+            processedAt: new Date(),
+            validatedAt: new Date()
           });
 
           // Publish to agent-specific channel
@@ -155,9 +156,8 @@ export class SignalBroadcastService {
         `Broadcast complete: ${validatedCount} validated, ${rejectedCount} rejected out of ${activeAgents.length} agents`
       );
 
-      // Log the broadcast to file
-      await signalLoggingService.logSignalBroadcast({
-        timestamp: new Date(),
+      // Log the broadcast to database
+      await signalDatabaseLoggingService.logBroadcastedSignal({
         signalId: signal.id,
         symbol: signal.symbol,
         recommendation: signal.recommendation,
@@ -166,9 +166,12 @@ export class SignalBroadcastService {
         reasoning: signal.reasoning,
         targetPrice: signal.targetPrice,
         stopLoss: signal.stopLoss,
-        totalAgents: activeAgents.length,
+        totalAgentsConsidered: activeAgents.length,
+        totalAgentsEligible: activeAgents.length, // Will be updated later with exclusion logic
         validatedAgents: validatedCount,
-        rejectedAgents: rejectedCount
+        rejectedAgents: rejectedCount,
+        excludedAgents: 0, // Will be updated later with exclusion logic
+        broadcastedAt: new Date()
       });
 
       return {
