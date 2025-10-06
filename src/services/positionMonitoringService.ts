@@ -314,7 +314,7 @@ export class PositionMonitoringService {
 
       for (const agent of activeAgents) {
         try {
-          await this.monitorAgentPositions(agent._id.toString());
+          await this.monitorAgentPositions((agent._id as any).toString());
         } catch (error) {
           console.error(`Error monitoring agent ${agent._id}:`, error);
         }
