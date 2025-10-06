@@ -475,6 +475,53 @@ Respond in JSON format:
     const key = `validation:${signalId}:${agentId}`;
     return await redisService.get(key);
   }
+
+  /**
+   * Check if position should be considered for early exit
+   */
+  async shouldMonitorForExit(agentId: string, position: any): Promise<boolean> {
+    try {
+      const agent = await ScalpingAgent.findById(agentId);
+      if (!agent || !agent.isActive) {
+        return false;
+      }
+
+      // Always monitor if LLM validation is enabled
+      if (agent.enableLLMValidation) {
+        return true;
+      }
+
+      // Check if position has significant unrealized PnL
+      const unrealizedPnLPercent = position.unrealizedPnLPercent || 0;
+
+      // Monitor if in profit > 1% or loss > 2%
+      if (unrealizedPnLPercent >= 1 || unrealizedPnLPercent <= -2) {
+        return true;
+      }
+
+      // Check if position has been open for a while (based on agent category)
+      const holdingTimeMinutes = position.holdingTime || 0;
+      const categoryTimeThresholds = {
+        'SCALPING': 30, // 30 minutes for scalping
+        'DAY_TRADING': 240, // 4 hours for day trading
+        'SWING': 1440, // 24 hours for swing
+        'LONG_TERM': 10080, // 7 days for long term
+        'ARBITRAGE': 5, // 5 minutes for arbitrage
+        'ALL': 60 // 1 hour default
+      };
+
+      const threshold = categoryTimeThresholds[agent.category as keyof typeof categoryTimeThresholds] || 60;
+
+      if (holdingTimeMinutes >= threshold) {
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.error('Error checking if should monitor for exit:', error);
+      return false;
+    }
+  }
 }
 
 export const signalValidationService = new SignalValidationService();

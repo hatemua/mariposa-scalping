@@ -9,6 +9,8 @@ import { tradingSignalService } from './tradingSignalService';
 import { performanceMetricsService } from './performanceMetricsService';
 import { marketDataCacheService } from './marketDataCacheService';
 import { orderTrackingService } from './orderTrackingService';
+import { positionMonitoringService } from './positionMonitoringService';
+import { llmExitStrategyService } from './llmExitStrategyService';
 import { SymbolConverter } from '../utils/symbolConverter';
 import { ScalpingAgent, Trade } from '../models';
 import OpportunityModel from '../models/Opportunity';
@@ -238,6 +240,101 @@ export class AgendaService {
         console.error(`Error updating performance for agent ${agentId}:`, error);
       }
     });
+
+    // Per-Agent Position Monitoring with PnL Tracking
+    this.agenda.define('monitor-agent-pnl', async (job: any) => {
+      const { agentId } = job.attrs.data as JobData['payload'];
+
+      try {
+        const agent = await ScalpingAgent.findById(agentId);
+        if (!agent || !agent.isActive) {
+          return; // Agent stopped or deleted
+        }
+
+        // Monitor all positions for this agent
+        const pnlEvents = await positionMonitoringService.monitorAgentPositions(agentId);
+
+        // Process any significant PnL changes
+        for (const event of pnlEvents) {
+          await this.handlePnLChange(event);
+        }
+
+        await this.updateJobMetrics('monitor-agent-pnl', 'success');
+      } catch (error) {
+        console.error(`Error monitoring PnL for agent ${agentId}:`, error);
+        await this.updateJobMetrics('monitor-agent-pnl', 'error');
+      }
+    });
+
+    // LLM-Based Exit Strategy Analysis
+    this.agenda.define('analyze-exit-strategy', async (job: any) => {
+      const { agentId, tradeId, position, marketConditions } = job.attrs.data;
+
+      try {
+        const agent = await ScalpingAgent.findById(agentId);
+        if (!agent || !agent.isActive) {
+          return;
+        }
+
+        // Use LLM to analyze if we should exit this position
+        const exitDecision = await llmExitStrategyService.analyzeExitStrategy(
+          agentId,
+          position,
+          marketConditions
+        );
+
+        console.log(
+          `Exit analysis for ${agent.name} (${position.symbol}): ${exitDecision.action} (${exitDecision.confidence * 100}% confidence)`
+        );
+
+        // Execute exit if recommended
+        if (exitDecision.action === 'EXIT_NOW' || exitDecision.action === 'PARTIAL_EXIT') {
+          if (exitDecision.urgency === 'HIGH' || exitDecision.urgency === 'CRITICAL') {
+            console.log(`🚨 ${exitDecision.urgency} urgency exit for ${position.symbol}: ${exitDecision.reasoning}`);
+          }
+
+          await llmExitStrategyService.executeExitDecision(
+            agentId,
+            tradeId,
+            exitDecision,
+            position
+          );
+        }
+
+        await this.updateJobMetrics('analyze-exit-strategy', 'success');
+      } catch (error) {
+        console.error(`Error analyzing exit strategy:`, error);
+        await this.updateJobMetrics('analyze-exit-strategy', 'error');
+      }
+    });
+  }
+
+  // Handle PnL change events and trigger LLM analysis
+  private async handlePnLChange(event: any): Promise<void> {
+    try {
+      const { agentId, position, currentPnL, previousPnL, changePercent } = event;
+
+      console.log(
+        `PnL change detected for agent ${agentId}: ${position.symbol} changed by ${changePercent.toFixed(2)}%`
+      );
+
+      // Get market conditions for LLM analysis
+      const marketConditions = {
+        liquidity: 'MEDIUM',
+        spread: 0.1,
+        volatility: 1.0
+      };
+
+      // Schedule LLM exit analysis
+      await this.agenda.now('analyze-exit-strategy', {
+        agentId,
+        tradeId: position.tradeId,
+        position,
+        marketConditions
+      });
+    } catch (error) {
+      console.error('Error handling PnL change:', error);
+    }
   }
 
   private async processAnalysisResult(
@@ -353,10 +450,18 @@ export class AgendaService {
         console.log(`Started intelligent agent ${agentId} (${agent.category}) - listening for signals`);
       }
 
+      // Schedule position monitoring (legacy)
       await this.agenda.every('30 seconds', 'monitor-positions', {
         userId: agent.userId.toString(),
         agentId
       }, { timezone: 'UTC' });
+
+      // Schedule PnL monitoring with LLM exit analysis (intelligent agents)
+      await this.agenda.every('10 seconds', 'monitor-agent-pnl', {
+        agentId
+      }, { timezone: 'UTC' });
+
+      console.log(`✅ Started monitoring workers for agent ${agentId} (${agent.name})`);
     } catch (error) {
       console.error(`Error starting agent ${agentId}:`, error);
       throw error;

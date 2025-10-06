@@ -328,6 +328,27 @@ export class TradingSignalService {
         throw new Error(`Agent ${execution.agentId} not found`);
       }
 
+      // CRITICAL: Re-check balance before execution (balance may have changed since signal generation)
+      const currentBalance = await okxService.getBalance(agent.userId.toString());
+      const availableBalance = currentBalance[0]?.details?.find((d: any) => d.ccy === 'USDT')?.availBal || 0;
+      const requiredBalance = execution.quantity * (execution.price || 0);
+
+      if (parseFloat(availableBalance) < requiredBalance) {
+        throw new Error(
+          `Insufficient balance at execution time: Required $${requiredBalance.toFixed(2)}, Available $${parseFloat(availableBalance).toFixed(2)}`
+        );
+      }
+
+      if (parseFloat(availableBalance) < 10) {
+        throw new Error(
+          `Balance below minimum threshold: $${parseFloat(availableBalance).toFixed(2)} (min $10 required)`
+        );
+      }
+
+      console.log(
+        `Balance verified: $${parseFloat(availableBalance).toFixed(2)} available for trade requiring ~$${requiredBalance.toFixed(2)}`
+      );
+
       // Execute the trade using OKX service - OKX expects its own format
       const order = await okxService.executeScalpingOrder(
         agent.userId.toString(),
