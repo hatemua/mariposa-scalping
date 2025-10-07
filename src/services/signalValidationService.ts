@@ -16,25 +16,48 @@ interface ValidationSignal {
   timestamp: Date;
 }
 
+interface LLMExecutionDecision {
+  shouldExecute: boolean;
+  reasoning: string;
+  positionSizePercent: number; // 0-40 percentage of available balance
+  recommendedEntry: number | null;
+  stopLossPrice: number | null;
+  takeProfitPrice: number | null;
+  maxRiskPercent: number; // 1-5 percentage of budget to risk
+  confidence: number; // 0-1
+  keyRisks: string[];
+  keyOpportunities: string[];
+}
+
 interface ValidationResult {
   isValid: boolean;
-  llmValidationScore: number;
-  winProbability: number;
+  confidence: number;
   reasoning: string;
-  rejectionReasons: string[];
-  riskRewardRatio: number;
+  positionSize: number; // Calculated position size in USDT
+  positionSizePercent: number; // Percentage of available balance
+  stopLossPrice: number | null;
+  takeProfitPrice: number | null;
+  maxRiskPercent: number;
+  keyRisks: string[];
+  keyOpportunities: string[];
   marketConditions: {
     liquidity: 'HIGH' | 'MEDIUM' | 'LOW';
     spread: number;
     volatility: number;
   };
-  positionSize?: number; // Calculated position size in USDT
-  availableBalance?: number; // Agent's current available balance
+  availableBalance: number;
+  openPositions: number;
+  agentHealth: {
+    consecutiveLosses: number;
+    recentWinRate: number;
+    currentDrawdown: number;
+  };
 }
 
 export class SignalValidationService {
   /**
-   * Validate a signal using LLM analysis and agent configuration
+   * Validate a signal using LLM-only decision making
+   * LLM receives ALL context and makes unified execution decision
    */
   async validateSignalForAgent(
     signal: ValidationSignal,
@@ -46,118 +69,91 @@ export class SignalValidationService {
         throw new Error(`Agent ${agentId} not found`);
       }
 
-      const rejectionReasons: string[] = [];
+      // Step 1: Gather all context data
+      const { availableBalance, totalAllocated } = await this.getAgentBalance(agent);
+      const openPositions = await this.getAgentOpenPositions(agentId);
+      const recentPerformance = await this.getRecentPerformance(agentId);
+      const marketConditions = await this.getMarketConditions(signal.symbol, agent.userId.toString());
 
-      // Step 1: Check if agent's LLM validation is enabled
-      if (!agent.enableLLMValidation) {
+      // Step 2: Check ONLY critical safety rules (hard stops)
+      if (availableBalance < 10) {
         return {
-          isValid: true,
-          llmValidationScore: 100,
-          winProbability: signal.confidence,
-          reasoning: 'LLM validation disabled for this agent',
-          rejectionReasons: [],
-          riskRewardRatio: 0,
-          marketConditions: {
-            liquidity: 'MEDIUM',
-            spread: 0,
-            volatility: 0,
+          isValid: false,
+          confidence: 0,
+          reasoning: `Cannot execute: Insufficient available balance ($${availableBalance.toFixed(2)}, minimum $10 required)`,
+          positionSize: 0,
+          positionSizePercent: 0,
+          stopLossPrice: null,
+          takeProfitPrice: null,
+          maxRiskPercent: 0,
+          keyRisks: ['Insufficient funds'],
+          keyOpportunities: [],
+          marketConditions,
+          availableBalance,
+          openPositions,
+          agentHealth: {
+            consecutiveLosses: recentPerformance.consecutiveLosses,
+            recentWinRate: recentPerformance.recentWinRate,
+            currentDrawdown: agent.performance.maxDrawdown,
           },
         };
       }
 
-      // Step 2: Check signal category compatibility (intelligent agents)
-      if (agent.allowedSignalCategories && agent.allowedSignalCategories.length > 0 && signal.category) {
-        if (!agent.allowedSignalCategories.includes(signal.category)) {
-          rejectionReasons.push(
-            `Signal category '${signal.category}' not compatible with agent category '${agent.category}'`
-          );
-        }
-      }
-
-      // Step 3: Check current open positions
-      const openPositions = await this.getAgentOpenPositions(agentId);
       if (openPositions >= agent.maxOpenPositions) {
-        rejectionReasons.push(
-          `Agent has reached max open positions (${agent.maxOpenPositions})`
-        );
+        return {
+          isValid: false,
+          confidence: 0,
+          reasoning: `Cannot execute: Agent has reached maximum open positions (${openPositions}/${agent.maxOpenPositions})`,
+          positionSize: 0,
+          positionSizePercent: 0,
+          stopLossPrice: null,
+          takeProfitPrice: null,
+          maxRiskPercent: 0,
+          keyRisks: ['Max positions reached'],
+          keyOpportunities: [],
+          marketConditions,
+          availableBalance,
+          openPositions,
+          agentHealth: {
+            consecutiveLosses: recentPerformance.consecutiveLosses,
+            recentWinRate: recentPerformance.recentWinRate,
+            currentDrawdown: agent.performance.maxDrawdown,
+          },
+        };
       }
 
-      // Step 4: Calculate available balance
-      const { availableBalance, totalAllocated } = await this.getAgentBalance(agent);
-      if (availableBalance < 10) {
-        // Minimum $10 per trade
-        rejectionReasons.push(
-          `Insufficient available balance: $${availableBalance.toFixed(2)} (min $10 required)`
-        );
-      }
-
-      // Step 5: Calculate position size based on available balance and risk level
-      const positionSize = this.calculatePositionSize(agent, availableBalance);
-
-      // Step 6: Check agent performance (stop if too many losses)
-      const recentPerformance = await this.getRecentPerformance(agentId);
-      if (recentPerformance.consecutiveLosses >= 5) {
-        rejectionReasons.push(
-          `Agent has ${recentPerformance.consecutiveLosses} consecutive losses - pausing trading`
-        );
-      }
-
-      // Step 7: Check drawdown limits based on risk level
-      const maxDrawdownThreshold = this.getMaxDrawdownThreshold(agent.riskLevel);
-      if (agent.performance.maxDrawdown < maxDrawdownThreshold) {
-        rejectionReasons.push(
-          `Agent exceeded max drawdown limit: $${agent.performance.maxDrawdown} (threshold: $${maxDrawdownThreshold})`
-        );
-      }
-
-      // Step 8: Get market conditions from OKX
-      const marketConditions = await this.getMarketConditions(
-        signal.symbol,
-        agent.userId.toString()
+      // Step 3: Let LLM make the unified execution decision
+      const llmDecision = await this.getLLMExecutionDecision(
+        signal,
+        agent,
+        availableBalance,
+        openPositions,
+        recentPerformance,
+        marketConditions
       );
 
-      // Step 9: LLM-based signal validation (intelligent agents)
-      const llmValidation = await this.llmValidateSignal(signal, agent, marketConditions, positionSize);
-
-      // Step 10: Check if LLM confidence meets minimum threshold
-      if (llmValidation.winProbability < agent.minLLMConfidence) {
-        rejectionReasons.push(
-          `LLM win probability (${(llmValidation.winProbability * 100).toFixed(1)}%) below minimum confidence (${(agent.minLLMConfidence * 100).toFixed(1)}%)`
-        );
-      }
-
-      // Step 11: Calculate risk/reward ratio
-      const riskRewardRatio = this.calculateRiskReward(signal, agent);
-
-      // Risk/reward threshold varies by risk level (1=conservative, 5=aggressive)
-      const minRiskReward = [3.0, 2.5, 2.0, 1.5, 1.2][agent.riskLevel - 1];
-      if (riskRewardRatio < minRiskReward) {
-        rejectionReasons.push(
-          `Risk/reward ratio (${riskRewardRatio.toFixed(2)}) too low for risk level ${agent.riskLevel} (min ${minRiskReward})`
-        );
-      }
-
-      // Step 12: Check liquidity based on agent category
-      if (marketConditions.liquidity === 'LOW') {
-        if (agent.category === 'SCALPING') {
-          rejectionReasons.push('Low liquidity detected - not suitable for scalping');
-        } else if (agent.riskLevel <= 2) {
-          rejectionReasons.push('Low liquidity detected - not suitable for conservative trading');
-        }
-      }
-
-      const isValid = rejectionReasons.length === 0;
+      // Step 4: Calculate actual position size from LLM's percentage recommendation
+      const positionSize = availableBalance * (llmDecision.positionSizePercent / 100);
 
       return {
-        isValid,
-        llmValidationScore: llmValidation.score,
-        winProbability: llmValidation.winProbability,
-        reasoning: llmValidation.reasoning,
-        rejectionReasons,
-        riskRewardRatio,
+        isValid: llmDecision.shouldExecute,
+        confidence: llmDecision.confidence,
+        reasoning: llmDecision.reasoning,
+        positionSize: Math.min(positionSize, availableBalance), // Never exceed available balance
+        positionSizePercent: llmDecision.positionSizePercent,
+        stopLossPrice: llmDecision.stopLossPrice,
+        takeProfitPrice: llmDecision.takeProfitPrice,
+        maxRiskPercent: llmDecision.maxRiskPercent,
+        keyRisks: llmDecision.keyRisks,
+        keyOpportunities: llmDecision.keyOpportunities,
         marketConditions,
-        positionSize,
         availableBalance,
+        openPositions,
+        agentHealth: {
+          consecutiveLosses: recentPerformance.consecutiveLosses,
+          recentWinRate: recentPerformance.recentWinRate,
+          currentDrawdown: agent.performance.maxDrawdown,
+        },
       };
     } catch (error) {
       console.error('Error validating signal:', error);
@@ -166,62 +162,70 @@ export class SignalValidationService {
   }
 
   /**
-   * Use LLM to analyze the signal and predict win probability (intelligent agents)
+   * Get LLM execution decision with full context
+   * LLM decides: should execute, position size %, stop loss, take profit
    */
-  private async llmValidateSignal(
+  private async getLLMExecutionDecision(
     signal: ValidationSignal,
     agent: any,
-    marketConditions: any,
-    positionSize: number
-  ): Promise<{
-    score: number;
-    winProbability: number;
-    reasoning: string;
-  }> {
+    availableBalance: number,
+    openPositions: number,
+    recentPerformance: any,
+    marketConditions: any
+  ): Promise<LLMExecutionDecision> {
     try {
-      const prompt = `You are an expert crypto trading analyst. Analyze this trading signal for an intelligent AI trading agent and provide a win probability assessment.
+      const prompt = `You are an expert crypto trading AI making execution decisions. Analyze this signal and decide if the agent should execute it.
 
-Signal Details:
+SIGNAL:
 - Symbol: ${signal.symbol}
 - Recommendation: ${signal.recommendation}
 - Category: ${signal.category || 'UNKNOWN'}
 - Entry Price: ${signal.targetPrice || 'Market Price'}
-- Stop Loss: ${signal.stopLoss || 'Dynamic'}
+- Stop Loss: ${signal.stopLoss || 'Not specified'}
 - Initial Confidence: ${(signal.confidence * 100).toFixed(1)}%
 - Reasoning: ${signal.reasoning}
 
-Intelligent Agent Profile:
+AGENT PROFILE:
 - Category: ${agent.category} (trading style)
 - Risk Level: ${agent.riskLevel}/5 (1=Very Conservative, 5=Very Aggressive)
-- Budget: $${agent.budget} USDT
-- Position Size: $${positionSize.toFixed(2)} USDT for this trade
-- Min Confidence Required: ${(agent.minLLMConfidence * 100).toFixed(0)}%
-- Max Open Positions: ${agent.maxOpenPositions}
-- Allowed Signal Types: ${agent.allowedSignalCategories?.join(', ') || 'ALL'}
+- Total Budget: $${agent.budget} USDT
+- Available Balance: $${availableBalance.toFixed(2)} USDT
+- Open Positions: ${openPositions}/${agent.maxOpenPositions}
 
-Market Conditions:
+AGENT HEALTH:
+- Consecutive Losses: ${recentPerformance.consecutiveLosses}
+- Recent Win Rate: ${(recentPerformance.recentWinRate * 100).toFixed(0)}%
+- Recent P&L: $${recentPerformance.recentPnL.toFixed(2)}
+- Current Drawdown: ${agent.performance.maxDrawdown.toFixed(2)}%
+- Total Trades: ${agent.performance.totalTrades}
+
+MARKET CONDITIONS:
 - Liquidity: ${marketConditions.liquidity}
 - Spread: ${marketConditions.spread.toFixed(4)}%
 - Volatility: ${marketConditions.volatility.toFixed(2)}%
 
-Analyze the following as an experienced trader:
-1. Does this signal align with the agent's ${agent.category} trading category?
-2. Is the signal category compatible with the agent's allowed types?
-3. Given the agent's risk level (${agent.riskLevel}/5), is this trade appropriate?
-4. Are market conditions favorable for this position size ($${positionSize.toFixed(2)})?
-5. What is the realistic probability of profit on this trade?
-6. What entry, exit, stop-loss, and take-profit levels would you recommend?
+DECISION REQUIRED:
+As an experienced trader, should this agent execute this signal?
 
-Respond in JSON format:
+Consider:
+1. Is this trade appropriate for agent's ${agent.category} category and risk level ${agent.riskLevel}?
+2. Is agent's health good enough to trade? (${recentPerformance.consecutiveLosses} consecutive losses, ${agent.performance.maxDrawdown.toFixed(1)}% drawdown)
+3. Are market conditions favorable? (liquidity: ${marketConditions.liquidity}, spread: ${marketConditions.spread.toFixed(3)}%)
+4. What position size (% of available $${availableBalance.toFixed(2)}) minimizes risk while capturing opportunity?
+5. What stop-loss and take-profit levels protect capital?
+
+Respond in JSON format ONLY:
 {
-  "winProbability": <number between 0 and 1>,
-  "score": <validation score 0-100>,
-  "reasoning": "<detailed analysis in 2-3 sentences explaining why this trade matches or doesn't match the agent's profile>",
-  "recommendedEntry": <number or null>,
-  "recommendedStopLoss": <number or null>,
-  "recommendedTakeProfit": <number or null>,
-  "keyRisks": ["<risk1>", "<risk2>"],
-  "keyOpportunities": ["<opportunity1>", "<opportunity2>"]
+  "shouldExecute": <true or false>,
+  "reasoning": "<2-3 sentences explaining your decision>",
+  "positionSizePercent": <percentage of available balance to use, 0-40>,
+  "recommendedEntry": <price number or null>,
+  "stopLossPrice": <price number or null>,
+  "takeProfitPrice": <price number or null>,
+  "maxRiskPercent": <max % of budget to risk, 1-5>,
+  "confidence": <your confidence in this decision, 0-1>,
+  "keyRisks": ["risk1", "risk2"],
+  "keyOpportunities": ["opportunity1", "opportunity2"]
 }`;
 
       const analysis = await aiAnalysisService.analyzeWithLLM(prompt, signal.symbol);
@@ -230,26 +234,47 @@ Respond in JSON format:
       try {
         const result = JSON.parse(analysis);
         return {
-          score: Math.min(100, Math.max(0, result.score || 50)),
-          winProbability: Math.min(1, Math.max(0, result.winProbability || 0.5)),
-          reasoning: result.reasoning || analysis,
+          shouldExecute: result.shouldExecute || false,
+          reasoning: result.reasoning || 'No reasoning provided',
+          positionSizePercent: Math.min(40, Math.max(0, result.positionSizePercent || 0)),
+          recommendedEntry: result.recommendedEntry || signal.targetPrice || null,
+          stopLossPrice: result.stopLossPrice || signal.stopLoss || null,
+          takeProfitPrice: result.takeProfitPrice || null,
+          maxRiskPercent: Math.min(5, Math.max(1, result.maxRiskPercent || 2)),
+          confidence: Math.min(1, Math.max(0, result.confidence || 0.5)),
+          keyRisks: Array.isArray(result.keyRisks) ? result.keyRisks : [],
+          keyOpportunities: Array.isArray(result.keyOpportunities) ? result.keyOpportunities : [],
         };
       } catch (parseError) {
-        // Fallback if JSON parsing fails
-        console.warn('Failed to parse LLM response, using fallback');
+        // Fallback if JSON parsing fails - be conservative
+        console.warn('Failed to parse LLM response, using conservative fallback');
         return {
-          score: signal.confidence * 100,
-          winProbability: signal.confidence,
-          reasoning: analysis.substring(0, 500),
+          shouldExecute: false,
+          reasoning: 'LLM response parsing failed - rejecting for safety',
+          positionSizePercent: 0,
+          recommendedEntry: signal.targetPrice || null,
+          stopLossPrice: signal.stopLoss || null,
+          takeProfitPrice: null,
+          maxRiskPercent: 2,
+          confidence: 0,
+          keyRisks: ['LLM parsing error'],
+          keyOpportunities: [],
         };
       }
     } catch (error) {
-      console.error('LLM validation error:', error);
-      // Return conservative estimate on error
+      console.error('LLM execution decision error:', error);
+      // Return conservative decision on error
       return {
-        score: 50,
-        winProbability: 0.5,
-        reasoning: 'LLM validation unavailable - using default confidence',
+        shouldExecute: false,
+        reasoning: 'LLM unavailable - rejecting for safety',
+        positionSizePercent: 0,
+        recommendedEntry: null,
+        stopLossPrice: null,
+        takeProfitPrice: null,
+        maxRiskPercent: 2,
+        confidence: 0,
+        keyRisks: ['LLM error'],
+        keyOpportunities: [],
       };
     }
   }
@@ -358,35 +383,6 @@ Respond in JSON format:
   }
 
   /**
-   * Calculate risk/reward ratio (intelligent agents)
-   */
-  private calculateRiskReward(signal: ValidationSignal, agent: any): number {
-    if (!signal.targetPrice || !signal.stopLoss) {
-      // If no specific targets, estimate based on agent's risk level
-      // Higher risk = willing to accept lower R/R ratios
-      return agent.riskLevel <= 2 ? 2.5 : agent.riskLevel <= 3 ? 2.0 : 1.5;
-    }
-
-    const entry = signal.targetPrice;
-    const stop = signal.stopLoss;
-
-    // Estimate target based on agent config or use default multiplier
-    let target: number;
-    if (agent.config?.takeProfitPercentage) {
-      target = entry * (1 + agent.config.takeProfitPercentage / 100);
-    } else {
-      // Default: risk level determines profit target (conservative = higher targets)
-      const profitMultiplier = [1.03, 1.025, 1.02, 1.015, 1.01][agent.riskLevel - 1];
-      target = entry * profitMultiplier;
-    }
-
-    const risk = Math.abs(entry - stop);
-    const reward = Math.abs(target - entry);
-
-    return risk > 0 ? reward / risk : 0;
-  }
-
-  /**
    * Get agent's available balance (budget - allocated to open positions)
    */
   private async getAgentBalance(agent: any): Promise<{
@@ -419,38 +415,6 @@ Respond in JSON format:
         totalAllocated: 0,
       };
     }
-  }
-
-  /**
-   * Calculate position size based on agent's risk level and available balance
-   */
-  private calculatePositionSize(agent: any, availableBalance: number): number {
-    // Position size as percentage of available balance based on risk level
-    // Risk 1 (Very Conservative): 10% per trade
-    // Risk 2 (Conservative): 15% per trade
-    // Risk 3 (Moderate): 20% per trade
-    // Risk 4 (Aggressive): 30% per trade
-    // Risk 5 (Very Aggressive): 40% per trade
-    const positionPercentages = [0.10, 0.15, 0.20, 0.30, 0.40];
-    const percentage = positionPercentages[agent.riskLevel - 1] || 0.20;
-
-    const positionSize = availableBalance * percentage;
-
-    // Ensure minimum position size of $10 and maximum of available balance
-    return Math.max(10, Math.min(positionSize, availableBalance));
-  }
-
-  /**
-   * Get max drawdown threshold based on risk level
-   */
-  private getMaxDrawdownThreshold(riskLevel: number): number {
-    // Risk 1 (Very Conservative): -5% max drawdown
-    // Risk 2 (Conservative): -10% max drawdown
-    // Risk 3 (Moderate): -15% max drawdown
-    // Risk 4 (Aggressive): -25% max drawdown
-    // Risk 5 (Very Aggressive): -40% max drawdown
-    const drawdownPercentages = [-0.05, -0.10, -0.15, -0.25, -0.40];
-    return drawdownPercentages[riskLevel - 1] || -0.15;
   }
 
   /**

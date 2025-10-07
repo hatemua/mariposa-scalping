@@ -123,6 +123,11 @@ const ScalpingAgentSchema = new Schema<ScalpingAgentDocument>({
     min: 1,
     max: 20,
   },
+  validationStrictness: {
+    type: String,
+    enum: ['STRICT', 'MODERATE', 'RELAXED', 'LLM_FIRST'],
+    default: 'MODERATE',
+  },
   allowedSignalCategories: [{
     type: String,
     enum: ['BREAKOUT', 'REVERSAL', 'MOMENTUM', 'ARBITRAGE', 'VOLUME_SURGE', 'WHALE_ACTIVITY'],
@@ -176,16 +181,17 @@ ScalpingAgentSchema.index({ riskLevel: 1 });
 // Pre-save hook to auto-calculate LLM settings based on risk level
 ScalpingAgentSchema.pre('save', function(next) {
   // Auto-calculate minLLMConfidence based on risk level
-  // Risk 1 (Very Conservative) = 0.85 confidence
-  // Risk 5 (Very Aggressive) = 0.55 confidence
+  // UPDATED: Lowered by ~10% to reduce false rejections while maintaining safety
+  // Risk 1 (Very Conservative) = 0.75 confidence (was 0.85)
+  // Risk 5 (Very Aggressive) = 0.52 confidence (was 0.55)
   const confidenceMap: { [key: number]: number } = {
-    1: 0.85,
-    2: 0.75,
-    3: 0.70,
-    4: 0.60,
-    5: 0.55,
+    1: 0.75,
+    2: 0.70,
+    3: 0.65,
+    4: 0.58,
+    5: 0.52,
   };
-  this.minLLMConfidence = confidenceMap[this.riskLevel] || 0.70;
+  this.minLLMConfidence = confidenceMap[this.riskLevel] || 0.65;
 
   // Auto-calculate max open positions based on budget and risk
   // Risk 1: fewer positions (1-2)

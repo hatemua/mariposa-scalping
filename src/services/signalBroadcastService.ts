@@ -111,11 +111,11 @@ export class SignalBroadcastService {
             symbol: signal.symbol,
             recommendation: signal.recommendation,
             isValid: validationResult.isValid,
-            llmValidationScore: validationResult.llmValidationScore,
-            winProbability: validationResult.winProbability,
+            llmValidationScore: validationResult.confidence * 100, // Convert confidence to score
+            winProbability: validationResult.confidence,
             reasoning: validationResult.reasoning,
-            rejectionReasons: validationResult.rejectionReasons,
-            riskRewardRatio: validationResult.riskRewardRatio,
+            rejectionReasons: validationResult.isValid ? [] : [validationResult.reasoning],
+            riskRewardRatio: 0, // No longer calculated - LLM handles this
             timestamp: new Date(),
           };
 
@@ -126,7 +126,7 @@ export class SignalBroadcastService {
           } else {
             rejectedCount++;
             console.log(
-              `Signal ${signal.id} rejected for agent ${agent.name}: ${validationResult.rejectionReasons.join(', ')}`
+              `Signal ${signal.id} rejected for agent ${agent.name}: ${validationResult.reasoning}`
             );
           }
 
@@ -145,11 +145,11 @@ export class SignalBroadcastService {
             recommendation: signal.recommendation,
             signalCategory: signal.category,
             isValid: validationResult.isValid,
-            llmValidationScore: validationResult.llmValidationScore,
-            winProbability: validationResult.winProbability,
+            llmValidationScore: validationResult.confidence * 100,
+            winProbability: validationResult.confidence,
             reasoning: validationResult.reasoning,
-            rejectionReasons: validationResult.rejectionReasons,
-            riskRewardRatio: validationResult.riskRewardRatio,
+            rejectionReasons: validationResult.isValid ? [] : [validationResult.reasoning],
+            riskRewardRatio: 0,
             marketConditions: validationResult.marketConditions,
             positionSize: validationResult.positionSize,
             availableBalance: validationResult.availableBalance,

@@ -33,6 +33,7 @@ export interface ScalpingAgent {
 
   // Optional advanced settings
   maxOpenPositions: number; // Auto-calculated based on budget and risk
+  validationStrictness: 'STRICT' | 'MODERATE' | 'RELAXED' | 'LLM_FIRST'; // How strictly to enforce validation rules
   allowedSignalCategories: string[]; // Auto-set based on category
   tags: string[];
   description?: string;
