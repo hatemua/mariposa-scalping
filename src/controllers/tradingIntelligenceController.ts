@@ -766,6 +766,28 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
               isActive: true,
               status: 'ACTIVE',
               userId: req.user?._id
+            }).then(async (savedWhale) => {
+              // ⭐ BROADCAST whale activity as signal to all intelligent agents
+              try {
+                // Convert impact string to numeric priority
+                const impactPriority = savedWhale.impact === 'HIGH' ? 90 : savedWhale.impact === 'MEDIUM' ? 70 : 50;
+
+                await signalBroadcastService.broadcastSignal({
+                  id: `whale_${savedWhale._id}`,
+                  symbol: savedWhale.symbol,
+                  recommendation: savedWhale.side as 'BUY' | 'SELL' | 'HOLD',
+                  confidence: savedWhale.confidence,
+                  category: 'WHALE_ACTIVITY',
+                  reasoning: savedWhale.description,
+                  targetPrice: undefined,
+                  stopLoss: undefined,
+                  priority: impactPriority,
+                  timestamp: new Date()
+                });
+                console.log(`📡 Broadcasted whale activity ${savedWhale.symbol} (impact: ${savedWhale.impact}) to all agents`);
+              } catch (broadcastError) {
+                console.error(`Failed to broadcast whale activity ${savedWhale.symbol}:`, broadcastError);
+              }
             }).catch(dbError => {
               console.error(`Failed to save whale activity ${normalizedSymbol} to database:`, dbError);
             });

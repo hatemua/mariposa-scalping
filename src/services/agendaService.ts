@@ -901,20 +901,33 @@ export class AgendaService {
       }
     });
 
-    // Broadcast Active Opportunities Job (backup to ensure signals are sent)
+    // Broadcast Active Opportunities + Whale Activities Job (backup to ensure signals are sent)
     this.agenda.define('broadcast-opportunities', async (job: any) => {
       try {
-        // Find high-quality active opportunities that haven't been broadcasted recently
+        // Find high-quality active opportunities
         const opportunities = await OpportunityModel.find({
           isActive: true,
           expiresAt: { $gt: new Date() },
-          score: { $gte: 60 } // Only broadcast good opportunities
+          score: { $gte: 60 }
         })
         .sort({ score: -1 })
         .limit(10)
         .lean();
 
-        let broadcastCount = 0;
+        // Find high-impact active whale activities
+        const whaleActivities = await WhaleActivityModel.find({
+          isActive: true,
+          expiresAt: { $gt: new Date() },
+          impact: { $gte: 60 } // Only broadcast high-impact whales
+        })
+        .sort({ impact: -1 })
+        .limit(10)
+        .lean();
+
+        let oppCount = 0;
+        let whaleCount = 0;
+
+        // Broadcast opportunities
         for (const opp of opportunities) {
           try {
             await signalBroadcastService.broadcastSignal({
@@ -930,17 +943,41 @@ export class AgendaService {
               priority: opp.score,
               timestamp: new Date()
             });
-            broadcastCount++;
+            oppCount++;
           } catch (broadcastError) {
             console.error(`Failed to broadcast opportunity ${opp.symbol}:`, broadcastError);
           }
         }
 
-        console.log(`✅ Broadcasted ${broadcastCount} opportunities to agents`);
+        // Broadcast whale activities
+        for (const whale of whaleActivities) {
+          try {
+            // Convert impact string to numeric priority
+            const impactPriority = whale.impact === 'HIGH' ? 90 : whale.impact === 'MEDIUM' ? 70 : 50;
+
+            await signalBroadcastService.broadcastSignal({
+              id: `whale_${whale._id}_${Date.now()}`,
+              symbol: whale.symbol,
+              recommendation: whale.side as 'BUY' | 'SELL' | 'HOLD',
+              confidence: whale.confidence,
+              category: 'WHALE_ACTIVITY',
+              reasoning: whale.description,
+              targetPrice: undefined,
+              stopLoss: undefined,
+              priority: impactPriority,
+              timestamp: new Date()
+            });
+            whaleCount++;
+          } catch (broadcastError) {
+            console.error(`Failed to broadcast whale activity ${whale.symbol}:`, broadcastError);
+          }
+        }
+
+        console.log(`✅ Broadcasted ${oppCount} opportunities + ${whaleCount} whale activities to agents`);
         await this.updateJobMetrics('broadcast-opportunities', 'success');
 
       } catch (error) {
-        console.error('❌ Error broadcasting opportunities:', error);
+        console.error('❌ Error broadcasting signals:', error);
         await this.updateJobMetrics('broadcast-opportunities', 'error');
       }
     });
