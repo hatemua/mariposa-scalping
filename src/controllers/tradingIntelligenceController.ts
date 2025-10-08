@@ -472,9 +472,9 @@ export const getProfessionalSignals = async (req: AuthRequest, res: Response): P
 
           console.log(`💰 ${normalizedSymbol} pricing: Price=${validatedPrice}, RiskLevel=${riskLevel}%, StopLoss=${stopLossPercent}%, Target=${targetPercent}%`);
 
-          // Enhanced signal with LLM analysis for moderate-strength signals
+          // Enhanced signal with LLM analysis for moderate-strength signals (lowered threshold)
           let advancedLLMData = null;
-          if (signalStrength >= 60) {
+          if (signalStrength >= 50) {
             try {
               // Get orderbook data for LLM analysis
               const orderBook = await binanceService.getOrderBook(normalizedSymbol, 20);

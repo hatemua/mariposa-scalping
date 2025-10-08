@@ -904,21 +904,21 @@ export class AgendaService {
     // Broadcast Active Opportunities + Whale Activities Job (backup to ensure signals are sent)
     this.agenda.define('broadcast-opportunities', async (job: any) => {
       try {
-        // Find high-quality active opportunities
+        // Find good-quality active opportunities (lowered threshold for more signals)
         const opportunities = await OpportunityModel.find({
           isActive: true,
           expiresAt: { $gt: new Date() },
-          score: { $gte: 60 }
+          score: { $gte: 45 }
         })
         .sort({ score: -1 })
         .limit(10)
         .lean();
 
-        // Find high-impact active whale activities
+        // Find moderate-impact active whale activities (lowered threshold)
         const whaleActivities = await WhaleActivityModel.find({
           isActive: true,
           expiresAt: { $gt: new Date() },
-          impact: { $gte: 60 } // Only broadcast high-impact whales
+          impact: { $gte: 50 } // Broadcast medium+ impact whales
         })
         .sort({ impact: -1 })
         .limit(10)
@@ -987,18 +987,20 @@ export class AgendaService {
       try {
         console.log('🔍 Auto-scanning market for opportunities...');
 
-        // Top trading pairs to scan automatically
+        // Top trading pairs to scan automatically (expanded for better coverage)
         const symbols = [
           'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT',
-          'XRPUSDT', 'DOTUSDT', 'LINKUSDT', 'MATICUSDT', 'AVAXUSDT'
+          'XRPUSDT', 'DOTUSDT', 'LINKUSDT', 'MATICUSDT', 'AVAXUSDT',
+          'ATOMUSDT', 'NEARUSDT', 'FTMUSDT', 'OPUSDT', 'ARBUSDT',
+          'INJUSDT', 'SUIUSDT', 'PEPEUSDT', 'SHIBUSDT', 'DOGEUSDT'
         ];
 
         // Import controller to reuse logic (temporary until refactored into service)
         const { getOpportunityScanner } = await import('../controllers/tradingIntelligenceController');
 
-        // Create mock request/response to trigger scanning
+        // Create mock request/response to trigger scanning (lowered threshold)
         const mockReq = {
-          body: { symbols, minScore: 60 },
+          body: { symbols, minScore: 40 },
           user: { _id: 'system-auto-scan' }
         } as any;
 
@@ -1168,18 +1170,18 @@ export class AgendaService {
       await this.agenda.every('30 seconds', 'process-signal-queue');
       await this.agenda.every('15 seconds', 'process-execution-queue');
 
-      // AUTO-SCAN: Continuously scan market for opportunities/whales (NEW!)
-      await this.agenda.every('3 minutes', 'auto-scan-opportunities');
-      await this.agenda.every('2 minutes', 'auto-detect-whales');
+      // AUTO-SCAN: Continuously scan market for opportunities/whales (FAST REAL-TIME!)
+      await this.agenda.every('30 seconds', 'auto-scan-opportunities');
+      await this.agenda.every('45 seconds', 'auto-detect-whales');
 
-      // Broadcast active opportunities every 3 minutes (backup signal broadcaster)
-      await this.agenda.every('3 minutes', 'broadcast-opportunities');
+      // Broadcast active opportunities every minute (backup signal broadcaster)
+      await this.agenda.every('1 minute', 'broadcast-opportunities');
 
       // Update performance metrics every 5 minutes
       await this.agenda.every('5 minutes', 'update-performance-metrics');
 
-      // Refresh real-time analysis cache every 5 minutes
-      await this.agenda.every('5 minutes', 'refresh-realtime-analysis', {
+      // Refresh real-time analysis cache every 2 minutes (faster refresh)
+      await this.agenda.every('2 minutes', 'refresh-realtime-analysis', {
         symbols: ['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOTUSDT', 'LINKUSDT']
       });
 
