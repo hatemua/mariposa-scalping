@@ -982,6 +982,79 @@ export class AgendaService {
       }
     });
 
+    // Auto-Scan for Opportunities Job (continuous market scanning)
+    this.agenda.define('auto-scan-opportunities', async (job: any) => {
+      try {
+        console.log('🔍 Auto-scanning market for opportunities...');
+
+        // Top trading pairs to scan automatically
+        const symbols = [
+          'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT',
+          'XRPUSDT', 'DOTUSDT', 'LINKUSDT', 'MATICUSDT', 'AVAXUSDT'
+        ];
+
+        // Import controller to reuse logic (temporary until refactored into service)
+        const { getOpportunityScanner } = await import('../controllers/tradingIntelligenceController');
+
+        // Create mock request/response to trigger scanning
+        const mockReq = {
+          body: { symbols, minScore: 60 },
+          user: { _id: 'system-auto-scan' }
+        } as any;
+
+        const mockRes = {
+          json: (data: any) => {
+            if (data.success) {
+              console.log(`✅ Auto-scan found ${data.data?.length || 0} opportunities`);
+            }
+          },
+          status: () => ({ json: () => {} })
+        } as any;
+
+        await getOpportunityScanner(mockReq, mockRes);
+        await this.updateJobMetrics('auto-scan-opportunities', 'success');
+
+      } catch (error) {
+        console.error('❌ Auto-scan opportunities failed:', error);
+        await this.updateJobMetrics('auto-scan-opportunities', 'error');
+      }
+    });
+
+    // Auto-Detect Whale Activities Job (continuous whale monitoring)
+    this.agenda.define('auto-detect-whales', async (job: any) => {
+      try {
+        console.log('🐋 Auto-detecting whale activities...');
+
+        // High-volume pairs most likely to have whale activity
+        const symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT'];
+
+        // Import controller to reuse logic
+        const { getWhaleActivity } = await import('../controllers/tradingIntelligenceController');
+
+        // Create mock request/response
+        const mockReq = {
+          body: { symbols, minSize: 50000 },
+          user: { _id: 'system-auto-scan' }
+        } as any;
+
+        const mockRes = {
+          json: (data: any) => {
+            if (data.success) {
+              console.log(`✅ Auto-scan found ${data.data?.length || 0} whale activities`);
+            }
+          },
+          status: () => ({ json: () => {} })
+        } as any;
+
+        await getWhaleActivity(mockReq, mockRes);
+        await this.updateJobMetrics('auto-detect-whales', 'success');
+
+      } catch (error) {
+        console.error('❌ Auto-detect whales failed:', error);
+        await this.updateJobMetrics('auto-detect-whales', 'error');
+      }
+    });
+
     // Expire Old Whale Activities Job
     this.agenda.define('expire-whale-activities', async (job: any) => {
       try {
@@ -1094,6 +1167,10 @@ export class AgendaService {
       // Process trading queues every 30 seconds
       await this.agenda.every('30 seconds', 'process-signal-queue');
       await this.agenda.every('15 seconds', 'process-execution-queue');
+
+      // AUTO-SCAN: Continuously scan market for opportunities/whales (NEW!)
+      await this.agenda.every('3 minutes', 'auto-scan-opportunities');
+      await this.agenda.every('2 minutes', 'auto-detect-whales');
 
       // Broadcast active opportunities every 3 minutes (backup signal broadcaster)
       await this.agenda.every('3 minutes', 'broadcast-opportunities');
