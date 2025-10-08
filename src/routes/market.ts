@@ -20,7 +20,8 @@ import {
   getEntrySignals,
   getProfessionalSignals,
   getWhaleActivity,
-  getOpportunityScanner
+  getOpportunityScanner,
+  testSignalBroadcast
 } from '../controllers/tradingIntelligenceController';
 import {
   startProfessionalAnalysis,
@@ -79,6 +80,7 @@ router.get('/:symbol/entry-signals', aiAnalysisRateLimiter, getEntrySignals);
 router.post('/professional-signals', professionalSignalsRateLimiter, getProfessionalSignals);
 router.post('/whale-activity', professionalSignalsRateLimiter, getWhaleActivity);
 router.post('/opportunity-scanner', professionalSignalsRateLimiter, getOpportunityScanner);
+router.post('/test-signal', marketDataRateLimiter, testSignalBroadcast);
 
 // New AI Analysis Worker endpoints
 router.post('/start-professional-analysis', aiAnalysisRateLimiter, startProfessionalAnalysis);

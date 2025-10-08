@@ -877,6 +877,56 @@ export const getWhaleActivity = async (req: AuthRequest, res: Response): Promise
   }
 };
 
+export const testSignalBroadcast = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    console.log('🧪 TEST: Broadcasting test signal immediately...');
+
+    const { symbol = 'BTCUSDT', recommendation = 'BUY' } = req.body;
+
+    // Create a simple test signal
+    const testSignal = {
+      id: `test_${Date.now()}`,
+      symbol: SymbolConverter.normalize(symbol),
+      recommendation: recommendation as 'BUY' | 'SELL' | 'HOLD',
+      confidence: 0.75,
+      category: 'TEST_SIGNAL',
+      reasoning: '🧪 This is a TEST signal to verify broadcast system works instantly',
+      targetPrice: undefined,
+      stopLoss: undefined,
+      priority: 80,
+      timestamp: new Date()
+    };
+
+    console.log('📡 Broadcasting test signal:', testSignal);
+
+    // Broadcast immediately
+    const broadcastResult = await signalBroadcastService.broadcastSignal(testSignal);
+
+    console.log('✅ Test signal broadcast complete:', broadcastResult);
+
+    res.json({
+      success: true,
+      message: 'Test signal broadcasted successfully',
+      data: {
+        signal: testSignal,
+        broadcastResult: {
+          totalAgents: broadcastResult.totalAgents,
+          validatedAgents: broadcastResult.validatedAgents,
+          rejectedAgents: broadcastResult.rejectedAgents
+        }
+      }
+    } as ApiResponse);
+
+  } catch (error) {
+    console.error('❌ Error broadcasting test signal:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to broadcast test signal',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    } as ApiResponse);
+  }
+};
+
 export const getOpportunityScanner = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     console.log('🎯 Opportunity Scanner Endpoint Called');
