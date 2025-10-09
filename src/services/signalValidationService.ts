@@ -69,13 +69,52 @@ export class SignalValidationService {
         throw new Error(`Agent ${agentId} not found`);
       }
 
-      // Step 1: Gather all context data
+      // Step 1: Check if agent has LLM validation enabled
+      // If disabled, use simple validation (faster, cheaper)
+      if (!agent.enableLLMValidation) {
+        const { availableBalance } = await this.getAgentBalance(agent);
+        const openPositions = await this.getAgentOpenPositions(agentId);
+
+        // Simple validation: just check balance and positions
+        const positionSize = Math.min(availableBalance * 0.1, 50); // 10% of balance, max $50
+
+        return {
+          isValid: availableBalance >= 10 && openPositions < agent.maxOpenPositions,
+          confidence: signal.confidence,
+          reasoning: availableBalance < 10
+            ? `Insufficient balance: $${availableBalance.toFixed(2)}`
+            : openPositions >= agent.maxOpenPositions
+            ? `Max positions reached: ${openPositions}/${agent.maxOpenPositions}`
+            : 'LLM validation disabled - using basic validation',
+          positionSize,
+          positionSizePercent: (positionSize / availableBalance) * 100,
+          stopLossPrice: signal.stopLoss || null,
+          takeProfitPrice: signal.targetPrice || null,
+          maxRiskPercent: 2,
+          keyRisks: [],
+          keyOpportunities: [],
+          marketConditions: {
+            liquidity: 'MEDIUM',
+            spread: 0.1,
+            volatility: 1.0,
+          },
+          availableBalance,
+          openPositions,
+          agentHealth: {
+            consecutiveLosses: 0,
+            recentWinRate: 0,
+            currentDrawdown: 0,
+          },
+        };
+      }
+
+      // Step 2: Gather all context data for LLM validation
       const { availableBalance, totalAllocated } = await this.getAgentBalance(agent);
       const openPositions = await this.getAgentOpenPositions(agentId);
       const recentPerformance = await this.getRecentPerformance(agentId);
       const marketConditions = await this.getMarketConditions(signal.symbol, agent.userId.toString());
 
-      // Step 2: Check ONLY critical safety rules (hard stops)
+      // Step 3: Check ONLY critical safety rules (hard stops)
       if (availableBalance < 10) {
         return {
           isValid: false,
@@ -122,7 +161,7 @@ export class SignalValidationService {
         };
       }
 
-      // Step 3: Let LLM make the unified execution decision
+      // Step 4: Let LLM make the unified execution decision
       const llmDecision = await this.getLLMExecutionDecision(
         signal,
         agent,
@@ -132,7 +171,7 @@ export class SignalValidationService {
         marketConditions
       );
 
-      // Step 4: Calculate actual position size from LLM's percentage recommendation
+      // Step 5: Calculate actual position size from LLM's percentage recommendation
       const positionSize = availableBalance * (llmDecision.positionSizePercent / 100);
 
       return {

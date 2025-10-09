@@ -20,10 +20,10 @@ export class AIAnalysisService {
   private httpClient: AxiosInstance;
 
   private models = [
-    'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
-    'Qwen/Qwen3-235B-A22B-Instruct-2507-tput',  // Updated to valid model
-    'Qwen/QwQ-32B-Preview',  // Fixed model name
-    'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo'
+    'meta-llama/Llama-3.2-3B-Instruct-Turbo',     // $0.06/M tokens (cheapest!)
+    'meta-llama/Llama-3-8B-Instruct-Lite',        // $0.10/M tokens (very cheap, good quality)
+    'openai/gpt-oss-20b',                         // $0.05 input / $0.20 output (excellent quality!)
+    'Qwen/Qwen2.5-7B-Instruct-Turbo'              // $0.30/M tokens (good reasoning, cheap)
   ];
 
   constructor() {
@@ -162,15 +162,36 @@ export class AIAnalysisService {
       const prompt = this.generateAnalysisPrompt(marketData, klineData, orderBook);
 
       // Cache the individual model responses temporarily
+      // Use Promise.allSettled to handle partial failures gracefully
       const modelCacheKey = `ai_models:${symbol}:${Date.now()}`;
-      const analyses = await Promise.all(
+      const analysisPromises = await Promise.allSettled(
         this.models.map(async (model, index) => {
-          const analysis = await this.getModelAnalysis(model, prompt);
-          // Cache individual model response
-          await redisService.set(`${modelCacheKey}:${index}`, analysis, { ttl: 300 });
-          return analysis;
+          try {
+            const analysis = await this.getModelAnalysis(model, prompt);
+            // Cache individual model response
+            await redisService.set(`${modelCacheKey}:${index}`, analysis, { ttl: 300 });
+            return analysis;
+          } catch (error) {
+            console.error(`❌ Model ${model} failed:`, error);
+            return null;
+          }
         })
       );
+
+      // Extract successful analyses (filter out failures)
+      const analyses = analysisPromises
+        .filter((result): result is PromiseFulfilledResult<LLMAnalysis | null> =>
+          result.status === 'fulfilled' && result.value !== null
+        )
+        .map(result => result.value as LLMAnalysis);
+
+      console.log(`✅ ${analyses.length}/${this.models.length} LLM models succeeded`);
+
+      // Require at least 2 successful analyses (50% success rate)
+      if (analyses.length < 2) {
+        console.warn(`⚠️ Only ${analyses.length} LLM analyses succeeded, falling back to basic analysis`);
+        return this.generateBasicAnalysis(symbol, marketData, klineData, orderBook);
+      }
 
       const consolidatedAnalysis = await this.consolidateAnalyses(
         symbol,
@@ -374,7 +395,7 @@ export class AIAnalysisService {
   ): Promise<ConsolidatedAnalysis> {
     try {
       const consolidationPrompt = `
-        Based on the following 4 AI model analyses for ${symbol}, provide a final consolidated trading recommendation:
+        Based on the following ${analyses.length} AI model analyses for ${symbol}, provide a final consolidated trading recommendation:
 
         ${analyses.map((analysis, index) => `
         Model ${index + 1} (${analysis.model}):
