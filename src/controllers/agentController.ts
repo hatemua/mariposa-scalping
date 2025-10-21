@@ -29,11 +29,12 @@ export const createAgent = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    // Validate budget
-    if (budget < 10) {
+    // Validate budget - OKX requires $20 minimum per trade
+    // With minimum 2 trades + buffer, require $50 minimum
+    if (budget < 50) {
       res.status(400).json({
         success: false,
-        error: 'Budget must be at least $10'
+        error: 'Budget must be at least $50 (OKX requires $20 minimum per trade, recommend $50+ for effective scalping)'
       } as ApiResponse);
       return;
     }

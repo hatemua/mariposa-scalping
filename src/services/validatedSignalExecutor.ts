@@ -168,35 +168,53 @@ export class ValidatedSignalExecutor {
 
       const minSize = parseFloat(instrumentInfo.minSz);
       const lotSize = parseFloat(instrumentInfo.lotSz);
+      const MIN_ORDER_VALUE_USDT = 20; // OKX requirement
 
       // Calculate quantity based on position size
       // positionSize is in USDT, we need to convert to coin quantity
       let quantity = executionPrice > 0 ? positionSize / executionPrice : 0;
 
-      // CRITICAL: Ensure quantity meets exchange minimum
+      // CRITICAL #1: Ensure quantity meets exchange minimum SIZE
       if (quantity < minSize) {
         console.log(`⚠️  Calculated quantity ${quantity} below minimum ${minSize} for ${symbol}`);
-
-        // Calculate required position size in USDT to meet minimum
-        const requiredPositionSize = minSize * executionPrice;
-        console.log(`   Minimum position size required: $${requiredPositionSize.toFixed(2)} (${minSize} ${symbol.replace('USDT', '')})`);
-
-        // Increase quantity to minimum
         quantity = minSize;
-        const adjustedPositionSize = quantity * executionPrice;
-        console.log(`   Adjusted quantity to ${quantity} (position size: $${adjustedPositionSize.toFixed(2)})`);
+        console.log(`   Adjusted quantity to minimum: ${quantity}`);
       }
 
-      // Round to lot size increment
-      quantity = Math.floor(quantity / lotSize) * lotSize;
+      // CRITICAL #2: Ensure order VALUE meets $20 minimum
+      let orderValue = quantity * executionPrice;
+      if (orderValue < MIN_ORDER_VALUE_USDT) {
+        console.log(`⚠️  Order value $${orderValue.toFixed(2)} below OKX minimum $${MIN_ORDER_VALUE_USDT}`);
 
+        // Calculate quantity needed for $20 order
+        const requiredQuantity = MIN_ORDER_VALUE_USDT / executionPrice;
+
+        // Ensure it's also above minSize
+        quantity = Math.max(requiredQuantity, minSize);
+
+        // Round UP to lot size to ensure we don't go below minimum
+        quantity = Math.ceil(quantity / lotSize) * lotSize;
+
+        orderValue = quantity * executionPrice;
+        console.log(`   Adjusted to $${orderValue.toFixed(2)} (${quantity} ${symbol.replace('USDT', '')})`);
+      } else {
+        // Round to lot size increment
+        quantity = Math.floor(quantity / lotSize) * lotSize;
+      }
+
+      // Final validation
       if (quantity <= 0 || executionPrice <= 0 || quantity < minSize) {
         console.error(`❌ Invalid quantity for ${symbol}: quantity=${quantity}, minSz=${minSize}, price=${executionPrice}, positionSize=${positionSize}`);
         return;
       }
 
-      const finalPositionSize = quantity * executionPrice;
-      console.log(`💰 Trade calculation: $${finalPositionSize.toFixed(2)} → ${quantity} ${symbol} @ $${executionPrice}`);
+      const finalOrderValue = quantity * executionPrice;
+      if (finalOrderValue < MIN_ORDER_VALUE_USDT) {
+        console.error(`❌ Final order value $${finalOrderValue.toFixed(2)} still below $${MIN_ORDER_VALUE_USDT} minimum`);
+        return;
+      }
+
+      console.log(`💰 Trade calculation: $${finalOrderValue.toFixed(2)} → ${quantity} ${symbol} @ $${executionPrice}`);
 
       // Schedule trade execution via Agenda
       await agendaService.scheduleTradeExecution({

@@ -100,6 +100,10 @@ export class OKXService {
   private instrumentInfoCache = new Map<string, { info: OKXInstrumentInfo; timestamp: number }>();
   private readonly INSTRUMENT_CACHE_TTL = 3600000; // 1 hour
 
+  // CRITICAL: OKX requires minimum $20 USDT order value for spot trading
+  // This is not documented in API but enforced by exchange (error code 51020)
+  private readonly MIN_ORDER_VALUE_USDT = 20;
+
   async getClient(userId: string): Promise<AxiosInstance> {
     if (this.clients.has(userId)) {
       return this.clients.get(userId)!;
@@ -273,7 +277,8 @@ export class OKXService {
     userId: string,
     symbol: string,
     side: 'buy' | 'sell',
-    amount: number
+    amount: number,
+    estimatedPrice?: number  // Optional: provide price to validate order value
   ): Promise<OKXOrder> {
     try {
       const client = await this.getClient(userId);
@@ -284,7 +289,7 @@ export class OKXService {
       const minSize = parseFloat(instrumentInfo.minSz);
       const lotSize = parseFloat(instrumentInfo.lotSz);
 
-      // Validate minimum size
+      // Validate minimum size in base currency
       if (amount < minSize) {
         throw new Error(
           `Order size ${amount} ${symbol} is below minimum ${minSize}. ` +
@@ -292,9 +297,32 @@ export class OKXService {
         );
       }
 
-      // Round to lot size increment
-      const adjustedAmount = Math.floor(amount / lotSize) * lotSize;
-      if (adjustedAmount !== amount) {
+      // CRITICAL: Validate minimum order VALUE in USDT
+      if (estimatedPrice && estimatedPrice > 0) {
+        const orderValue = amount * estimatedPrice;
+
+        if (orderValue < this.MIN_ORDER_VALUE_USDT) {
+          // Calculate required quantity to meet $20 minimum
+          const requiredQuantity = this.MIN_ORDER_VALUE_USDT / estimatedPrice;
+
+          throw new Error(
+            `Order value $${orderValue.toFixed(2)} is below OKX minimum $${this.MIN_ORDER_VALUE_USDT}. ` +
+            `Required quantity: ${requiredQuantity.toFixed(6)} ${symbol.replace('USDT', '')} ` +
+            `(${amount.toFixed(6)} provided).`
+          );
+        }
+
+        console.log(`✅ Order value: $${orderValue.toFixed(2)} (meets $${this.MIN_ORDER_VALUE_USDT} minimum)`);
+      }
+
+      // Round to lot size increment (use Math.ceil to avoid rounding below minimum)
+      let adjustedAmount = Math.floor(amount / lotSize) * lotSize;
+
+      // Ensure we don't round below minimum size
+      if (adjustedAmount < minSize) {
+        adjustedAmount = Math.ceil(minSize / lotSize) * lotSize;
+        console.log(`📊 Adjusted to minimum: ${adjustedAmount} (was ${amount}, minSz: ${minSize})`);
+      } else if (adjustedAmount !== amount) {
         console.log(`📊 Adjusted order size from ${amount} to ${adjustedAmount} (lot size: ${lotSize})`);
       }
 
@@ -307,7 +335,7 @@ export class OKXService {
       };
 
       console.log(`📤 OKX Order Request:`, JSON.stringify(orderData, null, 2));
-      console.log(`   Min Size: ${minSize}, Lot Size: ${lotSize}`);
+      console.log(`   Min Size: ${minSize}, Lot Size: ${lotSize}, Min Value: $${this.MIN_ORDER_VALUE_USDT}`);
 
       const response = await client.post('/api/v5/trade/order', orderData);
 
@@ -577,7 +605,8 @@ export class OKXService {
 
       let order: OKXOrder;
       if (type === 'market') {
-        order = await this.createMarketOrder(userId, symbol, side, amount);
+        // Pass price for order value validation
+        order = await this.createMarketOrder(userId, symbol, side, amount, price);
       } else {
         if (!price) {
           throw new Error('Price is required for limit orders');
