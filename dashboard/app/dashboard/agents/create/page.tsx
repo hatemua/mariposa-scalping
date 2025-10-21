@@ -64,7 +64,7 @@ export default function CreateAgentPage() {
     name: '',
     category: 'SCALPING' as AgentCategory,
     riskLevel: 3 as 1 | 2 | 3 | 4 | 5,
-    budget: 100,
+    budget: 100, // Default to $100 (above $50 minimum)
     description: ''
   });
 
@@ -104,8 +104,8 @@ export default function CreateAgentPage() {
       toast.error('Agent name is required');
       return false;
     }
-    if (formData.budget < 10) {
-      toast.error('Minimum budget is $10 USDT');
+    if (formData.budget < 50) {
+      toast.error('Minimum budget is $50 USDT (OKX requires $20 per trade)');
       return false;
     }
     return true;
@@ -130,11 +130,27 @@ export default function CreateAgentPage() {
         toast.success(response.message || 'Intelligent agent created successfully!');
         router.push('/dashboard');
       } else {
+        // Display the detailed error message from backend
         toast.error(response.error || 'Failed to create agent');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Create agent error:', error);
-      toast.error('Failed to create agent');
+
+      // Extract error message from axios error response
+      const errorMessage = error?.response?.data?.error ||
+                          error?.message ||
+                          'Failed to create agent. Please try again.';
+
+      toast.error(errorMessage, {
+        duration: 5000,
+        style: {
+          background: '#FEE2E2',
+          color: '#991B1B',
+          border: '1px solid #FCA5A5',
+          padding: '16px',
+          maxWidth: '500px'
+        }
+      });
     } finally {
       setLoading(false);
     }
@@ -279,6 +295,21 @@ export default function CreateAgentPage() {
                 <h2 className="text-xl font-semibold text-gray-900">Budget Allocation</h2>
               </div>
 
+              {/* OKX Requirements Warning */}
+              <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <div className="flex gap-3">
+                  <Info className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div className="text-sm">
+                    <p className="font-medium text-amber-900 mb-1">OKX Trading Requirements</p>
+                    <ul className="list-disc list-inside space-y-1 text-amber-800">
+                      <li><strong>Minimum per trade: $20 USDT</strong></li>
+                      <li><strong>Minimum agent budget: $50 USDT</strong> (2 trades + buffer)</li>
+                      <li>Recommended: $100+ for effective scalping</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Total Budget (USDT) *
@@ -287,16 +318,32 @@ export default function CreateAgentPage() {
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-medium">$</span>
                   <input
                     type="number"
-                    min="10"
-                    step="1"
+                    min="50"
+                    step="10"
                     value={formData.budget}
                     onChange={(e) => setFormData({ ...formData, budget: parseFloat(e.target.value) || 0 })}
-                    className="w-full border border-gray-300 rounded-lg pl-8 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-shadow"
+                    className={`w-full border rounded-lg pl-8 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-shadow ${
+                      formData.budget < 50 ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                    }`}
                     placeholder="100"
                     required
                   />
                 </div>
-                <p className="text-xs text-gray-500 mt-2">Minimum: $10 USDT</p>
+                {formData.budget < 50 && (
+                  <p className="text-xs text-red-600 mt-2 font-medium">
+                    ⚠️ Budget must be at least $50 USDT
+                  </p>
+                )}
+                {formData.budget >= 50 && formData.budget < 100 && (
+                  <p className="text-xs text-amber-600 mt-2">
+                    ⚠️ Consider $100+ for better trading flexibility
+                  </p>
+                )}
+                {formData.budget >= 100 && (
+                  <p className="text-xs text-green-600 mt-2">
+                    ✓ Good budget for effective scalping
+                  </p>
+                )}
               </div>
             </div>
 
