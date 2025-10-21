@@ -1,5 +1,6 @@
 import { redisService } from './redisService';
 import { agendaService } from './agendaService';
+import { binanceService } from './binanceService';
 import { ScalpingAgent } from '../models';
 import AgentSignalLogModel from '../models/AgentSignalLog';
 
@@ -129,19 +130,34 @@ export class ValidatedSignalExecutor {
         return;
       }
 
-      // Get current market price (you can enhance this with real-time price check)
-      const targetPrice = validatedSignal.takeProfitPrice;
+      // Get current market price (CRITICAL: fetch real-time price if not in signal)
+      let executionPrice = validatedSignal.takeProfitPrice || validatedSignal.recommendedEntry;
+
+      // If no price in signal, fetch current market price from Binance
+      if (!executionPrice || executionPrice <= 0) {
+        console.log(`⚠️  No price in signal, fetching current market price for ${symbol}...`);
+        try {
+          const marketData = await binanceService.getSymbolInfo(symbol);
+          executionPrice = parseFloat(marketData.lastPrice || marketData.price || '0');
+          console.log(`✅ Fetched current market price for ${symbol}: ${executionPrice}`);
+        } catch (error) {
+          console.error(`Failed to fetch market price for ${symbol}:`, error);
+          return;
+        }
+      }
+
       const stopLoss = validatedSignal.stopLossPrice;
 
       // Calculate quantity based on position size
       // positionSize is in USDT, we need to convert to coin quantity
-      const price = targetPrice || 0; // Use target price or get real-time price
-      const quantity = price > 0 ? positionSize / price : 0;
+      const quantity = executionPrice > 0 ? positionSize / executionPrice : 0;
 
-      if (quantity <= 0) {
-        console.error(`Invalid quantity calculated for ${symbol}: ${quantity}`);
+      if (quantity <= 0 || executionPrice <= 0) {
+        console.error(`Invalid quantity calculated for ${symbol}: quantity=${quantity}, price=${executionPrice}, positionSize=${positionSize}`);
         return;
       }
+
+      console.log(`💰 Trade calculation: ${positionSize} USDT / ${executionPrice} = ${quantity} ${symbol}`);
 
       // Schedule trade execution via Agenda
       await agendaService.scheduleTradeExecution({
@@ -151,10 +167,10 @@ export class ValidatedSignalExecutor {
         side: recommendation.toLowerCase(),
         type: 'market',
         amount: quantity,
-        price: price
+        price: executionPrice
       });
 
-      console.log(`✅ Trade scheduled: ${recommendation} ${quantity} ${symbol} @ ${price}`);
+      console.log(`✅ Trade scheduled: ${recommendation} ${quantity.toFixed(6)} ${symbol} @ $${executionPrice} (${positionSize} USDT)`);
 
       // Update agent signal log to mark as EXECUTED
       await AgentSignalLogModel.updateOne(
@@ -167,7 +183,7 @@ export class ValidatedSignalExecutor {
             status: 'EXECUTED',
             executed: true,
             executedAt: new Date(),
-            executionPrice: price,
+            executionPrice: executionPrice,
             executionQuantity: quantity
           }
         }
