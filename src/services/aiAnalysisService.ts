@@ -20,10 +20,10 @@ export class AIAnalysisService {
   private httpClient: AxiosInstance;
 
   private models = [
-    'meta-llama/Llama-3.2-3B-Instruct-Turbo',      // $0.06/M tokens (cheapest, WORKING!)
-    'nim/meta/llama-3.1-8b-instruct', // $0.20/M tokens (reliable, VERIFIED working)
-    'Qwen/Qwen2.5-7B-Instruct-Turbo',              // $0.30/M tokens (good reasoning, WORKING!)
-    'meta-llama/Meta-Llama-3-8B-Instruct-Lite'     // $0.10/M tokens (cheap, WORKING!)
+    'meta-llama/Llama-3.2-3B-Instruct-Turbo',      // $0.06/M tokens (cheapest, fast)
+    'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo', // $0.18/M tokens (reliable, good quality)
+    'Qwen/Qwen2.5-7B-Instruct-Turbo',              // $0.30/M tokens (excellent reasoning)
+    'meta-llama/Meta-Llama-3-8B-Instruct-Lite'     // $0.10/M tokens (balanced cost/quality)
   ];
 
   constructor() {
