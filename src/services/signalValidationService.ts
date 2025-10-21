@@ -250,14 +250,21 @@ Consider:
 1. Is this trade appropriate for agent's ${agent.category} category and risk level ${agent.riskLevel}?
 2. Is agent's health good enough to trade? (${recentPerformance.consecutiveLosses} consecutive losses, ${agent.performance.maxDrawdown.toFixed(1)}% drawdown)
 3. Are market conditions favorable? (liquidity: ${marketConditions.liquidity}, spread: ${marketConditions.spread.toFixed(3)}%)
-4. What position size (% of available $${availableBalance.toFixed(2)}) minimizes risk while capturing opportunity?
+4. What position size (% of available $${availableBalance.toFixed(2)}) captures opportunity while managing risk?
 5. What stop-loss and take-profit levels protect capital?
+
+IMPORTANT POSITION SIZING RULES:
+- Minimum trade size: $10 (to meet exchange minimums)
+- For small balances (<$50): Use 30-50% per trade to ensure meaningful positions
+- For medium balances ($50-200): Use 20-40% per trade
+- For large balances (>$200): Use 10-25% per trade
+- Risk Level ${agent.riskLevel}/5: Higher risk = larger position sizes
 
 Respond in JSON format ONLY:
 {
   "shouldExecute": <true or false>,
   "reasoning": "<2-3 sentences explaining your decision>",
-  "positionSizePercent": <percentage of available balance to use, 0-40>,
+  "positionSizePercent": <percentage of available balance to use, 10-80 for small accounts, 10-40 for larger>,
   "recommendedEntry": <price number or null>,
   "stopLossPrice": <price number or null>,
   "takeProfitPrice": <price number or null>,
@@ -272,10 +279,27 @@ Respond in JSON format ONLY:
       // Parse the LLM response
       try {
         const result = JSON.parse(analysis);
+
+        // Calculate position size with minimum enforcement
+        // Allow up to 80% for small balances, 40% for larger ones
+        const maxPercent = availableBalance < 50 ? 80 : 40;
+        let positionSizePercent = Math.min(maxPercent, Math.max(0, result.positionSizePercent || 0));
+        let calculatedPositionSize = (availableBalance * positionSizePercent) / 100;
+
+        // IMPORTANT: Enforce minimum position size of $10 to avoid "too small" errors
+        const MIN_POSITION_SIZE = 10; // $10 minimum
+
+        if (result.shouldExecute && calculatedPositionSize < MIN_POSITION_SIZE && availableBalance >= MIN_POSITION_SIZE) {
+          // Increase percentage to meet minimum
+          positionSizePercent = Math.min(100, (MIN_POSITION_SIZE / availableBalance) * 100);
+          calculatedPositionSize = MIN_POSITION_SIZE;
+          console.log(`📊 Adjusted position size to minimum: ${positionSizePercent.toFixed(1)}% ($${calculatedPositionSize}) for ${signal.symbol}`);
+        }
+
         return {
           shouldExecute: result.shouldExecute || false,
           reasoning: result.reasoning || 'No reasoning provided',
-          positionSizePercent: Math.min(40, Math.max(0, result.positionSizePercent || 0)),
+          positionSizePercent: positionSizePercent,
           recommendedEntry: result.recommendedEntry || signal.targetPrice || null,
           stopLossPrice: result.stopLossPrice || signal.stopLoss || null,
           takeProfitPrice: result.takeProfitPrice || null,
