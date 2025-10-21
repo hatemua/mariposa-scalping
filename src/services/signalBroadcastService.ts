@@ -29,6 +29,15 @@ interface ValidatedSignalForAgent {
   rejectionReasons: string[];
   riskRewardRatio: number;
   timestamp: Date;
+  // Execution parameters from LLM validation
+  positionSize: number;
+  positionSizePercent: number;
+  stopLossPrice: number | null;
+  takeProfitPrice: number | null;
+  recommendedEntry: number | null;
+  maxRiskPercent: number;
+  keyRisks: string[];
+  keyOpportunities: string[];
 }
 
 export class SignalBroadcastService {
@@ -117,6 +126,15 @@ export class SignalBroadcastService {
             rejectionReasons: validationResult.isValid ? [] : [validationResult.reasoning],
             riskRewardRatio: 0, // No longer calculated - LLM handles this
             timestamp: new Date(),
+            // CRITICAL: Include execution parameters from LLM validation
+            positionSize: validationResult.positionSize,
+            positionSizePercent: validationResult.positionSizePercent,
+            stopLossPrice: validationResult.stopLossPrice,
+            takeProfitPrice: validationResult.takeProfitPrice,
+            recommendedEntry: validationResult.stopLossPrice, // Use stop loss as entry fallback
+            maxRiskPercent: validationResult.maxRiskPercent,
+            keyRisks: validationResult.keyRisks,
+            keyOpportunities: validationResult.keyOpportunities,
           };
 
           if (validationResult.isValid) {

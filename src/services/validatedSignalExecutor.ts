@@ -110,10 +110,18 @@ export class ValidatedSignalExecutor {
       const { signalId, agentId, symbol, recommendation, positionSize, isValid } = validatedSignal;
 
       console.log(`🎯 Executing signal ${signalId} for agent ${agentId} (${symbol} ${recommendation})`);
+      console.log(`📊 Signal data: positionSize=${positionSize}, isValid=${isValid}`);
 
       // Safety check: only execute if signal is valid
       if (!isValid) {
         console.warn(`⚠️  Signal ${signalId} is not valid, skipping execution`);
+        return;
+      }
+
+      // Safety check: position size must be valid
+      if (!positionSize || positionSize <= 0 || isNaN(positionSize)) {
+        console.error(`⚠️  Invalid position size: ${positionSize}, skipping execution`);
+        console.error(`📋 Full signal data:`, JSON.stringify(validatedSignal, null, 2));
         return;
       }
 
