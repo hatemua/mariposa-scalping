@@ -125,14 +125,33 @@ export class OKXService {
     client.interceptors.request.use((config) => {
       const timestamp = new Date().toISOString();
       const method = config.method?.toUpperCase() || 'GET';
-      const path = config.url || '';
+
+      // Build the full path with query parameters for signature
+      let path = config.url || '';
+
+      // For GET requests, include query parameters in the signature
+      if (config.params && Object.keys(config.params).length > 0) {
+        const queryString = new URLSearchParams(config.params).toString();
+        path = `${path}?${queryString}`;
+      }
+
       const body = config.data ? JSON.stringify(config.data) : '';
 
+      // OKX signature format: timestamp + method + requestPath + body
       const message = timestamp + method + path + body;
+
       const signature = crypto
         .createHmac('sha256', credentials.secret)
         .update(message)
         .digest('base64');
+
+      console.log(`🔐 OKX Signature Debug:
+        Timestamp: ${timestamp}
+        Method: ${method}
+        Path: ${path}
+        Body: ${body || '(empty)'}
+        Message: ${message}
+        Signature: ${signature}`);
 
       // @ts-ignore - Axios header typing issue
       config.headers = {
