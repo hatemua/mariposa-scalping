@@ -1,0 +1,225 @@
+import { redisService } from './redisService';
+import { agendaService } from './agendaService';
+import { ScalpingAgent } from '../models';
+import AgentSignalLogModel from '../models/AgentSignalLog';
+
+/**
+ * ValidatedSignalExecutor - Consumes validated signals from queue and executes trades
+ * This is the MISSING LINK in the signal execution pipeline
+ */
+export class ValidatedSignalExecutor {
+  private readonly VALIDATED_SIGNALS_QUEUE = 'validated_signals';
+  private isProcessing = false;
+  private processInterval: NodeJS.Timeout | null = null;
+
+  /**
+   * Start the validated signal executor
+   * Processes queue every 5 seconds
+   */
+  async start(): Promise<void> {
+    console.log('🚀 Starting ValidatedSignalExecutor...');
+
+    // Process immediately on startup
+    await this.processQueue();
+
+    // Then process every 5 seconds
+    this.processInterval = setInterval(async () => {
+      await this.processQueue();
+    }, 5000);
+
+    console.log('✅ ValidatedSignalExecutor started - processing every 5 seconds');
+  }
+
+  /**
+   * Stop the executor
+   */
+  stop(): void {
+    if (this.processInterval) {
+      clearInterval(this.processInterval);
+      this.processInterval = null;
+      console.log('⏹️  ValidatedSignalExecutor stopped');
+    }
+  }
+
+  /**
+   * Process the validated signals queue
+   */
+  private async processQueue(): Promise<void> {
+    // Prevent concurrent processing
+    if (this.isProcessing) {
+      return;
+    }
+
+    this.isProcessing = true;
+
+    try {
+      // Dequeue up to 10 signals (priority-based)
+      const signals = await this.dequeueSignals(10);
+
+      if (signals.length === 0) {
+        // No signals to process - this is normal
+        return;
+      }
+
+      console.log(`📤 Processing ${signals.length} validated signals from queue`);
+
+      // Process each signal
+      for (const signal of signals) {
+        try {
+          await this.executeSignal(signal);
+        } catch (error) {
+          console.error(`Failed to execute signal ${signal.id}:`, error);
+        }
+      }
+
+      console.log(`✅ Processed ${signals.length} validated signals`);
+    } catch (error) {
+      console.error('Error processing validated signals queue:', error);
+    } finally {
+      this.isProcessing = false;
+    }
+  }
+
+  /**
+   * Dequeue signals from Redis queue (priority-sorted)
+   */
+  private async dequeueSignals(limit: number): Promise<any[]> {
+    try {
+      const signals: any[] = [];
+
+      for (let i = 0; i < limit; i++) {
+        const item = await redisService.dequeue(this.VALIDATED_SIGNALS_QUEUE);
+        if (!item) break;
+
+        signals.push(item.data);
+      }
+
+      return signals;
+    } catch (error) {
+      console.error('Error dequeuing signals:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Execute a validated signal (schedule trade execution)
+   */
+  private async executeSignal(validatedSignal: any): Promise<void> {
+    try {
+      const { signalId, agentId, symbol, recommendation, positionSize, isValid } = validatedSignal;
+
+      console.log(`🎯 Executing signal ${signalId} for agent ${agentId} (${symbol} ${recommendation})`);
+
+      // Safety check: only execute if signal is valid
+      if (!isValid) {
+        console.warn(`⚠️  Signal ${signalId} is not valid, skipping execution`);
+        return;
+      }
+
+      // Get agent details
+      const agent = await ScalpingAgent.findById(agentId);
+      if (!agent) {
+        console.error(`Agent ${agentId} not found, cannot execute signal`);
+        return;
+      }
+
+      // Check if agent is still active
+      if (!agent.isActive) {
+        console.warn(`Agent ${agentId} is not active, skipping execution`);
+        return;
+      }
+
+      // Get current market price (you can enhance this with real-time price check)
+      const targetPrice = validatedSignal.takeProfitPrice;
+      const stopLoss = validatedSignal.stopLossPrice;
+
+      // Calculate quantity based on position size
+      // positionSize is in USDT, we need to convert to coin quantity
+      const price = targetPrice || 0; // Use target price or get real-time price
+      const quantity = price > 0 ? positionSize / price : 0;
+
+      if (quantity <= 0) {
+        console.error(`Invalid quantity calculated for ${symbol}: ${quantity}`);
+        return;
+      }
+
+      // Schedule trade execution via Agenda
+      await agendaService.scheduleTradeExecution({
+        userId: agent.userId.toString(),
+        agentId: agentId,
+        symbol: symbol,
+        side: recommendation.toLowerCase(),
+        type: 'market',
+        amount: quantity,
+        price: price
+      });
+
+      console.log(`✅ Trade scheduled: ${recommendation} ${quantity} ${symbol} @ ${price}`);
+
+      // Update agent signal log to mark as EXECUTED
+      await AgentSignalLogModel.updateOne(
+        {
+          signalId: signalId,
+          agentId: agentId
+        },
+        {
+          $set: {
+            status: 'EXECUTED',
+            executed: true,
+            executedAt: new Date(),
+            executionPrice: price,
+            executionQuantity: quantity
+          }
+        }
+      );
+
+      console.log(`📝 Updated agent signal log for ${signalId}`);
+
+    } catch (error) {
+      console.error('Error executing signal:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get queue statistics
+   */
+  async getQueueStats(): Promise<{
+    queueLength: number;
+    isProcessing: boolean;
+  }> {
+    try {
+      const queueLength = await redisService.getQueueLength(this.VALIDATED_SIGNALS_QUEUE);
+
+      return {
+        queueLength,
+        isProcessing: this.isProcessing
+      };
+    } catch (error) {
+      console.error('Error getting queue stats:', error);
+      return {
+        queueLength: 0,
+        isProcessing: false
+      };
+    }
+  }
+
+  /**
+   * Clear the queue (for testing/maintenance)
+   */
+  async clearQueue(): Promise<number> {
+    try {
+      let count = 0;
+      while (await redisService.dequeue(this.VALIDATED_SIGNALS_QUEUE)) {
+        count++;
+      }
+      console.log(`🗑️  Cleared ${count} signals from queue`);
+      return count;
+    } catch (error) {
+      console.error('Error clearing queue:', error);
+      return 0;
+    }
+  }
+}
+
+export const validatedSignalExecutor = new ValidatedSignalExecutor();

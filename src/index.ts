@@ -8,6 +8,7 @@ import { redis } from './config/redis';
 import { rateLimitMiddleware } from './middleware/rateLimiter';
 import { agendaService } from './services/agendaService';
 import { binanceService } from './services/binanceService';
+import { validatedSignalExecutor } from './services/validatedSignalExecutor';
 import { initializeWebSocketService } from './services/websocketService';
 import { analysisWebSocketService } from './services/analysisWebSocket';
 import routes from './routes';
@@ -137,6 +138,10 @@ const startServer = async (): Promise<void> => {
     // Schedule recurring jobs
     await agendaService.scheduleRecurringJobs();
     console.log('✅ Recurring jobs scheduled');
+
+    // Start validated signal executor (processes queue and executes trades)
+    await validatedSignalExecutor.start();
+    console.log('✅ Validated signal executor started');
 
     await binanceService.start();
     console.log('✅ Binance service started with Redis integration');

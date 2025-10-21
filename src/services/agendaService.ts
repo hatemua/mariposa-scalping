@@ -904,24 +904,24 @@ export class AgendaService {
     // Broadcast Active Opportunities + Whale Activities Job (backup to ensure signals are sent)
     this.agenda.define('broadcast-opportunities', async (job: any) => {
       try {
-        // Find good-quality active opportunities (lowered threshold for more signals)
+        // Find good-quality active opportunities (LOWERED threshold to 35 for more signals)
         const opportunities = await OpportunityModel.find({
           isActive: true,
           expiresAt: { $gt: new Date() },
-          score: { $gte: 45 }
+          score: { $gte: 35 } // REDUCED from 45 to 35
         })
         .sort({ score: -1 })
-        .limit(10)
+        .limit(15) // Increased from 10 to 15
         .lean();
 
-        // Find moderate-impact active whale activities (lowered threshold)
+        // Find moderate-impact active whale activities (LOWERED threshold to 40)
         const whaleActivities = await WhaleActivityModel.find({
           isActive: true,
           expiresAt: { $gt: new Date() },
-          impact: { $gte: 50 } // Broadcast medium+ impact whales
+          impact: { $gte: 40 } // REDUCED from 50 to 40 - broadcast low+ impact whales
         })
         .sort({ impact: -1 })
-        .limit(10)
+        .limit(15) // Increased from 10 to 15
         .lean();
 
         let oppCount = 0;
@@ -973,7 +973,11 @@ export class AgendaService {
           }
         }
 
-        console.log(`✅ Broadcasted ${oppCount} opportunities + ${whaleCount} whale activities to agents`);
+        if (oppCount > 0 || whaleCount > 0) {
+          console.log(`✅ Broadcasted ${oppCount} opportunities + ${whaleCount} whale activities to agents`);
+        } else {
+          console.log(`ℹ️  No opportunities/whales to broadcast (threshold: score≥35, impact≥40)`);
+        }
         await this.updateJobMetrics('broadcast-opportunities', 'success');
 
       } catch (error) {
@@ -998,10 +1002,10 @@ export class AgendaService {
         // Import controller to reuse logic (temporary until refactored into service)
         const { getOpportunityScanner } = await import('../controllers/tradingIntelligenceController');
 
-        // Create mock request/response to trigger scanning (lowered threshold)
+        // Create mock request/response to trigger scanning (LOWERED threshold to 30)
         const mockReq = {
-          body: { symbols, minScore: 40 },
-          user: { _id: 'system-auto-scan' }
+          body: { symbols, minScore: 30 }, // REDUCED from 40 to 30
+          user: undefined // Auto-scan doesn't need a user (opportunities saved without userId)
         } as any;
 
         const mockRes = {
@@ -1033,10 +1037,10 @@ export class AgendaService {
         // Import controller to reuse logic
         const { getWhaleActivity } = await import('../controllers/tradingIntelligenceController');
 
-        // Create mock request/response
+        // Create mock request/response (LOWERED whale size threshold)
         const mockReq = {
-          body: { symbols, minSize: 50000 },
-          user: { _id: 'system-auto-scan' }
+          body: { symbols, minSize: 25000 }, // REDUCED from 50000 to 25000
+          user: undefined // Auto-scan doesn't need a user (whale activities saved without userId)
         } as any;
 
         const mockRes = {
@@ -1166,16 +1170,25 @@ export class AgendaService {
 
   async scheduleRecurringJobs(): Promise<void> {
     try {
+      console.log('🔧 Scheduling recurring jobs...');
+
       // Process trading queues every 30 seconds
       await this.agenda.every('30 seconds', 'process-signal-queue');
+      console.log('  ✓ process-signal-queue (every 30s)');
+
       await this.agenda.every('15 seconds', 'process-execution-queue');
+      console.log('  ✓ process-execution-queue (every 15s)');
 
       // AUTO-SCAN: Continuously scan market for opportunities/whales (FAST REAL-TIME!)
       await this.agenda.every('30 seconds', 'auto-scan-opportunities');
+      console.log('  ✓ auto-scan-opportunities (every 30s) - SIGNAL DETECTION ACTIVE');
+
       await this.agenda.every('45 seconds', 'auto-detect-whales');
+      console.log('  ✓ auto-detect-whales (every 45s) - WHALE DETECTION ACTIVE');
 
       // Broadcast active opportunities every minute (backup signal broadcaster)
       await this.agenda.every('1 minute', 'broadcast-opportunities');
+      console.log('  ✓ broadcast-opportunities (every 1min)');
 
       // Update performance metrics every 5 minutes
       await this.agenda.every('5 minutes', 'update-performance-metrics');
@@ -1214,10 +1227,16 @@ export class AgendaService {
 
       // Expire old whale activities every 5 minutes
       await this.agenda.every('5 minutes', 'expire-whale-activities');
+      console.log('  ✓ expire-whale-activities (every 5min)');
 
-      console.log('Recurring jobs scheduled successfully');
+      console.log('');
+      console.log('✅ ALL RECURRING JOBS SCHEDULED SUCCESSFULLY');
+      console.log('📡 Signal detection pipeline is ACTIVE');
+      console.log('🤖 Auto-scan jobs running every 30-45 seconds');
+      console.log('');
     } catch (error) {
-      console.error('Error scheduling recurring jobs:', error);
+      console.error('❌ Error scheduling recurring jobs:', error);
+      throw error;
     }
   }
 
