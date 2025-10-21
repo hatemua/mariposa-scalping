@@ -95,8 +95,14 @@ export class OKXService {
     }
 
     const user = await User.findById(userId);
-    if (!user || !user.okxApiKey || !user.okxSecretKey || !user.okxPassphrase) {
-      throw new Error('OKX API credentials not found for user');
+    if (!user) {
+      throw new Error(`User ${userId} not found`);
+    }
+
+    if (!user.okxApiKey || !user.okxSecretKey || !user.okxPassphrase) {
+      console.error(`❌ OKX credentials missing for user ${userId}`);
+      console.error(`   Has API Key: ${!!user.okxApiKey}, Has Secret: ${!!user.okxSecretKey}, Has Passphrase: ${!!user.okxPassphrase}`);
+      throw new Error(`OKX API credentials not configured for user ${userId}. Please add your OKX API credentials in settings.`);
     }
 
     const credentials = this.decryptCredentials({
@@ -200,10 +206,20 @@ export class OKXService {
         sz: amount.toString()
       };
 
+      console.log(`📤 OKX Order Request:`, JSON.stringify(orderData, null, 2));
+
       const response = await client.post('/api/v5/trade/order', orderData);
 
+      console.log(`📥 OKX Response: code=${response.data.code}, msg=${response.data.msg}`);
+
       if (response.data.code !== '0') {
-        throw new Error(`OKX API Error: ${response.data.msg}`);
+        console.error(`❌ OKX API Error Details:`, {
+          code: response.data.code,
+          msg: response.data.msg,
+          data: response.data.data,
+          orderData: orderData
+        });
+        throw new Error(`OKX API Error [${response.data.code}]: ${response.data.msg}`);
       }
 
       const orderResult = response.data.data[0];
