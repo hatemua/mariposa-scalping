@@ -81,6 +81,15 @@ interface OKXOrderHistoryResponse {
   }>;
 }
 
+interface OKXInstrumentInfo {
+  instId: string;
+  minSz: string;      // Minimum order size in base currency
+  lotSz: string;      // Order size increment
+  tickSz: string;     // Price tick size
+  ctVal: string;      // Contract value
+  ctMult: string;     // Contract multiplier
+}
+
 export class OKXService {
   private clients = new Map<string, AxiosInstance>();
   private readonly baseURL = process.env.NODE_ENV === 'production'
@@ -88,6 +97,8 @@ export class OKXService {
     : 'https://www.okx.com'; // OKX doesn't have a separate sandbox URL
   private readonly orderPollingInterval = 2000; // 2 seconds
   private readonly orderHistoryCache = new Map<string, OKXOrder>();
+  private instrumentInfoCache = new Map<string, { info: OKXInstrumentInfo; timestamp: number }>();
+  private readonly INSTRUMENT_CACHE_TTL = 3600000; // 1 hour
 
   async getClient(userId: string): Promise<AxiosInstance> {
     if (this.clients.has(userId)) {
@@ -207,6 +218,57 @@ export class OKXService {
     }
   }
 
+  /**
+   * Get instrument information including minimum order sizes
+   * This is a PUBLIC endpoint, no authentication needed
+   */
+  async getInstrumentInfo(symbol: string): Promise<OKXInstrumentInfo> {
+    const okxSymbol = SymbolConverter.toOKXFormat(symbol);
+
+    // Check cache first
+    const cached = this.instrumentInfoCache.get(okxSymbol);
+    if (cached && Date.now() - cached.timestamp < this.INSTRUMENT_CACHE_TTL) {
+      return cached.info;
+    }
+
+    try {
+      // Use unauthenticated axios instance for public endpoints
+      const response = await axios.get(`${this.baseURL}/api/v5/public/instruments`, {
+        params: {
+          instType: 'SPOT',
+          instId: okxSymbol
+        }
+      });
+
+      if (response.data.code !== '0') {
+        throw new Error(`OKX API Error: ${response.data.msg}`);
+      }
+
+      if (!response.data.data || response.data.data.length === 0) {
+        throw new Error(`No instrument info found for ${okxSymbol}`);
+      }
+
+      const info: OKXInstrumentInfo = {
+        instId: response.data.data[0].instId,
+        minSz: response.data.data[0].minSz,
+        lotSz: response.data.data[0].lotSz,
+        tickSz: response.data.data[0].tickSz,
+        ctVal: response.data.data[0].ctVal,
+        ctMult: response.data.data[0].ctMult
+      };
+
+      // Cache for 1 hour
+      this.instrumentInfoCache.set(okxSymbol, { info, timestamp: Date.now() });
+
+      console.log(`📊 Instrument Info for ${okxSymbol}: minSz=${info.minSz}, lotSz=${info.lotSz}`);
+
+      return info;
+    } catch (error) {
+      console.error(`Error fetching instrument info for ${okxSymbol}:`, error);
+      throw error;
+    }
+  }
+
   async createMarketOrder(
     userId: string,
     symbol: string,
@@ -217,15 +279,35 @@ export class OKXService {
       const client = await this.getClient(userId);
       const okxSymbol = SymbolConverter.toOKXFormat(symbol);
 
+      // CRITICAL: Fetch instrument info to validate minimum order size
+      const instrumentInfo = await this.getInstrumentInfo(symbol);
+      const minSize = parseFloat(instrumentInfo.minSz);
+      const lotSize = parseFloat(instrumentInfo.lotSz);
+
+      // Validate minimum size
+      if (amount < minSize) {
+        throw new Error(
+          `Order size ${amount} ${symbol} is below minimum ${minSize}. ` +
+          `Please increase position size to at least ${minSize} ${symbol.replace('USDT', '')}.`
+        );
+      }
+
+      // Round to lot size increment
+      const adjustedAmount = Math.floor(amount / lotSize) * lotSize;
+      if (adjustedAmount !== amount) {
+        console.log(`📊 Adjusted order size from ${amount} to ${adjustedAmount} (lot size: ${lotSize})`);
+      }
+
       const orderData = {
         instId: okxSymbol,
         tdMode: 'cash',
         side: side,
         ordType: 'market',
-        sz: amount.toString()
+        sz: adjustedAmount.toString()
       };
 
       console.log(`📤 OKX Order Request:`, JSON.stringify(orderData, null, 2));
+      console.log(`   Min Size: ${minSize}, Lot Size: ${lotSize}`);
 
       const response = await client.post('/api/v5/trade/order', orderData);
 
@@ -236,7 +318,8 @@ export class OKXService {
           code: response.data.code,
           msg: response.data.msg,
           data: response.data.data,
-          orderData: orderData
+          orderData: orderData,
+          instrumentInfo: { minSz: minSize, lotSz: lotSize }
         });
         throw new Error(`OKX API Error [${response.data.code}]: ${response.data.msg}`);
       }

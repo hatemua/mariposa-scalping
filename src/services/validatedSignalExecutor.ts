@@ -1,6 +1,7 @@
 import { redisService } from './redisService';
 import { agendaService } from './agendaService';
 import { binanceService } from './binanceService';
+import { okxService } from './okxService';
 import { ScalpingAgent } from '../models';
 import AgentSignalLogModel from '../models/AgentSignalLog';
 
@@ -156,16 +157,46 @@ export class ValidatedSignalExecutor {
 
       const stopLoss = validatedSignal.stopLossPrice;
 
-      // Calculate quantity based on position size
-      // positionSize is in USDT, we need to convert to coin quantity
-      const quantity = executionPrice > 0 ? positionSize / executionPrice : 0;
-
-      if (quantity <= 0 || executionPrice <= 0) {
-        console.error(`Invalid quantity calculated for ${symbol}: quantity=${quantity}, price=${executionPrice}, positionSize=${positionSize}`);
+      // CRITICAL: Fetch instrument info to ensure we meet minimum order size
+      let instrumentInfo;
+      try {
+        instrumentInfo = await okxService.getInstrumentInfo(symbol);
+      } catch (error) {
+        console.error(`Failed to fetch instrument info for ${symbol}:`, error);
         return;
       }
 
-      console.log(`💰 Trade calculation: ${positionSize} USDT / ${executionPrice} = ${quantity} ${symbol}`);
+      const minSize = parseFloat(instrumentInfo.minSz);
+      const lotSize = parseFloat(instrumentInfo.lotSz);
+
+      // Calculate quantity based on position size
+      // positionSize is in USDT, we need to convert to coin quantity
+      let quantity = executionPrice > 0 ? positionSize / executionPrice : 0;
+
+      // CRITICAL: Ensure quantity meets exchange minimum
+      if (quantity < minSize) {
+        console.log(`⚠️  Calculated quantity ${quantity} below minimum ${minSize} for ${symbol}`);
+
+        // Calculate required position size in USDT to meet minimum
+        const requiredPositionSize = minSize * executionPrice;
+        console.log(`   Minimum position size required: $${requiredPositionSize.toFixed(2)} (${minSize} ${symbol.replace('USDT', '')})`);
+
+        // Increase quantity to minimum
+        quantity = minSize;
+        const adjustedPositionSize = quantity * executionPrice;
+        console.log(`   Adjusted quantity to ${quantity} (position size: $${adjustedPositionSize.toFixed(2)})`);
+      }
+
+      // Round to lot size increment
+      quantity = Math.floor(quantity / lotSize) * lotSize;
+
+      if (quantity <= 0 || executionPrice <= 0 || quantity < minSize) {
+        console.error(`❌ Invalid quantity for ${symbol}: quantity=${quantity}, minSz=${minSize}, price=${executionPrice}, positionSize=${positionSize}`);
+        return;
+      }
+
+      const finalPositionSize = quantity * executionPrice;
+      console.log(`💰 Trade calculation: $${finalPositionSize.toFixed(2)} → ${quantity} ${symbol} @ $${executionPrice}`);
 
       // Schedule trade execution via Agenda
       await agendaService.scheduleTradeExecution({
