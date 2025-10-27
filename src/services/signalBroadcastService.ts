@@ -1,6 +1,7 @@
 import { redisService } from './redisService';
 import { signalValidationService } from './signalValidationService';
 import { signalDatabaseLoggingService } from './signalDatabaseLoggingService';
+import { telegramService } from './telegramService';
 import { ScalpingAgent } from '../models';
 
 interface BroadcastSignal {
@@ -223,6 +224,23 @@ export class SignalBroadcastService {
         excludedAgents: excludedCount,
         broadcastedAt: new Date()
       });
+
+      // Send Telegram notification if enabled
+      // Only send for high-priority signals or signals validated by multiple agents
+      const shouldNotify = signal.priority >= 70 || validatedCount >= 2;
+
+      if (shouldNotify) {
+        try {
+          await telegramService.sendSignalNotification(signal, {
+            totalAgents: allAgents.length,
+            validatedAgents: validatedCount,
+            rejectedAgents: rejectedCount
+          });
+        } catch (error) {
+          console.error('Error sending Telegram notification (non-critical):', error);
+          // Don't throw - Telegram failures shouldn't break trading
+        }
+      }
 
       return {
         totalAgents: allAgents.length,

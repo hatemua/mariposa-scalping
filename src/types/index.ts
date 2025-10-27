@@ -4,6 +4,9 @@ export interface User {
   okxApiKey?: string;
   okxSecretKey?: string;
   okxPassphrase?: string;
+  // Telegram notification settings
+  telegramChatId?: string;
+  telegramNotificationsEnabled?: boolean;
   // OTP authentication fields
   otpCode?: string;
   otpExpiry?: Date;

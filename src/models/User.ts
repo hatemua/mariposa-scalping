@@ -23,6 +23,15 @@ const UserSchema = new Schema<UserDocument>({
     type: String,
     default: null,
   },
+  // Telegram notification settings
+  telegramChatId: {
+    type: String,
+    default: null,
+  },
+  telegramNotificationsEnabled: {
+    type: Boolean,
+    default: false,
+  },
   // OTP and email verification fields
   otpCode: {
     type: String,
