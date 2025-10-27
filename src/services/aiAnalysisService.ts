@@ -3081,6 +3081,70 @@ Focus on actionable insights for institutional-grade trading decisions.`;
       return 'Analysis unavailable due to LLM error';
     }
   }
+
+  /**
+   * Generate plain English explanation of a trading signal for non-traders
+   */
+  async generateSignalExplanation(signal: any): Promise<string> {
+    try {
+      const rrRatio = signal.entryPrice && signal.targetPrice && signal.stopLoss
+        ? (Math.abs(signal.targetPrice - signal.entryPrice) / Math.abs(signal.entryPrice - signal.stopLoss)).toFixed(2)
+        : 'N/A';
+
+      const prompt = `You are explaining a cryptocurrency trading signal to someone with no trading knowledge.
+
+Signal Details:
+- Symbol: ${signal.symbol}
+- Action: ${signal.recommendation}
+- Entry Price: ${signal.entryPrice ? '$' + signal.entryPrice.toLocaleString() : 'Market price'}
+- Target Price: ${signal.targetPrice ? '$' + signal.targetPrice.toLocaleString() : 'Not set'}
+- Stop Loss: ${signal.stopLoss ? '$' + signal.stopLoss.toLocaleString() : 'Not set'}
+- Risk/Reward Ratio: 1:${rrRatio}
+- Confidence: ${(signal.confidence * 100).toFixed(1)}%
+- Technical Reasoning: ${signal.reasoning}
+
+Please provide a 2-3 sentence explanation in simple terms that:
+1. Explains what this signal means (buy/sell at what price)
+2. Why we're recommending this action (simplified version of the technical reasoning)
+3. What to expect (potential gain vs risk)
+
+Keep it under 150 words and avoid trading jargon. Make it accessible to beginners.`;
+
+      // Use the fast model for quick response
+      const model = this.models[0]; // Llama-3.2-3B-Instruct-Turbo (cheapest, fast)
+
+      const response = await this.retryWithBackoff(
+        async () => {
+          const res = await this.httpClient.post<TogetherAIResponse>('/v1/chat/completions', {
+            model,
+            messages: [
+              {
+                role: 'system',
+                content: 'You are a friendly trading expert who explains complex trading concepts in simple, everyday language. Avoid jargon and technical terms.'
+              },
+              {
+                role: 'user',
+                content: prompt
+              }
+            ],
+            max_tokens: 200,
+            temperature: 0.3 // Slightly creative but still focused
+          });
+
+          return res.data.choices[0]?.message?.content?.trim() || 'Trading signal detected based on market analysis.';
+        },
+        2, // Only 2 retries for speed
+        500, // Faster retry
+        'Signal explanation generation'
+      );
+
+      return response;
+    } catch (error) {
+      console.error('Error generating signal explanation:', error);
+      // Fallback to a simple explanation
+      return `This is a ${signal.recommendation} signal for ${signal.symbol}. ${signal.reasoning.substring(0, 100)}...`;
+    }
+  }
 }
 
 export const aiAnalysisService = new AIAnalysisService();

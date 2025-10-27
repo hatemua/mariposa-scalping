@@ -11,6 +11,7 @@ interface BroadcastSignal {
   confidence: number;
   targetPrice?: number;
   stopLoss?: number;
+  entryPrice?: number;
   reasoning: string;
   category?: string;
   priority: number;
@@ -231,12 +232,35 @@ export class SignalBroadcastService {
 
       if (shouldNotify) {
         try {
+          // Get entry price from validated signals or fetch current market price
+          let entryPrice = signal.entryPrice;
+
+          if (!entryPrice) {
+            // Try to get entry price from validated signals
+            const validSignal = validatedSignals.find(s => s && s.recommendedEntry);
+            if (validSignal?.recommendedEntry) {
+              entryPrice = validSignal.recommendedEntry;
+            } else {
+              // Fetch current market price as fallback
+              try {
+                const { binanceService } = await import('./binanceService');
+                const marketData = await binanceService.getSymbolInfo(signal.symbol);
+                entryPrice = parseFloat(marketData.lastPrice || marketData.price || '0');
+              } catch (error) {
+                console.warn('Failed to fetch entry price for Telegram notification:', error);
+              }
+            }
+          }
+
           console.log(`📱 Sending Telegram notification: ${signal.symbol} (priority: ${signal.priority}, validated: ${validatedCount}/${allAgents.length})`);
-          await telegramService.sendSignalNotification(signal, {
-            totalAgents: allAgents.length,
-            validatedAgents: validatedCount,
-            rejectedAgents: rejectedCount
-          });
+          await telegramService.sendSignalNotification(
+            { ...signal, entryPrice },
+            {
+              totalAgents: allAgents.length,
+              validatedAgents: validatedCount,
+              rejectedAgents: rejectedCount
+            }
+          );
         } catch (error) {
           console.error('Error sending Telegram notification (non-critical):', error);
           // Don't throw - Telegram failures shouldn't break trading

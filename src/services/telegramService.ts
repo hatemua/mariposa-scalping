@@ -8,6 +8,7 @@ interface SignalNotification {
   confidence: number;
   targetPrice?: number;
   stopLoss?: number;
+  entryPrice?: number;
   reasoning: string;
   category?: string;
   priority: number;
@@ -75,7 +76,19 @@ export class TelegramService {
     }
 
     try {
-      const message = this.formatSignalMessage(signal, stats);
+      // Check if signal was already sent (prevent duplicates)
+      // Use composite key: symbol + recommendation + time window (5 minutes)
+      // This prevents multiple agents from sending duplicate notifications for the same trading opportunity
+      const timeWindow = Math.floor(Date.now() / (5 * 60 * 1000)); // 5-minute windows
+      const redisKey = `telegram:sent:${signal.symbol}:${signal.recommendation}:${timeWindow}`;
+      const alreadySent = await redisService.get(redisKey);
+
+      if (alreadySent) {
+        console.log(`📱 Skipping duplicate Telegram notification for ${signal.symbol} ${signal.recommendation} (already sent in this 5-min window)`);
+        return;
+      }
+
+      const message = await this.formatSignalMessage(signal, stats);
 
       // Add to queue with priority
       this.messageQueue.push({
@@ -85,6 +98,9 @@ export class TelegramService {
 
       // Sort queue by priority (highest first)
       this.messageQueue.sort((a, b) => b.priority - a.priority);
+
+      // Mark signal as sent (24 hour TTL to prevent old duplicates)
+      await redisService.set(redisKey, 'sent', 86400); // 24 hours in seconds
 
       // Start processing queue if not already processing
       if (!this.isProcessingQueue) {
@@ -146,10 +162,10 @@ export class TelegramService {
   /**
    * Format signal as Telegram message with rich formatting
    */
-  private formatSignalMessage(
+  private async formatSignalMessage(
     signal: SignalNotification,
     stats: BroadcastStats
-  ): string {
+  ): Promise<string> {
     const emoji = this.getRecommendationEmoji(signal.recommendation);
     const priorityLabel = this.getPriorityLabel(signal.priority);
     const confidenceBar = this.getConfidenceBar(signal.confidence);
@@ -158,13 +174,50 @@ export class TelegramService {
     message += `📊 *Symbol:* \`${signal.symbol}\`\n`;
     message += `${emoji} *Action:* *${signal.recommendation}*\n`;
     message += `💪 *Confidence:* ${(signal.confidence * 100).toFixed(1)}% ${confidenceBar}\n`;
+    message += `\n`;
+
+    // Entry Price and Order Type
+    if (signal.entryPrice) {
+      message += `💵 *Entry Price:* $${signal.entryPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\n`;
+
+      // Fetch current market price for comparison
+      try {
+        const { binanceService } = await import('./binanceService');
+        const marketData = await binanceService.getSymbolInfo(signal.symbol);
+        const currentPrice = parseFloat(marketData.lastPrice || marketData.price || '0');
+
+        if (currentPrice > 0) {
+          const priceDiff = Math.abs(((signal.entryPrice - currentPrice) / currentPrice) * 100);
+
+          if (priceDiff < 0.5) {
+            message += `📍 *Order Type:* MARKET ORDER (current: $${currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })})\n`;
+          } else {
+            message += `📍 *Order Type:* LIMIT ORDER (current: $${currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })})\n`;
+          }
+        }
+      } catch (error) {
+        // If we can't fetch market price, just show entry price
+        message += `📍 *Order Type:* LIMIT ORDER\n`;
+      }
+    } else {
+      message += `📍 *Order Type:* MARKET ORDER\n`;
+    }
 
     if (signal.targetPrice) {
-      message += `🎯 *Target:* $${signal.targetPrice.toLocaleString()}\n`;
+      message += `🎯 *Target:* $${signal.targetPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\n`;
     }
 
     if (signal.stopLoss) {
-      message += `🛡️ *Stop Loss:* $${signal.stopLoss.toLocaleString()}\n`;
+      message += `🛡️ *Stop Loss:* $${signal.stopLoss.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\n`;
+    }
+
+    // Risk/Reward Ratio
+    if (signal.entryPrice && signal.targetPrice && signal.stopLoss) {
+      const risk = Math.abs(signal.entryPrice - signal.stopLoss);
+      const reward = Math.abs(signal.targetPrice - signal.entryPrice);
+      const rrRatio = risk > 0 ? (reward / risk) : 0;
+
+      message += `⚖️ *Risk/Reward:* 1:${rrRatio.toFixed(2)} ($${risk.toFixed(2)} risk / $${reward.toFixed(2)} reward)\n`;
     }
 
     if (signal.category) {
@@ -174,12 +227,21 @@ export class TelegramService {
     message += `⚡ *Priority:* ${priorityLabel} (${signal.priority}/100)\n`;
     message += `\n`;
 
-    // Reasoning (limit to 200 chars)
-    const shortReasoning = signal.reasoning.length > 200
-      ? signal.reasoning.substring(0, 197) + '...'
-      : signal.reasoning;
-    message += `💡 *Reasoning:*\n_${shortReasoning}_\n`;
-    message += `\n`;
+    // Get plain English explanation from LLM
+    try {
+      const { aiAnalysisService } = await import('./aiAnalysisService');
+      const explanation = await aiAnalysisService.generateSignalExplanation(signal);
+      message += `📝 *In Simple Terms:*\n_${explanation}_\n`;
+      message += `\n`;
+    } catch (error) {
+      console.error('Failed to generate LLM explanation:', error);
+      // Fallback to reasoning if LLM fails
+      const shortReasoning = signal.reasoning.length > 200
+        ? signal.reasoning.substring(0, 197) + '...'
+        : signal.reasoning;
+      message += `💡 *Reasoning:*\n_${shortReasoning}_\n`;
+      message += `\n`;
+    }
 
     // Agent validation stats
     const validationRate = stats.totalAgents > 0

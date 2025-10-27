@@ -53,6 +53,7 @@ export const sendTestSignal = async (req: AuthRequest, res: Response): Promise<v
       symbol: 'BTC/USDT',
       recommendation: 'BUY' as 'BUY',
       confidence: 0.85,
+      entryPrice: 44200,
       targetPrice: 45000,
       stopLoss: 43500,
       reasoning: '🧪 This is a startup test signal to verify Telegram integration is working correctly. Real signals will appear here when detected by the system.',
