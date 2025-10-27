@@ -231,6 +231,7 @@ export class SignalBroadcastService {
 
       if (shouldNotify) {
         try {
+          console.log(`📱 Sending Telegram notification: ${signal.symbol} (priority: ${signal.priority}, validated: ${validatedCount}/${allAgents.length})`);
           await telegramService.sendSignalNotification(signal, {
             totalAgents: allAgents.length,
             validatedAgents: validatedCount,
@@ -240,6 +241,8 @@ export class SignalBroadcastService {
           console.error('Error sending Telegram notification (non-critical):', error);
           // Don't throw - Telegram failures shouldn't break trading
         }
+      } else {
+        console.log(`📱 Telegram notification skipped for ${signal.symbol}: priority=${signal.priority} (need ≥70), validated=${validatedCount} (need ≥2)`);
       }
 
       return {

@@ -28,4 +28,11 @@ router.get('/status', telegramController.getStatus);
  */
 router.post('/test-signal', telegramController.sendTestSignal);
 
+/**
+ * @route   GET /api/telegram/diagnostics
+ * @desc    Get diagnostic information about Telegram and signal generation
+ * @access  Private
+ */
+router.get('/diagnostics', telegramController.getDiagnostics);
+
 export default router;

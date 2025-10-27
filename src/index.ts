@@ -166,13 +166,23 @@ const startServer = async (): Promise<void> => {
     server.timeout = config.SERVER_TIMEOUT;
     console.log(`⏱️  Server timeout set to ${config.SERVER_TIMEOUT / 1000} seconds`);
 
-    server.listen(config.PORT, () => {
+    server.listen(config.PORT, async () => {
       console.log(`🚀 Server running on port ${config.PORT} in ${config.NODE_ENV} mode`);
       console.log(`📊 API available at http://localhost:${config.PORT}/api`);
       console.log(`🔌 WebSocket (General) available at ws://localhost:${config.PORT}/socket.io/`);
       console.log(`🧠 WebSocket (Analysis) available at ws://localhost:${config.PORT}/analysis/`);
       console.log(`🩺 WebSocket Health Check at http://localhost:${config.PORT}/health/websockets`);
       console.log(`🗄️  Redis cache: ${redis.connected ? 'Connected' : 'Disconnected'}`);
+
+      // Send Telegram startup notification
+      try {
+        const { telegramService } = await import('./services/telegramService');
+        console.log('📱 Sending Telegram startup notification...');
+        await telegramService.sendStartupNotification();
+      } catch (error) {
+        console.error('Failed to send Telegram startup notification:', error);
+        // Don't crash the server if Telegram fails
+      }
     });
 
     process.on('SIGTERM', async () => {

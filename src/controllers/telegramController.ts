@@ -49,21 +49,21 @@ export const getStatus = async (req: AuthRequest, res: Response): Promise<void> 
 export const sendTestSignal = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const testSignal = {
-      id: `test_${Date.now()}`,
+      id: `startup_test_${Date.now()}`,
       symbol: 'BTC/USDT',
       recommendation: 'BUY' as 'BUY',
       confidence: 0.85,
       targetPrice: 45000,
       stopLoss: 43500,
-      reasoning: 'This is a test signal to verify Telegram integration',
-      category: 'TEST',
-      priority: 95,
+      reasoning: '🧪 This is a startup test signal to verify Telegram integration is working correctly. Real signals will appear here when detected by the system.',
+      category: 'STARTUP_TEST',
+      priority: 100, // Ensure it passes the ≥70 filter
       timestamp: new Date()
     };
 
     const testStats = {
       totalAgents: 5,
-      validatedAgents: 4,
+      validatedAgents: 4, // >2 to pass filter
       rejectedAgents: 1
     };
 
@@ -71,13 +71,74 @@ export const sendTestSignal = async (req: AuthRequest, res: Response): Promise<v
 
     res.status(200).json({
       success: true,
-      message: 'Test signal queued for Telegram notification'
+      message: 'Test signal sent to Telegram! Check your group for the message.'
     } as ApiResponse);
   } catch (error) {
     console.error('Error sending test signal:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to send test signal'
+      error: error instanceof Error ? error.message : 'Failed to send test signal'
+    } as ApiResponse);
+  }
+};
+
+/**
+ * Get diagnostic information about Telegram and signal generation
+ */
+export const getDiagnostics = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const ScalpingAgent = require('../models').ScalpingAgent;
+    const agents = await ScalpingAgent.find({});
+    const activeAgents = agents.filter((a: any) => a.isActive);
+
+    const status = telegramService.getStatus();
+
+    const diagnostics = {
+      telegram: {
+        enabled: status.enabled,
+        connected: status.connected,
+        chatId: status.chatId,
+        queueSize: status.queueSize
+      },
+      agents: {
+        total: agents.length,
+        active: activeAgents.length,
+        inactive: agents.length - activeAgents.length,
+        list: activeAgents.map((a: any) => ({
+          id: a._id,
+          name: a.name,
+          category: a.category,
+          riskLevel: a.riskLevel,
+          budget: a.budget
+        }))
+      },
+      signalFilters: {
+        minimumPriority: 70,
+        minimumValidatedAgents: 2,
+        note: 'Signals must meet ONE of these criteria to trigger Telegram notification'
+      },
+      troubleshooting: {
+        issues: [
+          activeAgents.length === 0 ? '⚠️ No active agents - signals cannot be validated' : '✅ Active agents found',
+          !status.enabled ? '⚠️ Telegram disabled - check TELEGRAM_ENABLED=true' : '✅ Telegram enabled',
+          !status.connected ? '⚠️ Telegram not connected - check BOT_TOKEN and CHAT_ID' : '✅ Telegram connected',
+          status.queueSize > 10 ? `⚠️ Large queue (${status.queueSize}) - messages may be delayed` : '✅ Queue normal'
+        ].filter(Boolean),
+        recommendations: activeAgents.length === 0
+          ? ['Create and activate at least one agent to start receiving signals']
+          : ['Signals will be sent automatically when detected', 'Use POST /api/telegram/test-signal to send a test notification']
+      }
+    };
+
+    res.status(200).json({
+      success: true,
+      data: diagnostics
+    } as ApiResponse);
+  } catch (error) {
+    console.error('Error getting diagnostics:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get diagnostics'
     } as ApiResponse);
   }
 };

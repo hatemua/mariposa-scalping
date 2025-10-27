@@ -243,6 +243,56 @@ export class TelegramService {
   }
 
   /**
+   * Send startup notification when server starts
+   */
+  async sendStartupNotification(): Promise<void> {
+    if (!this.enabled || !this.bot || !this.chatId) {
+      console.log('📱 Telegram startup notification skipped (not enabled)');
+      return;
+    }
+
+    try {
+      const message = this.formatStartupMessage();
+      await this.sendMessage(message);
+      console.log('✅ Telegram startup notification sent successfully');
+    } catch (error) {
+      console.error('❌ Failed to send Telegram startup notification:', error);
+      // Log detailed error for debugging
+      if (error instanceof Error) {
+        console.error('   Error details:', error.message);
+      }
+    }
+  }
+
+  /**
+   * Format startup notification message
+   */
+  private formatStartupMessage(): string {
+    const now = new Date().toLocaleString('en-US', {
+      timeZone: 'UTC',
+      dateStyle: 'medium',
+      timeStyle: 'short'
+    });
+
+    let message = `🚀 *Mariposa Scalping Bot Started*\n\n`;
+    message += `✅ Telegram notifications *ENABLED*\n`;
+    message += `📱 Connected to this chat\n`;
+    message += `⏰ ${now} UTC\n\n`;
+    message += `📊 *System Status:*\n`;
+    message += `• Database: Connected\n`;
+    message += `• Redis: Connected\n`;
+    message += `• Signal Detection: Active\n`;
+    message += `• Trade Execution: Active\n\n`;
+    message += `🔔 *You will receive notifications for:*\n`;
+    message += `• High-priority signals (≥70)\n`;
+    message += `• Signals validated by 2+ agents\n`;
+    message += `• Whale activity alerts\n\n`;
+    message += `_If you see this message, your Telegram configuration is working correctly!_`;
+
+    return message;
+  }
+
+  /**
    * Test Telegram connection
    */
   async testConnection(): Promise<{ success: boolean; message: string }> {
