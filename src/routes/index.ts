@@ -7,6 +7,7 @@ import dashboardRoutes from './dashboard';
 import signalLogsRoutes from './signalLogs';
 import signalPipelineRoutes from './signalPipeline';
 import telegramRoutes from './telegram';
+import marketReportsRoutes from './marketReports';
 
 const router = express.Router();
 
@@ -18,6 +19,7 @@ router.use('/dashboard', dashboardRoutes);
 router.use('/signal-logs', signalLogsRoutes);
 router.use('/signal-pipeline', signalPipelineRoutes);
 router.use('/telegram', telegramRoutes);
+router.use('/market-reports', marketReportsRoutes);
 
 router.get('/health', (req, res) => {
   res.json({

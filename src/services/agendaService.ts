@@ -901,6 +901,23 @@ export class AgendaService {
       }
     });
 
+    // Daily Market Report to Telegram Job
+    this.agenda.define('daily-market-report-telegram', async (job: any) => {
+      try {
+        console.log('📊 Starting daily market report generation for Telegram...');
+
+        const { scheduledReportService } = await import('./scheduledReportService');
+        await scheduledReportService.sendDailyReportToTelegram();
+
+        console.log('✅ Daily market report sent to Telegram successfully');
+        await this.updateJobMetrics('daily-market-report-telegram', 'success');
+
+      } catch (error) {
+        console.error('❌ Error sending daily market report to Telegram:', error);
+        await this.updateJobMetrics('daily-market-report-telegram', 'error');
+      }
+    });
+
     // Broadcast Active Opportunities + Whale Activities Job (backup to ensure signals are sent)
     this.agenda.define('broadcast-opportunities', async (job: any) => {
       try {
@@ -1228,6 +1245,21 @@ export class AgendaService {
       // Expire old whale activities every 5 minutes
       await this.agenda.every('5 minutes', 'expire-whale-activities');
       console.log('  ✓ expire-whale-activities (every 5min)');
+
+      // Daily market report to Telegram (if enabled)
+      const reportEnabled = process.env.DAILY_REPORT_TELEGRAM_ENABLED === 'true';
+      const reportTime = process.env.DAILY_REPORT_TIME || '08:00';
+
+      if (reportEnabled) {
+        // Parse time (format: HH:MM)
+        const [hours, minutes] = reportTime.split(':').map(Number);
+        const cronExpression = `${minutes} ${hours} * * *`; // Every day at specified time
+
+        await this.agenda.every(cronExpression, 'daily-market-report-telegram', {}, { timezone: 'UTC' });
+        console.log(`  ✓ daily-market-report-telegram (daily at ${reportTime} UTC)`);
+      } else {
+        console.log('  ⊘ daily-market-report-telegram (disabled)');
+      }
 
       console.log('');
       console.log('✅ ALL RECURRING JOBS SCHEDULED SUCCESSFULLY');
