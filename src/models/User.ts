@@ -53,6 +53,19 @@ const UserSchema = new Schema<UserDocument>({
     type: Date,
     default: null,
   },
+  // Admin and API key fields
+  isAdmin: {
+    type: Boolean,
+    default: false,
+  },
+  apiKey: {
+    type: String,
+    default: null,
+  },
+  apiKeyCreatedAt: {
+    type: Date,
+    default: null,
+  },
 }, {
   timestamps: true,
 });

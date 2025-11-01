@@ -38,6 +38,7 @@ const navigation = [
   { name: 'AI Recommendations', href: '/dashboard/recommendations', icon: Brain },
   { name: 'Trading Agents', href: '/dashboard/agents', icon: Bot },
   { name: 'Create Agent', href: '/dashboard/agents/create', icon: Plus },
+  { name: 'API Tester', href: '/dashboard/api-tester', icon: Activity },
 ];
 
 function DashboardLayoutInner({ children }: DashboardLayoutProps) {

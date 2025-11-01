@@ -342,4 +342,76 @@ export const orderBookApi = {
   },
 };
 
+export const apiKeysApi = {
+  // Generate new API key
+  generateApiKey: async (data: {
+    name: string;
+    tier: 'free' | 'starter' | 'pro' | 'enterprise';
+    expiresInDays?: number;
+    allowedIPs?: string[];
+  }): Promise<ApiResponse> => {
+    const response = await api.post('/api-keys/generate', data);
+    return response.data;
+  },
+
+  // Get all user's API keys
+  listApiKeys: async (): Promise<ApiResponse> => {
+    const response = await api.get('/api-keys');
+    return response.data;
+  },
+
+  // Revoke an API key
+  revokeApiKey: async (keyId: string): Promise<ApiResponse> => {
+    const response = await api.delete(`/api-keys/${keyId}`);
+    return response.data;
+  },
+
+  // Rotate an API key
+  rotateApiKey: async (keyId: string): Promise<ApiResponse> => {
+    const response = await api.post(`/api-keys/${keyId}/rotate`);
+    return response.data;
+  },
+
+  // Get usage analytics
+  getApiKeyUsage: async (keyId: string, from?: string, to?: string): Promise<ApiResponse> => {
+    const response = await api.get(`/api-keys/${keyId}/usage`, {
+      params: { from, to }
+    });
+    return response.data;
+  }
+};
+
+// Public API tester (uses API key instead of JWT)
+export const publicApi = {
+  // Test public API endpoint with API key
+  testEndpoint: async (
+    apiKey: string,
+    method: 'GET' | 'POST',
+    endpoint: string,
+    params?: any,
+    body?: any
+  ) => {
+    const requestConfig: any = {
+      method,
+      url: `${config.getBackendUrl()}/api/v1${endpoint}`,
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 180000 // 3 minutes for report generation
+    };
+
+    if (params) {
+      requestConfig.params = params;
+    }
+
+    if (body) {
+      requestConfig.data = body;
+    }
+
+    const response = await axios(requestConfig);
+    return response;
+  }
+};
+
 export default api;

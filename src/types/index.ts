@@ -13,8 +13,48 @@ export interface User {
   otpAttempts?: number;
   isEmailVerified?: boolean;
   lastOtpRequest?: Date;
+  // API key fields
+  isAdmin?: boolean;
+  apiKey?: string;
+  apiKeyCreatedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ApiKey {
+  _id: string;
+  userId: string;
+  keyPrefix: string;
+  keyHash: string;
+  name: string;
+  tier: 'free' | 'starter' | 'pro' | 'enterprise';
+  requestsPerDay: number;
+  requestsPerMinute: number;
+  requestsUsedToday: number;
+  requestsUsedThisMinute: number;
+  lastResetDate: Date;
+  lastMinuteResetDate: Date;
+  allowedEndpoints: string[];
+  allowedIPs: string[];
+  isActive: boolean;
+  lastUsedAt: Date | null;
+  expiresAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ApiUsage {
+  _id: string;
+  apiKeyId: string;
+  userId: string;
+  endpoint: string;
+  method: string;
+  statusCode: number;
+  responseTime: number;
+  userAgent: string | null;
+  ipAddress: string | null;
+  errorMessage: string | null;
+  timestamp: Date;
 }
 
 export interface ScalpingAgent {

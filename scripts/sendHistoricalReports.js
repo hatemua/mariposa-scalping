@@ -5,7 +5,8 @@ const axios = require('axios');
 // ============================================
 const config = {
   backendUrl: process.env.BACKEND_URL || 'http://localhost:3001',
-  authToken: process.env.AUTH_TOKEN,
+  authToken: process.env.AUTH_TOKEN,  // JWT token (from OTP login)
+  apiKey: process.env.API_KEY,        // API key (from dashboard)
   delayBetweenReports: 10000, // 10 seconds between each report
   retryAttempts: 1,
   requestTimeout: 180000 // 3 minutes timeout for PDF generation
@@ -65,16 +66,25 @@ function getLastNDays(n) {
  * Send a single report to Telegram
  */
 async function sendReport(date) {
-  if (!config.authToken) {
-    throw new Error('AUTH_TOKEN not set. Export AUTH_TOKEN=your-jwt-token before running.');
+  // Check if either AUTH_TOKEN or API_KEY is provided
+  if (!config.authToken && !config.apiKey) {
+    throw new Error('Either AUTH_TOKEN or API_KEY must be set. Export AUTH_TOKEN=your-jwt-token or API_KEY=mk_live_xxx before running.');
   }
 
-  const url = `${config.backendUrl}/api/market-reports/send-telegram?date=${date}`;
+  // Use v1 API if API_KEY is provided, otherwise use internal API
+  const url = config.apiKey
+    ? `${config.backendUrl}/api/v1/market-reports/send-telegram?date=${date}`
+    : `${config.backendUrl}/api/market-reports/send-telegram?date=${date}`;
+
+  // Set auth header based on which credential is provided
+  const authHeader = config.apiKey
+    ? `Bearer ${config.apiKey}`  // API key auth
+    : `Bearer ${config.authToken}`;  // JWT auth
 
   try {
     const response = await axios.post(url, {}, {
       headers: {
-        'Authorization': `Bearer ${config.authToken}`,
+        'Authorization': authHeader,
         'Content-Type': 'application/json'
       },
       timeout: config.requestTimeout

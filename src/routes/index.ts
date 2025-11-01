@@ -8,9 +8,12 @@ import signalLogsRoutes from './signalLogs';
 import signalPipelineRoutes from './signalPipeline';
 import telegramRoutes from './telegram';
 import marketReportsRoutes from './marketReports';
+import apiKeysRoutes from './apiKeys';
+import publicV1Routes from './public/v1';
 
 const router = express.Router();
 
+// Internal API routes (require JWT authentication)
 router.use('/auth', authRoutes);
 router.use('/agents', agentRoutes);
 router.use('/market', marketRoutes);
@@ -20,6 +23,10 @@ router.use('/signal-logs', signalLogsRoutes);
 router.use('/signal-pipeline', signalPipelineRoutes);
 router.use('/telegram', telegramRoutes);
 router.use('/market-reports', marketReportsRoutes);
+router.use('/api-keys', apiKeysRoutes);
+
+// Public API routes (require API key authentication)
+router.use('/v1', publicV1Routes);
 
 router.get('/health', (req, res) => {
   res.json({

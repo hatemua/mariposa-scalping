@@ -38,6 +38,14 @@ export default function SettingsPage() {
       status: 'required'
     },
     {
+      id: 'api-keys',
+      title: 'API Keys',
+      description: 'Manage API keys for external integrations and automation',
+      icon: Key,
+      href: '/dashboard/settings/api-keys',
+      status: 'optional'
+    },
+    {
       id: 'profile',
       title: 'Profile Settings',
       description: 'Manage your account information and preferences',
