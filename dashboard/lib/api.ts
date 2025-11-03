@@ -393,7 +393,7 @@ export const publicApi = {
   ) => {
     const requestConfig: any = {
       method,
-      url: `${config.getBackendUrl()}/api/v1${endpoint}`,
+      url: `${config.getBackendUrl()}/v1${endpoint}`,
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
