@@ -368,18 +368,23 @@ string OrderToJson()
 {
    string openTimeStr = TimeToString(OrderOpenTime(), TIME_DATE|TIME_MINUTES);
 
+   // Escape all string fields to prevent JSON parsing errors
+   string escapedSymbol = EscapeJsonString(OrderSymbol());
+   string escapedComment = EscapeJsonString(OrderComment());
+   string escapedOpenTime = EscapeJsonString(openTimeStr);
+
    string json = StringFormat(
       "{\"ticket\":%d,\"symbol\":\"%s\",\"type\":\"%s\",\"lots\":%.2f,\"openPrice\":%.5f,\"stopLoss\":%.5f,\"takeProfit\":%.5f,\"openTime\":\"%s\",\"profit\":%.2f,\"comment\":\"%s\"}",
       OrderTicket(),
-      OrderSymbol(),
+      escapedSymbol,
       OrderTypeToString(OrderType()),
       OrderLots(),
       OrderOpenPrice(),
       OrderStopLoss(),
       OrderTakeProfit(),
-      openTimeStr,
+      escapedOpenTime,
       OrderProfit(),
-      OrderComment()
+      escapedComment
    );
 
    return json;
@@ -455,10 +460,34 @@ double ExtractNumberParam(string json, string key)
 }
 
 //+------------------------------------------------------------------+
+//| Helper: Escape JSON string                                       |
+//+------------------------------------------------------------------+
+string EscapeJsonString(string str)
+{
+   string result = str;
+
+   // Escape backslash first (must be first!)
+   StringReplace(result, "\\", "\\\\");
+
+   // Escape double quotes
+   StringReplace(result, "\"", "\\\"");
+
+   // Escape newlines
+   StringReplace(result, "\n", "\\n");
+   StringReplace(result, "\r", "\\r");
+
+   // Escape tabs
+   StringReplace(result, "\t", "\\t");
+
+   return result;
+}
+
+//+------------------------------------------------------------------+
 //| Helper: Create error response                                    |
 //+------------------------------------------------------------------+
 string ErrorResponse(string errorMsg)
 {
-   string json = "{\"error\":\"" + errorMsg + "\",\"data\":null}";
+   string escapedMsg = EscapeJsonString(errorMsg);
+   string json = "{\"error\":\"" + escapedMsg + "\",\"data\":null}";
    return json;
 }
