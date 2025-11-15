@@ -95,8 +95,20 @@ async function processQueue() {
         )
       ]);
 
-      const result = JSON.parse(response.toString());
-      logger.debug('MT4 response:', result);
+      const rawResponse = response.toString();
+      logger.info('Raw MT4 response:', rawResponse);
+
+      let result;
+      try {
+        result = JSON.parse(rawResponse);
+      } catch (parseError) {
+        logger.error('JSON parse error. Raw response:', rawResponse);
+        logger.error('Parse error details:', parseError.message);
+        reject(new Error('Invalid JSON from MT4: ' + parseError.message));
+        return;
+      }
+
+      logger.debug('Parsed MT4 response:', result);
 
       if (result.error) {
         reject(new Error(result.error));
