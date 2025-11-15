@@ -91,7 +91,7 @@ async function testSymbols() {
 }
 
 async function testPrice() {
-  const symbol = 'EURUSD'; // Common forex pair
+  const symbol = 'BTCUSD'; // Bitcoin - available on most crypto brokers
 
   const response = await axios.get(`${BRIDGE_URL}/api/v1/price/${symbol}`, {
     headers: {
@@ -160,7 +160,7 @@ async function main() {
   await runTest('2. Authentication Test (Invalid)', testInvalidAuth);
   await runTest('3. Get Account Info', testAccountInfo);
   await runTest('4. Get Available Symbols', testSymbols);
-  await runTest('5. Get Price (EURUSD)', testPrice);
+  await runTest('5. Get Price (BTCUSD)', testPrice);
   await runTest('6. Get Open Positions', testOpenPositions);
 
   // Summary
