@@ -23,6 +23,23 @@ const UserSchema = new Schema<UserDocument>({
     type: String,
     default: null,
   },
+  // MT4 broker credentials (encrypted)
+  mt4ServerUrl: {
+    type: String,
+    default: null,
+  },
+  mt4AccountNumber: {
+    type: String,
+    default: null,
+  },
+  mt4Password: {
+    type: String,
+    default: null,
+  },
+  mt4BrokerName: {
+    type: String,
+    default: null,
+  },
   // Telegram notification settings
   telegramChatId: {
     type: String,

@@ -1,0 +1,61 @@
+# MT4 Terminal Docker Image
+# Runs MetaTrader 4 in Wine with VNC access
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV DISPLAY=:1
+ENV WINEPREFIX=/root/.wine
+ENV WINEARCH=win32
+
+# Install dependencies
+RUN dpkg --add-architecture i386 && \
+    apt-get update && \
+    apt-get install -y \
+    wine32 \
+    wine64 \
+    winbind \
+    xvfb \
+    x11vnc \
+    wget \
+    unzip \
+    supervisor \
+    libfreetype6:i386 \
+    cabextract \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install winetricks
+RUN wget https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks -O /usr/local/bin/winetricks && \
+    chmod +x /usr/local/bin/winetricks
+
+# Setup Wine
+RUN wine wineboot --init && \
+    winetricks -q vcrun2015 && \
+    winetricks -q dotnet472
+
+# Download and install MT4
+# Note: You'll need to provide your broker's MT4 installer
+# This is a placeholder - you'll need to download from your broker
+RUN mkdir -p /tmp/mt4
+WORKDIR /tmp/mt4
+
+# Create MT4 installation directory
+RUN mkdir -p "/root/.wine/drive_c/Program Files/MetaTrader"
+
+# Create supervisor config
+RUN mkdir -p /etc/supervisor/conf.d
+COPY supervisord.conf /etc/supervisor/conf.d/
+
+# Expose VNC port
+EXPOSE 5900
+EXPOSE 5555
+
+# Create VNC password script
+RUN mkdir -p /root/.vnc
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+WORKDIR /root
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]

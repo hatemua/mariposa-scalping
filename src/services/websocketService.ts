@@ -23,8 +23,8 @@ export class WebSocketService {
   constructor(server: HTTPServer) {
     this.io = new SocketIOServer(server, {
       cors: {
-      origin: "*",
-      credentials: true
+        origin: "*",
+        credentials: false
       }
     });
 

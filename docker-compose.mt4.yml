@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  mt4-terminal:
+    image: scottyhardy/docker-wine:latest
+    container_name: mt4-terminal
+    ports:
+      - "0.0.0.0:5900:5900"    # VNC for GUI access (remote access enabled)
+      - "5555:5555"             # ZMQ communication (internal only)
+    volumes:
+      - ./mt4-data:/root/.wine/drive_c/Program Files/MetaTrader
+      - ./mt4-bridge/experts:/root/.wine/drive_c/Program Files/MetaTrader/MQL4/Experts
+      - ./mt4-bridge/libraries:/root/.wine/drive_c/Program Files/MetaTrader/MQL4/Libraries
+      - ./mt4-bridge/include:/root/.wine/drive_c/Program Files/MetaTrader/MQL4/Include
+      - ./mt4-bridge:/opt/mt4-bridge
+    environment:
+      - DISPLAY=:0
+      - VNC_PASSWORD=mt4bridge2024
+    entrypoint: |
+      /bin/bash -c "
+      echo '=== Installing dependencies ==='
+      apt-get update && apt-get install -y x11vnc xvfb supervisor fluxbox wget ca-certificates xterm
+
+      echo '=== Setting up VNC ==='
+      mkdir -p ~/.vnc
+      x11vnc -storepasswd mt4bridge2024 ~/.vnc/passwd
+
+      echo '=== Starting Xvfb ==='
+      Xvfb :0 -screen 0 1280x1024x24 &
+      sleep 2
+
+      echo '=== Starting Fluxbox window manager ==='
+      DISPLAY=:0 fluxbox &
+      sleep 2
+
+      echo '=== Starting VNC server ==='
+      x11vnc -display :0 -forever -shared -rfbauth ~/.vnc/passwd -rfbport 5900 -noxdamage -ncache 10 &
+      sleep 2
+
+      echo '=== Opening terminal window ==='
+      DISPLAY=:0 xterm -geometry 80x24+10+10 -e 'echo \"MT4 Container Ready. Download MT4 from your broker and install it with Wine.\"; echo \"Example: wine mt4setup.exe\"; bash' &
+
+      echo '=== Attempting to auto-start MT4 ==='
+      /opt/mt4-bridge/start-mt4.sh
+
+      echo '=== MT4 Container is ready ==='
+      echo 'Connect via VNC to see the desktop'
+      echo 'VNC Password: mt4bridge2024'
+      echo 'To install MT4: docker exec -it mt4-terminal /opt/mt4-bridge/install-mt4.sh'
+
+      tail -f /dev/null
+      "
+    restart: unless-stopped
+    networks:
+      - mt4-network
+
+  mt4-bridge-server:
+    build:
+      context: ./mt4-bridge
+      dockerfile: Dockerfile
+    container_name: mt4-bridge-server
+    ports:
+      - "127.0.0.1:8080:8080"  # Bridge API (localhost only for security)
+    environment:
+      - NODE_ENV=production
+      - ZMQ_HOST=mt4-terminal
+      - ZMQ_PORT=5555
+      - BRIDGE_PORT=8080
+      - BRIDGE_AUTH_USERNAME=${MT4_BRIDGE_USERNAME:-admin}
+      - BRIDGE_AUTH_PASSWORD=${MT4_BRIDGE_PASSWORD:-changeme}
+      - LOG_LEVEL=info
+    depends_on:
+      - mt4-terminal
+    restart: unless-stopped
+    networks:
+      - mt4-network
+    volumes:
+      - ./mt4-bridge/logs:/app/logs
+      - ./mt4-bridge/server.js:/app/server.js
+
+networks:
+  mt4-network:
+    driver: bridge
+
+volumes:
+  mt4-data:
+    driver: local

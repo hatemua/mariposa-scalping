@@ -15,6 +15,7 @@ interface Config {
   BINANCE_API_KEY: string;
   BINANCE_API_SECRET: string;
   TOGETHER_AI_API_KEY: string;
+  MT4_BRIDGE_URL: string; // NEW: MT4 bridge URL
   PORT: number;
   NODE_ENV: string;
   RATE_LIMIT_WINDOW_MS: number;
@@ -69,6 +70,7 @@ export const config: Config = {
   BINANCE_API_KEY: process.env.BINANCE_API_KEY || '',
   BINANCE_API_SECRET: process.env.BINANCE_API_SECRET || '',
   TOGETHER_AI_API_KEY: process.env.TOGETHER_AI_API_KEY!,
+  MT4_BRIDGE_URL: process.env.MT4_BRIDGE_URL || 'http://localhost:8080',
   PORT: parseInt(process.env.PORT || '3001', 10),
   NODE_ENV: process.env.NODE_ENV || 'development',
   RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10), // 1 minute default

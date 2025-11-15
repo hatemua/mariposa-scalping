@@ -9,6 +9,7 @@ import signalPipelineRoutes from './signalPipeline';
 import telegramRoutes from './telegram';
 import marketReportsRoutes from './marketReports';
 import apiKeysRoutes from './apiKeys';
+import mt4Routes from './mt4Routes';
 import publicV1Routes from './public/v1';
 
 const router = express.Router();
@@ -24,6 +25,7 @@ router.use('/signal-pipeline', signalPipelineRoutes);
 router.use('/telegram', telegramRoutes);
 router.use('/market-reports', marketReportsRoutes);
 router.use('/api-keys', apiKeysRoutes);
+router.use('/mt4', mt4Routes);
 
 // Public API routes (require API key authentication)
 router.use('/v1', publicV1Routes);

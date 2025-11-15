@@ -2,6 +2,9 @@ import { redisService } from './redisService';
 import { agendaService } from './agendaService';
 import { binanceService } from './binanceService';
 import { okxService } from './okxService';
+import { mt4Service } from './mt4Service';
+import { symbolMappingService } from './symbolMappingService';
+import { brokerFilterService } from './brokerFilterService';
 import { ScalpingAgent } from '../models';
 import AgentSignalLogModel from '../models/AgentSignalLog';
 
@@ -105,6 +108,7 @@ export class ValidatedSignalExecutor {
 
   /**
    * Execute a validated signal (schedule trade execution)
+   * NEW: Routes to correct broker based on agent configuration
    */
   private async executeSignal(validatedSignal: any): Promise<void> {
     try {
@@ -139,118 +143,235 @@ export class ValidatedSignalExecutor {
         return;
       }
 
-      // Get current market price (CRITICAL: fetch real-time price if not in signal)
-      let executionPrice = validatedSignal.takeProfitPrice || validatedSignal.recommendedEntry;
+      // NEW: Check if symbol is available at agent's broker
+      const filterResult = await brokerFilterService.canExecuteSignal(symbol, agent.broker);
 
-      // If no price in signal, fetch current market price from Binance
-      if (!executionPrice || executionPrice <= 0) {
-        console.log(`⚠️  No price in signal, fetching current market price for ${symbol}...`);
-        try {
-          const marketData = await binanceService.getSymbolInfo(symbol);
-          executionPrice = parseFloat(marketData.lastPrice || marketData.price || '0');
-          console.log(`✅ Fetched current market price for ${symbol}: ${executionPrice}`);
-        } catch (error) {
-          console.error(`Failed to fetch market price for ${symbol}:`, error);
-          return;
+      if (!filterResult.allowed) {
+        console.log(`⏭️  Signal filtered: ${symbol} not available at ${agent.broker} - ${filterResult.reason}`);
+
+        // Mark signal as FILTERED in log
+        await AgentSignalLogModel.updateOne(
+          { signalId: signalId, agentId: agentId },
+          {
+            $set: {
+              status: 'FILTERED',
+              executed: false,
+              filterReason: filterResult.reason
+            }
+          }
+        );
+
+        return;
+      }
+
+      console.log(`✅ Symbol ${symbol} available at ${agent.broker} as ${filterResult.brokerSymbol}`);
+
+      // NEW: Route execution based on broker type
+      if (agent.broker === 'MT4') {
+        await this.executeMT4Signal(agent, validatedSignal, symbol, filterResult.brokerSymbol!);
+      } else if (agent.broker === 'OKX') {
+        await this.executeOKXSignal(agent, validatedSignal, symbol);
+      } else if (agent.broker === 'BINANCE') {
+        // TODO: Implement Binance execution when needed
+        console.warn(`⚠️  Binance execution not yet implemented, skipping signal`);
+        return;
+      } else {
+        console.error(`❌ Unknown broker type: ${agent.broker}`);
+        return;
+      }
+
+    } catch (error) {
+      console.error('Error executing signal:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Execute signal on OKX (legacy implementation)
+   */
+  private async executeOKXSignal(agent: any, validatedSignal: any, symbol: string): Promise<void> {
+    const { signalId, agentId, recommendation, positionSize } = validatedSignal;
+
+    // Get current market price
+    let executionPrice = validatedSignal.takeProfitPrice || validatedSignal.recommendedEntry;
+
+    if (!executionPrice || executionPrice <= 0) {
+      console.log(`⚠️  No price in signal, fetching current market price for ${symbol}...`);
+      try {
+        const marketData = await binanceService.getSymbolInfo(symbol);
+        executionPrice = parseFloat(marketData.lastPrice || marketData.price || '0');
+        console.log(`✅ Fetched current market price for ${symbol}: ${executionPrice}`);
+      } catch (error) {
+        console.error(`Failed to fetch market price for ${symbol}:`, error);
+        return;
+      }
+    }
+
+    const stopLoss = validatedSignal.stopLossPrice;
+
+    // Fetch instrument info
+    let instrumentInfo;
+    try {
+      instrumentInfo = await okxService.getInstrumentInfo(symbol);
+    } catch (error) {
+      console.error(`Failed to fetch instrument info for ${symbol}:`, error);
+      return;
+    }
+
+    const minSize = parseFloat(instrumentInfo.minSz);
+    const lotSize = parseFloat(instrumentInfo.lotSz);
+    const MIN_ORDER_VALUE_USDT = 20; // OKX requirement
+
+    // Calculate quantity
+    let quantity = executionPrice > 0 ? positionSize / executionPrice : 0;
+
+    // Ensure minimum SIZE
+    if (quantity < minSize) {
+      console.log(`⚠️  Calculated quantity ${quantity} below minimum ${minSize} for ${symbol}`);
+      quantity = minSize;
+      console.log(`   Adjusted quantity to minimum: ${quantity}`);
+    }
+
+    // Ensure minimum VALUE
+    let orderValue = quantity * executionPrice;
+    if (orderValue < MIN_ORDER_VALUE_USDT) {
+      console.log(`⚠️  Order value $${orderValue.toFixed(2)} below OKX minimum $${MIN_ORDER_VALUE_USDT}`);
+      const requiredQuantity = MIN_ORDER_VALUE_USDT / executionPrice;
+      quantity = Math.max(requiredQuantity, minSize);
+      quantity = Math.ceil(quantity / lotSize) * lotSize;
+      orderValue = quantity * executionPrice;
+      console.log(`   Adjusted to $${orderValue.toFixed(2)} (${quantity} ${symbol.replace('USDT', '')})`);
+    } else {
+      quantity = Math.floor(quantity / lotSize) * lotSize;
+    }
+
+    // Final validation
+    if (quantity <= 0 || executionPrice <= 0 || quantity < minSize) {
+      console.error(`❌ Invalid quantity for ${symbol}: quantity=${quantity}, minSz=${minSize}, price=${executionPrice}`);
+      return;
+    }
+
+    const finalOrderValue = quantity * executionPrice;
+    if (finalOrderValue < MIN_ORDER_VALUE_USDT) {
+      console.error(`❌ Final order value $${finalOrderValue.toFixed(2)} still below $${MIN_ORDER_VALUE_USDT} minimum`);
+      return;
+    }
+
+    console.log(`💰 OKX Trade: $${finalOrderValue.toFixed(2)} → ${quantity} ${symbol} @ $${executionPrice}`);
+
+    // Schedule trade execution
+    await agendaService.scheduleTradeExecution({
+      userId: agent.userId.toString(),
+      agentId: agentId,
+      symbol: symbol,
+      side: recommendation.toLowerCase(),
+      type: 'market',
+      amount: quantity,
+      price: executionPrice
+    });
+
+    console.log(`✅ OKX Trade scheduled: ${recommendation} ${quantity.toFixed(6)} ${symbol} @ $${executionPrice}`);
+
+    // Update signal log
+    await AgentSignalLogModel.updateOne(
+      { signalId: signalId, agentId: agentId },
+      {
+        $set: {
+          status: 'EXECUTED',
+          executed: true,
+          executedAt: new Date(),
+          executionPrice: executionPrice,
+          executionQuantity: quantity
         }
       }
+    );
+  }
 
-      const stopLoss = validatedSignal.stopLossPrice;
+  /**
+   * Execute signal on MT4 (NEW)
+   */
+  private async executeMT4Signal(agent: any, validatedSignal: any, universalSymbol: string, mt4Symbol: string): Promise<void> {
+    const { signalId, agentId, recommendation, positionSize } = validatedSignal;
 
-      // CRITICAL: Fetch instrument info to ensure we meet minimum order size
-      let instrumentInfo;
+    // Get current market price
+    let executionPrice = validatedSignal.takeProfitPrice || validatedSignal.recommendedEntry;
+
+    if (!executionPrice || executionPrice <= 0) {
+      console.log(`⚠️  No price in signal, fetching current MT4 price for ${mt4Symbol}...`);
       try {
-        instrumentInfo = await okxService.getInstrumentInfo(symbol);
+        const priceData = await mt4Service.getPrice(agent.userId.toString(), universalSymbol);
+        executionPrice = recommendation.toLowerCase() === 'buy' ? priceData.ask : priceData.bid;
+        console.log(`✅ Fetched MT4 price for ${mt4Symbol}: ${executionPrice}`);
       } catch (error) {
-        console.error(`Failed to fetch instrument info for ${symbol}:`, error);
+        console.error(`Failed to fetch MT4 price for ${mt4Symbol}:`, error);
         return;
       }
+    }
 
-      const minSize = parseFloat(instrumentInfo.minSz);
-      const lotSize = parseFloat(instrumentInfo.lotSz);
-      const MIN_ORDER_VALUE_USDT = 20; // OKX requirement
+    const stopLoss = validatedSignal.stopLossPrice;
+    const takeProfit = validatedSignal.takeProfitPrice;
 
-      // Calculate quantity based on position size
-      // positionSize is in USDT, we need to convert to coin quantity
-      let quantity = executionPrice > 0 ? positionSize / executionPrice : 0;
+    // Calculate lot size (MT4 uses lots, not quantity)
+    let lotSize: number;
+    try {
+      lotSize = await mt4Service.calculateLotSize(agent.userId.toString(), universalSymbol, positionSize);
+      console.log(`💰 MT4 Lot size calculation: ${positionSize} USDT → ${lotSize} lots`);
+    } catch (error) {
+      console.error(`Failed to calculate lot size:`, error);
+      return;
+    }
 
-      // CRITICAL #1: Ensure quantity meets exchange minimum SIZE
-      if (quantity < minSize) {
-        console.log(`⚠️  Calculated quantity ${quantity} below minimum ${minSize} for ${symbol}`);
-        quantity = minSize;
-        console.log(`   Adjusted quantity to minimum: ${quantity}`);
-      }
+    // Validate lot size
+    if (lotSize < 0.01) {
+      console.error(`❌ Lot size too small: ${lotSize}. Minimum is 0.01 lots`);
+      return;
+    }
 
-      // CRITICAL #2: Ensure order VALUE meets $20 minimum
-      let orderValue = quantity * executionPrice;
-      if (orderValue < MIN_ORDER_VALUE_USDT) {
-        console.log(`⚠️  Order value $${orderValue.toFixed(2)} below OKX minimum $${MIN_ORDER_VALUE_USDT}`);
+    console.log(`💰 MT4 Trade: ${positionSize} USDT → ${lotSize} lots ${mt4Symbol} @ ${executionPrice}`);
 
-        // Calculate quantity needed for $20 order
-        const requiredQuantity = MIN_ORDER_VALUE_USDT / executionPrice;
+    // Execute MT4 order immediately (no scheduling needed - MT4 is ultra-fast)
+    try {
+      const order = await mt4Service.createMarketOrder(
+        agent.userId.toString(),
+        universalSymbol,
+        recommendation.toLowerCase() as 'buy' | 'sell',
+        lotSize,
+        stopLoss,
+        takeProfit
+      );
 
-        // Ensure it's also above minSize
-        quantity = Math.max(requiredQuantity, minSize);
+      console.log(`✅ MT4 Order executed: ${recommendation} ${lotSize} lots ${mt4Symbol} | Ticket: ${order.ticket} | Price: ${order.openPrice}`);
 
-        // Round UP to lot size to ensure we don't go below minimum
-        quantity = Math.ceil(quantity / lotSize) * lotSize;
-
-        orderValue = quantity * executionPrice;
-        console.log(`   Adjusted to $${orderValue.toFixed(2)} (${quantity} ${symbol.replace('USDT', '')})`);
-      } else {
-        // Round to lot size increment
-        quantity = Math.floor(quantity / lotSize) * lotSize;
-      }
-
-      // Final validation
-      if (quantity <= 0 || executionPrice <= 0 || quantity < minSize) {
-        console.error(`❌ Invalid quantity for ${symbol}: quantity=${quantity}, minSz=${minSize}, price=${executionPrice}, positionSize=${positionSize}`);
-        return;
-      }
-
-      const finalOrderValue = quantity * executionPrice;
-      if (finalOrderValue < MIN_ORDER_VALUE_USDT) {
-        console.error(`❌ Final order value $${finalOrderValue.toFixed(2)} still below $${MIN_ORDER_VALUE_USDT} minimum`);
-        return;
-      }
-
-      console.log(`💰 Trade calculation: $${finalOrderValue.toFixed(2)} → ${quantity} ${symbol} @ $${executionPrice}`);
-
-      // Schedule trade execution via Agenda
-      await agendaService.scheduleTradeExecution({
-        userId: agent.userId.toString(),
-        agentId: agentId,
-        symbol: symbol,
-        side: recommendation.toLowerCase(),
-        type: 'market',
-        amount: quantity,
-        price: executionPrice
-      });
-
-      console.log(`✅ Trade scheduled: ${recommendation} ${quantity.toFixed(6)} ${symbol} @ $${executionPrice} (${positionSize} USDT)`);
-
-      // Update agent signal log to mark as EXECUTED
+      // Update signal log
       await AgentSignalLogModel.updateOne(
-        {
-          signalId: signalId,
-          agentId: agentId
-        },
+        { signalId: signalId, agentId: agentId },
         {
           $set: {
             status: 'EXECUTED',
             executed: true,
             executedAt: new Date(),
-            executionPrice: executionPrice,
-            executionQuantity: quantity
+            executionPrice: order.openPrice,
+            executionQuantity: lotSize,
+            mt4Ticket: order.ticket,
+            broker: 'MT4'
           }
         }
       );
 
-      console.log(`📝 Updated agent signal log for ${signalId}`);
-
     } catch (error) {
-      console.error('Error executing signal:', error);
-      throw error;
+      console.error(`Failed to execute MT4 order:`, error);
+
+      // Mark as FAILED in log
+      await AgentSignalLogModel.updateOne(
+        { signalId: signalId, agentId: agentId },
+        {
+          $set: {
+            status: 'FAILED',
+            executed: false,
+            failedReason: error instanceof Error ? error.message : 'Unknown error'
+          }
+        }
+      );
     }
   }
 

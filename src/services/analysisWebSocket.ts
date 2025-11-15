@@ -19,9 +19,9 @@ class AnalysisWebSocketService {
   public initialize(httpServer: HTTPServer): void {
     this.io = new SocketIOServer(httpServer, {
       cors: {
-        origin: ["http://localhost:3000", "http://localhost:3001", "https://localhost:3000"],
+        origin: "*",
         methods: ["GET", "POST"],
-        credentials: true
+        credentials: false
       },
       path: '/analysis/',
       transports: ['websocket', 'polling']

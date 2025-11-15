@@ -8,6 +8,10 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "jest",
+    "test:mt4": "ts-node scripts/test-mt4-connection.ts",
+    "test:mt4:trading": "./scripts/test-mt4-trading-simple.sh",
+    "mt4:setup": "sudo docker exec mt4-terminal /opt/mt4-bridge/auto-setup-ea.sh",
+    "mt4:status": "sudo docker exec mt4-terminal bash -c 'netstat -tln 2>/dev/null | grep 5555' && echo 'EA is running' || echo 'EA not running - attach via VNC'",
     "lint": "eslint src/**/*.ts",
     "typecheck": "tsc --noEmit"
   },

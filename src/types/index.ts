@@ -4,6 +4,11 @@ export interface User {
   okxApiKey?: string;
   okxSecretKey?: string;
   okxPassphrase?: string;
+  // MT4 broker credentials (encrypted)
+  mt4ServerUrl?: string;
+  mt4AccountNumber?: string;
+  mt4Password?: string;
+  mt4BrokerName?: string;
   // Telegram notification settings
   telegramChatId?: string;
   telegramNotificationsEnabled?: boolean;
@@ -61,6 +66,9 @@ export interface ScalpingAgent {
   _id: string;
   userId: string;
   name: string;
+
+  // Broker selection
+  broker: 'OKX' | 'MT4' | 'BINANCE';
 
   // Simplified intelligent configuration
   category: 'SCALPING' | 'SWING' | 'DAY_TRADING' | 'LONG_TERM' | 'ARBITRAGE' | 'ALL';
