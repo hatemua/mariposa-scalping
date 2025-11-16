@@ -3,12 +3,22 @@
 import { useState } from 'react';
 import { agentApi } from '@/lib/api';
 import { toast } from 'react-hot-toast';
-import { Bot, DollarSign, Shield, TrendingUp, ArrowLeft, Sparkles, Info } from 'lucide-react';
+import { Bot, DollarSign, Shield, TrendingUp, ArrowLeft, Sparkles, Info, Building2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import ErrorBoundary from '@/components/ErrorBoundary';
+import MT4AccountInfo from '@/components/mt4/MT4AccountInfo';
 
 type AgentCategory = 'SCALPING' | 'SWING' | 'DAY_TRADING' | 'LONG_TERM' | 'ARBITRAGE' | 'ALL';
+type BrokerType = 'OKX' | 'MT4' | 'BINANCE';
+
+interface BrokerInfo {
+  label: string;
+  description: string;
+  icon: string;
+  minBudget: number;
+  disabled?: boolean;
+}
 
 const CATEGORY_INFO = {
   SCALPING: {
@@ -57,11 +67,34 @@ const RISK_LEVELS = [
   { value: 5, label: 'Very Aggressive', color: 'text-red-600', bgColor: 'bg-red-50', description: '40% position size, 55% min confidence' },
 ];
 
+const BROKER_INFO: Record<BrokerType, BrokerInfo> = {
+  OKX: {
+    label: 'OKX',
+    description: 'Crypto exchange - All symbols available',
+    icon: '🚀',
+    minBudget: 50
+  },
+  MT4: {
+    label: 'MetaTrader 4',
+    description: 'Forex & Commodities - BTC only for scalping',
+    icon: '📊',
+    minBudget: 10
+  },
+  BINANCE: {
+    label: 'Binance',
+    description: 'Crypto exchange - Coming soon',
+    icon: '⚡',
+    minBudget: 50,
+    disabled: true
+  }
+};
+
 export default function CreateAgentPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
+    broker: 'OKX' as BrokerType,
     category: 'SCALPING' as AgentCategory,
     riskLevel: 3 as 1 | 2 | 3 | 4 | 5,
     budget: 100, // Default to $100 (above $50 minimum)
@@ -104,8 +137,9 @@ export default function CreateAgentPage() {
       toast.error('Agent name is required');
       return false;
     }
-    if (formData.budget < 50) {
-      toast.error('Minimum budget is $50 USDT (OKX requires $20 per trade)');
+    const minBudget = BROKER_INFO[formData.broker].minBudget;
+    if (formData.budget < minBudget) {
+      toast.error(`Minimum budget for ${formData.broker} is $${minBudget} USDT`);
       return false;
     }
     return true;
@@ -120,6 +154,7 @@ export default function CreateAgentPage() {
       setLoading(true);
       const response = await agentApi.createAgent({
         name: formData.name.trim(),
+        broker: formData.broker,
         category: formData.category,
         riskLevel: formData.riskLevel,
         budget: formData.budget,
@@ -216,6 +251,66 @@ export default function CreateAgentPage() {
               </div>
             </div>
 
+            {/* Broker Selection */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+              <div className="flex items-center gap-2 mb-6">
+                <Building2 className="h-5 w-5 text-purple-600" />
+                <h2 className="text-xl font-semibold text-gray-900">Select Broker</h2>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {Object.entries(BROKER_INFO).map(([key, info]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => !info.disabled && setFormData({ ...formData, broker: key as BrokerType })}
+                    disabled={info.disabled}
+                    className={`p-4 rounded-xl border-2 transition-all text-left ${
+                      formData.broker === key
+                        ? 'border-purple-500 bg-purple-50 shadow-md'
+                        : info.disabled
+                        ? 'border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed'
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="text-2xl mb-1">{info.icon}</div>
+                    <div className="font-semibold text-gray-900 text-sm mb-1">{info.label}</div>
+                    <div className="text-xs text-gray-600">{info.description}</div>
+                    {info.disabled && (
+                      <div className="text-xs text-amber-600 mt-1 font-medium">Coming Soon</div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* MT4 Account Info */}
+            {formData.broker === 'MT4' && (
+              <div className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl shadow-sm border border-blue-100 p-6">
+                <div className="mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">MT4 Account Status</h3>
+                  <p className="text-sm text-gray-600">
+                    Review your MT4 account before creating the agent
+                  </p>
+                </div>
+                <MT4AccountInfo autoRefresh={true} refreshInterval={15000} showOpenOrders={true} />
+
+                {formData.category === 'SCALPING' && (
+                  <div className="mt-4 bg-blue-100 border border-blue-300 rounded-lg p-4">
+                    <div className="flex gap-3">
+                      <Info className="h-5 w-5 text-blue-700 flex-shrink-0 mt-0.5" />
+                      <div className="text-sm">
+                        <p className="font-medium text-blue-900 mb-1">MT4 Scalping: BTC Only</p>
+                        <p className="text-blue-800">
+                          MT4 scalping agents trade <strong>Bitcoin (BTCUSDm) only</strong> for optimal execution speed and tight spreads.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Trading Category */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
               <div className="flex items-center gap-2 mb-6">
@@ -295,17 +390,27 @@ export default function CreateAgentPage() {
                 <h2 className="text-xl font-semibold text-gray-900">Budget Allocation</h2>
               </div>
 
-              {/* OKX Requirements Warning */}
+              {/* Broker-specific Requirements */}
               <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-4">
                 <div className="flex gap-3">
                   <Info className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
                   <div className="text-sm">
-                    <p className="font-medium text-amber-900 mb-1">OKX Trading Requirements</p>
-                    <ul className="list-disc list-inside space-y-1 text-amber-800">
-                      <li><strong>Minimum per trade: $20 USDT</strong></li>
-                      <li><strong>Minimum agent budget: $50 USDT</strong> (2 trades + buffer)</li>
-                      <li>Recommended: $100+ for effective scalping</li>
-                    </ul>
+                    <p className="font-medium text-amber-900 mb-1">{formData.broker} Trading Requirements</p>
+                    {formData.broker === 'OKX' && (
+                      <ul className="list-disc list-inside space-y-1 text-amber-800">
+                        <li><strong>Minimum per trade: $20 USDT</strong></li>
+                        <li><strong>Minimum agent budget: $50 USDT</strong> (2 trades + buffer)</li>
+                        <li>Recommended: $100+ for effective scalping</li>
+                      </ul>
+                    )}
+                    {formData.broker === 'MT4' && (
+                      <ul className="list-disc list-inside space-y-1 text-amber-800">
+                        <li><strong>Minimum lot size: 0.01 lots</strong></li>
+                        <li><strong>Minimum agent budget: $10 USDT</strong></li>
+                        <li>Recommended: $50+ for multiple positions</li>
+                        <li>Note: Scalping agents trade BTC only (BTCUSDm)</li>
+                      </ul>
+                    )}
                   </div>
                 </div>
               </div>
@@ -318,30 +423,30 @@ export default function CreateAgentPage() {
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-medium">$</span>
                   <input
                     type="number"
-                    min="50"
+                    min={BROKER_INFO[formData.broker].minBudget}
                     step="10"
                     value={formData.budget}
                     onChange={(e) => setFormData({ ...formData, budget: parseFloat(e.target.value) || 0 })}
                     className={`w-full border rounded-lg pl-8 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-shadow ${
-                      formData.budget < 50 ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                      formData.budget < BROKER_INFO[formData.broker].minBudget ? 'border-red-300 bg-red-50' : 'border-gray-300'
                     }`}
-                    placeholder="100"
+                    placeholder={formData.broker === 'MT4' ? '50' : '100'}
                     required
                   />
                 </div>
-                {formData.budget < 50 && (
+                {formData.budget < BROKER_INFO[formData.broker].minBudget && (
                   <p className="text-xs text-red-600 mt-2 font-medium">
-                    ⚠️ Budget must be at least $50 USDT
+                    ⚠️ Budget must be at least ${BROKER_INFO[formData.broker].minBudget} USDT for {formData.broker}
                   </p>
                 )}
-                {formData.budget >= 50 && formData.budget < 100 && (
+                {formData.budget >= BROKER_INFO[formData.broker].minBudget && formData.budget < 100 && (
                   <p className="text-xs text-amber-600 mt-2">
                     ⚠️ Consider $100+ for better trading flexibility
                   </p>
                 )}
                 {formData.budget >= 100 && (
                   <p className="text-xs text-green-600 mt-2">
-                    ✓ Good budget for effective scalping
+                    ✓ Good budget for effective trading
                   </p>
                 )}
               </div>

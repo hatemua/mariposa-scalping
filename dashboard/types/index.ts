@@ -10,6 +10,9 @@ export interface Agent {
   name: string;
   isActive: boolean;
 
+  // Broker selection
+  broker?: 'OKX' | 'MT4' | 'BINANCE';
+
   // Intelligent agent fields
   category?: 'SCALPING' | 'SWING' | 'DAY_TRADING' | 'LONG_TERM' | 'ARBITRAGE' | 'ALL';
   riskLevel?: 1 | 2 | 3 | 4 | 5;
@@ -135,5 +138,51 @@ export interface OTPVerificationData {
 export interface WebSocketMessage {
   type: string;
   data: any;
+  timestamp: string;
+}
+
+// MT4-related interfaces
+export interface MT4Position {
+  ticket: number;
+  symbol: string;
+  type: number; // 0 = BUY, 1 = SELL
+  side: 'BUY' | 'SELL';
+  lots: number;
+  openPrice: number;
+  currentPrice?: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  profit?: number;
+  commission?: number;
+  swap?: number;
+  openTime: string;
+}
+
+export interface MT4AccountInfo {
+  account: number;
+  balance: number;
+  equity: number;
+  margin: number;
+  freeMargin: number;
+  marginLevel: number;
+  currency: string;
+  leverage: number;
+  profit: number;
+  credit: number;
+}
+
+export interface MT4BridgeStatus {
+  connected: boolean;
+  status?: string;
+  message?: string;
+  error?: string;
+  timestamp: string;
+}
+
+export interface MT4Price {
+  symbol: string;
+  bid: number;
+  ask: number;
+  spread: number;
   timestamp: string;
 }

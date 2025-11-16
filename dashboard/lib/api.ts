@@ -91,6 +91,8 @@ export const agentApi = {
 
   createAgent: async (data: {
     name: string;
+    // Broker selection
+    broker?: 'OKX' | 'MT4' | 'BINANCE';
     // Intelligent agent fields (new)
     category?: 'SCALPING' | 'SWING' | 'DAY_TRADING' | 'LONG_TERM' | 'ARBITRAGE' | 'ALL';
     riskLevel?: 1 | 2 | 3 | 4 | 5;
@@ -411,6 +413,45 @@ export const publicApi = {
 
     const response = await axios(requestConfig);
     return response;
+  }
+};
+
+// MT4 API endpoints
+export const mt4Api = {
+  // Get MT4 Bridge connection status
+  getStatus: async (): Promise<ApiResponse> => {
+    const response = await api.get('/mt4/status');
+    return response.data;
+  },
+
+  // Get MT4 account information
+  getAccount: async (): Promise<ApiResponse> => {
+    const response = await api.get('/mt4/account');
+    return response.data;
+  },
+
+  // Get MT4 open positions
+  getOpenOrders: async (): Promise<ApiResponse> => {
+    const response = await api.get('/mt4/orders/open');
+    return response.data;
+  },
+
+  // Get MT4 price for symbol
+  getPrice: async (symbol: string): Promise<ApiResponse> => {
+    const response = await api.get(`/mt4/price/${symbol}`);
+    return response.data;
+  },
+
+  // Get MT4 order history
+  getOrderHistory: async (): Promise<ApiResponse> => {
+    const response = await api.get('/mt4/orders/history');
+    return response.data;
+  },
+
+  // Get MT4 open positions (alias for getOpenOrders)
+  getPositions: async (): Promise<ApiResponse> => {
+    const response = await api.get('/mt4/positions');
+    return response.data;
   }
 };
 
