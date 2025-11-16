@@ -31,6 +31,18 @@ const PORT = process.env.BRIDGE_PORT || 8080;
 app.use(cors());
 app.use(bodyParser.json());
 
+// Error handling for JSON parsing errors
+app.use((error, req, res, next) => {
+  if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
+    logger.error('JSON parse error in request body:', error.message, 'Body:', req.body);
+    return res.status(400).json({
+      error: 'Invalid JSON in request body',
+      details: error.message
+    });
+  }
+  next();
+});
+
 // Basic authentication middleware
 const authenticate = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -233,18 +245,29 @@ app.post('/api/v1/orders', authenticate, async (req, res) => {
 // Close position
 app.post('/api/v1/orders/close', authenticate, async (req, res) => {
   try {
+    logger.info('Close order request received:', JSON.stringify(req.body));
     const { ticket } = req.body;
 
     if (!ticket) {
+      logger.error('Missing ticket number in request body');
       return res.status(400).json({ error: 'Missing ticket number' });
     }
 
+    const ticketNum = parseInt(ticket);
+    if (isNaN(ticketNum) || ticketNum <= 0) {
+      logger.error('Invalid ticket number:', ticket);
+      return res.status(400).json({ error: 'Invalid ticket number. Must be a positive integer' });
+    }
+
+    logger.info('Sending CLOSE_ORDER request to MT4 for ticket:', ticketNum);
     const data = await sendMT4Request('CLOSE_ORDER', {
-      ticket: parseInt(ticket)
+      ticket: ticketNum
     });
 
+    logger.info('Close order response from MT4:', JSON.stringify(data));
     res.json(data);
   } catch (error) {
+    logger.error('Close order error:', error.message, error.stack);
     res.status(500).json({ error: error.message });
   }
 });

@@ -34,6 +34,9 @@ int OnInit()
    Print("ZMQ socket bound to ", zmqEndpoint);
    Print("MT4Bridge EA initialized successfully");
 
+   // Set timer to check ZMQ messages every 100ms (even when no ticks)
+   EventSetMillisecondTimer(100);
+
    // Set chart properties
    Comment("MT4Bridge Active\n",
            "ZMQ Endpoint: ", zmqEndpoint, "\n",
@@ -48,6 +51,7 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    Print("MT4Bridge EA shutting down...");
+   EventKillTimer();
    socket.unbind(zmqEndpoint);
    socket.disconnect(zmqEndpoint);
    Comment("");
@@ -57,6 +61,24 @@ void OnDeinit(const int reason)
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
 void OnTick()
+{
+   // Check for incoming ZMQ messages on every tick
+   CheckZmqMessages();
+}
+
+//+------------------------------------------------------------------+
+//| Timer function - checks messages even without ticks             |
+//+------------------------------------------------------------------+
+void OnTimer()
+{
+   // Check for incoming ZMQ messages every 100ms
+   CheckZmqMessages();
+}
+
+//+------------------------------------------------------------------+
+//| Check and process ZMQ messages                                   |
+//+------------------------------------------------------------------+
+void CheckZmqMessages()
 {
    // Check for incoming ZMQ messages (non-blocking)
    ZmqMsg request;
@@ -298,13 +320,35 @@ string CloseOrder(string requestJson)
       return ErrorResponse("Order not found");
    }
 
-   if (OrderClose(OrderTicket(), OrderLots(), OrderClosePrice(), 3, clrGray))
+   // Check if order is a market order (not pending)
+   int orderType = OrderType();
+   if (orderType != OP_BUY && orderType != OP_SELL)
+   {
+      return ErrorResponse("Cannot close pending order. Use delete order instead");
+   }
+
+   // Get correct close price based on order type
+   double closePrice;
+   if (orderType == OP_BUY)
+   {
+      closePrice = MarketInfo(OrderSymbol(), MODE_BID);
+   }
+   else // OP_SELL
+   {
+      closePrice = MarketInfo(OrderSymbol(), MODE_ASK);
+   }
+
+   // Get slippage from symbol's spread or use default 30 points
+   int slippage = (int)MathMax(MarketInfo(OrderSymbol(), MODE_SPREAD) * 2, 30);
+
+   if (OrderClose(OrderTicket(), OrderLots(), closePrice, slippage, clrGray))
    {
       string json = StringFormat("{\"error\":null,\"data\":{\"success\":true,\"ticket\":%d}}", ticket);
       return json;
    }
 
-   return ErrorResponse("Failed to close order: " + IntegerToString(GetLastError()));
+   int errorCode = GetLastError();
+   return ErrorResponse("Failed to close order. Error code: " + IntegerToString(errorCode));
 }
 
 //+------------------------------------------------------------------+
@@ -322,7 +366,21 @@ string CloseAllOrders(string requestJson)
          if (filterSymbol != "" && OrderSymbol() != filterSymbol)
             continue;
 
-         if (OrderClose(OrderTicket(), OrderLots(), OrderClosePrice(), 3, clrGray))
+         // Only close market orders
+         int orderType = OrderType();
+         if (orderType != OP_BUY && orderType != OP_SELL)
+            continue;
+
+         // Get correct close price
+         double closePrice;
+         if (orderType == OP_BUY)
+            closePrice = MarketInfo(OrderSymbol(), MODE_BID);
+         else
+            closePrice = MarketInfo(OrderSymbol(), MODE_ASK);
+
+         int slippage = (int)MathMax(MarketInfo(OrderSymbol(), MODE_SPREAD) * 2, 30);
+
+         if (OrderClose(OrderTicket(), OrderLots(), closePrice, slippage, clrGray))
          {
             closedCount++;
          }

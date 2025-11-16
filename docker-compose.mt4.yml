@@ -25,6 +25,9 @@ services:
       mkdir -p ~/.vnc
       x11vnc -storepasswd mt4bridge2024 ~/.vnc/passwd
 
+      echo '=== Cleaning up stale X11 locks ==='
+      rm -f /tmp/.X0-lock /tmp/.X11-unix/X0
+
       echo '=== Starting Xvfb ==='
       Xvfb :0 -screen 0 1280x1024x24 &
       sleep 2
