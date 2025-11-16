@@ -84,7 +84,7 @@ export class BrokerFilterService {
       console.error(`Error filtering signal for ${universalSymbol} at ${userBroker}:`, error);
       return {
         allowed: false,
-        reason: `Error checking symbol availability: ${error.message}`
+        reason: `Error checking symbol availability: ${(error as Error).message}`
       };
     }
   }
@@ -355,7 +355,7 @@ export class BrokerFilterService {
       console.error('Error validating agent configuration:', error);
       return {
         valid: false,
-        errors: [`Validation error: ${error.message}`],
+        errors: [`Validation error: ${(error as Error).message}`],
         warnings: []
       };
     }

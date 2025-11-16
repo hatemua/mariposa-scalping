@@ -135,11 +135,13 @@ export interface Trade {
   pnl?: number;
   fees?: number;
   okxOrderId?: string;
+  mt4Ticket?: number;
   signalId?: string;
   llmValidationScore?: number;
   expectedWinProbability?: number;
   actualOutcome?: 'WIN' | 'LOSS' | 'BREAKEVEN';
   performanceNotes?: string;
+  closeReason?: 'manual' | 'sell-signal' | 'market-drop' | 'stop-loss' | 'take-profit';
   createdAt: Date;
   updatedAt: Date;
 }

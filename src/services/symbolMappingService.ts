@@ -28,41 +28,41 @@ export class SymbolMappingService {
   // Static symbol mappings (most common)
   private readonly STATIC_MAPPINGS: SymbolMapping[] = [
     // Forex Major Pairs
-    { universal: 'EURUSD', okx: null, mt4: 'EURUSD', binance: null, description: 'Euro vs US Dollar', assetClass: 'FOREX', type: 'MAJOR' },
-    { universal: 'GBPUSD', okx: null, mt4: 'GBPUSD', binance: null, description: 'British Pound vs US Dollar', assetClass: 'FOREX', type: 'MAJOR' },
-    { universal: 'USDJPY', okx: null, mt4: 'USDJPY', binance: null, description: 'US Dollar vs Japanese Yen', assetClass: 'FOREX', type: 'MAJOR' },
-    { universal: 'USDCHF', okx: null, mt4: 'USDCHF', binance: null, description: 'US Dollar vs Swiss Franc', assetClass: 'FOREX', type: 'MAJOR' },
-    { universal: 'AUDUSD', okx: null, mt4: 'AUDUSD', binance: null, description: 'Australian Dollar vs US Dollar', assetClass: 'FOREX', type: 'MAJOR' },
-    { universal: 'USDCAD', okx: null, mt4: 'USDCAD', binance: null, description: 'US Dollar vs Canadian Dollar', assetClass: 'FOREX', type: 'MAJOR' },
-    { universal: 'NZDUSD', okx: null, mt4: 'NZDUSD', binance: null, description: 'New Zealand Dollar vs US Dollar', assetClass: 'FOREX', type: 'MAJOR' },
+    { universal: 'EURUSD', okx: undefined, mt4: 'EURUSD', binance: undefined, description: 'Euro vs US Dollar', assetClass: 'FOREX', type: 'MAJOR' },
+    { universal: 'GBPUSD', okx: undefined, mt4: 'GBPUSD', binance: undefined, description: 'British Pound vs US Dollar', assetClass: 'FOREX', type: 'MAJOR' },
+    { universal: 'USDJPY', okx: undefined, mt4: 'USDJPY', binance: undefined, description: 'US Dollar vs Japanese Yen', assetClass: 'FOREX', type: 'MAJOR' },
+    { universal: 'USDCHF', okx: undefined, mt4: 'USDCHF', binance: undefined, description: 'US Dollar vs Swiss Franc', assetClass: 'FOREX', type: 'MAJOR' },
+    { universal: 'AUDUSD', okx: undefined, mt4: 'AUDUSD', binance: undefined, description: 'Australian Dollar vs US Dollar', assetClass: 'FOREX', type: 'MAJOR' },
+    { universal: 'USDCAD', okx: undefined, mt4: 'USDCAD', binance: undefined, description: 'US Dollar vs Canadian Dollar', assetClass: 'FOREX', type: 'MAJOR' },
+    { universal: 'NZDUSD', okx: undefined, mt4: 'NZDUSD', binance: undefined, description: 'New Zealand Dollar vs US Dollar', assetClass: 'FOREX', type: 'MAJOR' },
 
     // Forex Cross Pairs
-    { universal: 'EURGBP', okx: null, mt4: 'EURGBP', binance: null, description: 'Euro vs British Pound', assetClass: 'FOREX', type: 'MINOR' },
-    { universal: 'EURJPY', okx: null, mt4: 'EURJPY', binance: null, description: 'Euro vs Japanese Yen', assetClass: 'FOREX', type: 'MINOR' },
-    { universal: 'GBPJPY', okx: null, mt4: 'GBPJPY', binance: null, description: 'British Pound vs Japanese Yen', assetClass: 'FOREX', type: 'MINOR' },
-    { universal: 'EURAUD', okx: null, mt4: 'EURAUD', binance: null, description: 'Euro vs Australian Dollar', assetClass: 'FOREX', type: 'MINOR' },
+    { universal: 'EURGBP', okx: undefined, mt4: 'EURGBP', binance: undefined, description: 'Euro vs British Pound', assetClass: 'FOREX', type: 'MINOR' },
+    { universal: 'EURJPY', okx: undefined, mt4: 'EURJPY', binance: undefined, description: 'Euro vs Japanese Yen', assetClass: 'FOREX', type: 'MINOR' },
+    { universal: 'GBPJPY', okx: undefined, mt4: 'GBPJPY', binance: undefined, description: 'British Pound vs Japanese Yen', assetClass: 'FOREX', type: 'MINOR' },
+    { universal: 'EURAUD', okx: undefined, mt4: 'EURAUD', binance: undefined, description: 'Euro vs Australian Dollar', assetClass: 'FOREX', type: 'MINOR' },
 
     // Precious Metals / Commodities
-    { universal: 'XAUUSD', okx: 'GOLD-USDT', mt4: 'XAUUSD', binance: null, description: 'Gold vs US Dollar', assetClass: 'COMMODITIES', type: 'SPOT' },
-    { universal: 'XAGUSD', okx: 'SILVER-USDT', mt4: 'XAGUSD', binance: null, description: 'Silver vs US Dollar', assetClass: 'COMMODITIES', type: 'SPOT' },
+    { universal: 'XAUUSD', okx: 'GOLD-USDT', mt4: 'XAUUSD', binance: undefined, description: 'Gold vs US Dollar', assetClass: 'COMMODITIES', type: 'SPOT' },
+    { universal: 'XAGUSD', okx: 'SILVER-USDT', mt4: 'XAGUSD', binance: undefined, description: 'Silver vs US Dollar', assetClass: 'COMMODITIES', type: 'SPOT' },
 
     // Crypto (Major)
     { universal: 'BTCUSD', okx: 'BTC-USDT', mt4: 'BTCUSDm', binance: 'BTCUSDT', description: 'Bitcoin vs US Dollar', assetClass: 'CRYPTO', type: 'MAJOR' },
     { universal: 'ETHUSD', okx: 'ETH-USDT', mt4: 'ETHUSD', binance: 'ETHUSDT', description: 'Ethereum vs US Dollar', assetClass: 'CRYPTO', type: 'MAJOR' },
-    { universal: 'BNBUSD', okx: 'BNB-USDT', mt4: null, binance: 'BNBUSDT', description: 'Binance Coin vs US Dollar', assetClass: 'CRYPTO', type: 'MAJOR' },
+    { universal: 'BNBUSD', okx: 'BNB-USDT', mt4: undefined, binance: 'BNBUSDT', description: 'Binance Coin vs US Dollar', assetClass: 'CRYPTO', type: 'MAJOR' },
     { universal: 'SOLUSD', okx: 'SOL-USDT', mt4: 'SOLUSD', binance: 'SOLUSDT', description: 'Solana vs US Dollar', assetClass: 'CRYPTO', type: 'MAJOR' },
     { universal: 'XRPUSD', okx: 'XRP-USDT', mt4: 'XRPUSD', binance: 'XRPUSDT', description: 'Ripple vs US Dollar', assetClass: 'CRYPTO', type: 'MAJOR' },
 
     // Crypto (Altcoins)
-    { universal: 'ADAUSD', okx: 'ADA-USDT', mt4: null, binance: 'ADAUSDT', description: 'Cardano vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
-    { universal: 'DOTUSD', okx: 'DOT-USDT', mt4: null, binance: 'DOTUSDT', description: 'Polkadot vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
-    { universal: 'AVAXUSD', okx: 'AVAX-USDT', mt4: null, binance: 'AVAXUSDT', description: 'Avalanche vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
-    { universal: 'MATICUSD', okx: 'MATIC-USDT', mt4: null, binance: 'MATICUSDT', description: 'Polygon vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
-    { universal: 'LINKUSD', okx: 'LINK-USDT', mt4: null, binance: 'LINKUSDT', description: 'Chainlink vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
-    { universal: 'ATOMUSD', okx: 'ATOM-USDT', mt4: null, binance: 'ATOMUSDT', description: 'Cosmos vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
-    { universal: 'UNIUSD', okx: 'UNI-USDT', mt4: null, binance: 'UNIUSDT', description: 'Uniswap vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
+    { universal: 'ADAUSD', okx: 'ADA-USDT', mt4: undefined, binance: 'ADAUSDT', description: 'Cardano vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
+    { universal: 'DOTUSD', okx: 'DOT-USDT', mt4: undefined, binance: 'DOTUSDT', description: 'Polkadot vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
+    { universal: 'AVAXUSD', okx: 'AVAX-USDT', mt4: undefined, binance: 'AVAXUSDT', description: 'Avalanche vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
+    { universal: 'MATICUSD', okx: 'MATIC-USDT', mt4: undefined, binance: 'MATICUSDT', description: 'Polygon vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
+    { universal: 'LINKUSD', okx: 'LINK-USDT', mt4: undefined, binance: 'LINKUSDT', description: 'Chainlink vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
+    { universal: 'ATOMUSD', okx: 'ATOM-USDT', mt4: undefined, binance: 'ATOMUSDT', description: 'Cosmos vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
+    { universal: 'UNIUSD', okx: 'UNI-USDT', mt4: undefined, binance: 'UNIUSDT', description: 'Uniswap vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
     { universal: 'LTCUSD', okx: 'LTC-USDT', mt4: 'LTCUSD', binance: 'LTCUSDT', description: 'Litecoin vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
-    { universal: 'DOGEUSD', okx: 'DOGE-USDT', mt4: null, binance: 'DOGEUSDT', description: 'Dogecoin vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
+    { universal: 'DOGEUSD', okx: 'DOGE-USDT', mt4: undefined, binance: 'DOGEUSDT', description: 'Dogecoin vs US Dollar', assetClass: 'CRYPTO', type: 'SPOT' },
   ];
 
   /**

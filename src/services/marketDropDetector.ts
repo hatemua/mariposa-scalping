@@ -293,7 +293,7 @@ export class MarketDropDetector extends EventEmitter {
 
     const alert: DropAlert = {
       symbol,
-      dropLevel,
+      dropLevel: dropLevel as 'moderate' | 'severe',
       priceChange,
       timeframe,
       currentPrice,
@@ -336,7 +336,8 @@ export class MarketDropDetector extends EventEmitter {
       await redisService.zadd(key, Date.now(), alertData);
 
       // Keep only last 100 alerts
-      const count = await redisService.zcard(key);
+      const allAlerts = await redisService.zrevrange(key, 0, -1);
+      const count = allAlerts.length;
       if (count > 100) {
         await redisService.zremrangebyrank(key, 0, count - 101);
       }

@@ -92,7 +92,7 @@ export class MT4TradeManager extends EventEmitter {
         try {
           await this.checkPosition(position, result);
         } catch (error) {
-          const errorMsg = `Error checking position ${position.ticket}: ${error.message}`;
+          const errorMsg = `Error checking position ${position.ticket}: ${(error as Error).message}`;
           console.error(errorMsg);
           result.errors.push(errorMsg);
         }
@@ -107,7 +107,7 @@ export class MT4TradeManager extends EventEmitter {
 
     } catch (error) {
       console.error('Error monitoring open positions:', error);
-      result.errors.push(`Monitor error: ${error.message}`);
+      result.errors.push(`Monitor error: ${(error as Error).message}`);
     }
 
     return result;
@@ -159,7 +159,7 @@ export class MT4TradeManager extends EventEmitter {
       } else {
         // Update current price for open position
         const mt4Pos = mt4Position.find((p: any) => p.ticket === ticket);
-        if (mt4Pos) {
+        if (mt4Pos && mt4Pos.currentPrice !== undefined && mt4Pos.profit !== undefined) {
           await this.updatePositionPrice(position, mt4Pos.currentPrice, mt4Pos.profit);
         }
       }
