@@ -3,6 +3,7 @@ import { agendaService } from './agendaService';
 import { binanceService } from './binanceService';
 import { okxService } from './okxService';
 import { mt4Service } from './mt4Service';
+import { mt4TradeManager } from './mt4TradeManager';
 import { symbolMappingService } from './symbolMappingService';
 import { brokerFilterService } from './brokerFilterService';
 import { ScalpingAgent } from '../models';
@@ -342,6 +343,19 @@ export class ValidatedSignalExecutor {
 
       console.log(`✅ MT4 Order executed: ${recommendation} ${lotSize} lots ${mt4Symbol} | Ticket: ${order.ticket} | Price: ${order.openPrice}`);
 
+      // NEW: Track position in MT4 Trade Manager for auto-close monitoring
+      await mt4TradeManager.trackPosition({
+        userId: agent.userId.toString(),
+        agentId: agentId,
+        ticket: order.ticket,
+        symbol: mt4Symbol,
+        side: recommendation.toLowerCase() as 'buy' | 'sell',
+        lotSize: lotSize,
+        entryPrice: order.openPrice,
+        stopLoss: order.stopLoss,
+        takeProfit: order.takeProfit
+      });
+
       // Update signal log
       await AgentSignalLogModel.updateOne(
         { signalId: signalId, agentId: agentId },
@@ -357,6 +371,8 @@ export class ValidatedSignalExecutor {
           }
         }
       );
+
+      console.log(`📝 Position tracking started for ticket ${order.ticket}`);
 
     } catch (error) {
       console.error(`Failed to execute MT4 order:`, error);

@@ -8,7 +8,7 @@ import { ApiResponse, AgentConfig } from '../types';
 
 export const createAgent = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { name, category, riskLevel, budget, description } = req.body;
+    const { name, category, riskLevel, budget, description, broker } = req.body;
     const userId = req.user._id;
 
     // Validate required fields
@@ -39,6 +39,11 @@ export const createAgent = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
+    // NEW: MT4 Scalping validation
+    if (broker === 'MT4' && category === 'SCALPING') {
+      console.log('Creating MT4 scalping agent - BTC-only trading enabled');
+    }
+
     // Check if user has enough balance (optional - you can add OKX balance check here)
     // const userBalance = await okxService.getBalance(userId.toString());
     // if (userBalance.free.USDT < budget) { ... }
@@ -47,6 +52,7 @@ export const createAgent = async (req: AuthRequest, res: Response): Promise<void
     const agent = new ScalpingAgent({
       userId,
       name,
+      broker: broker || 'OKX',
       category,
       riskLevel,
       budget,
@@ -58,13 +64,21 @@ export const createAgent = async (req: AuthRequest, res: Response): Promise<void
 
     await agent.save();
 
-    console.log(`Intelligent agent created: ${name}, Category: ${category}, Risk: ${riskLevel}, Budget: $${budget}`);
+    console.log(`Intelligent agent created: ${name}, Category: ${category}, Risk: ${riskLevel}, Budget: $${budget}, Broker: ${agent.broker}`);
     console.log(`Auto-calculated settings: minConfidence=${agent.minLLMConfidence}, maxPositions=${agent.maxOpenPositions}`);
+
+    // Build response message
+    let message = `Intelligent agent created with ${agent.maxOpenPositions} max positions and ${(agent.minLLMConfidence * 100).toFixed(0)}% min confidence`;
+
+    // Add MT4 scalping notice
+    if (agent.broker === 'MT4' && agent.category === 'SCALPING') {
+      message += '. MT4 scalping agent will trade BTC only (BTCUSDm format).';
+    }
 
     res.status(201).json({
       success: true,
       data: agent,
-      message: `Intelligent agent created with ${agent.maxOpenPositions} max positions and ${(agent.minLLMConfidence * 100).toFixed(0)}% min confidence`
+      message
     } as ApiResponse);
   } catch (error) {
     console.error('Error creating agent:', error);

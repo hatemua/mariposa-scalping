@@ -32,12 +32,26 @@ export class BrokerFilterService {
 
   /**
    * Check if signal can be executed by user's broker
+   * NEW: Enforces BTC-only for MT4 scalping agents
    */
   async canExecuteSignal(
     universalSymbol: string,
-    userBroker: 'OKX' | 'MT4' | 'BINANCE'
+    userBroker: 'OKX' | 'MT4' | 'BINANCE',
+    agentCategory?: string
   ): Promise<SignalFilterResult> {
     try {
+      // NEW: MT4 Scalping agents can ONLY trade BTC
+      if (userBroker === 'MT4' && agentCategory === 'SCALPING') {
+        const isBTC = this.isBTCSymbol(universalSymbol);
+
+        if (!isBTC) {
+          return {
+            allowed: false,
+            reason: `MT4 scalping agents can only trade BTC. Symbol ${universalSymbol} not allowed.`
+          };
+        }
+      }
+
       // Convert to broker-specific symbol
       const brokerSymbol = await symbolMappingService.convertSymbol(
         universalSymbol,
@@ -73,6 +87,50 @@ export class BrokerFilterService {
         reason: `Error checking symbol availability: ${error.message}`
       };
     }
+  }
+
+  /**
+   * Check if symbol is BTC
+   */
+  private isBTCSymbol(symbol: string): boolean {
+    const normalizedSymbol = symbol.toUpperCase();
+    const btcVariants = ['BTCUSD', 'BTCUSDT', 'BTC', 'BTCUSDM', 'XBTUSD'];
+
+    return btcVariants.some(variant => normalizedSymbol.includes(variant));
+  }
+
+  /**
+   * Filter signals for MT4 scalping (BTC only)
+   */
+  async filterBTCOnlyForMT4(
+    signals: Array<{ symbol: string; [key: string]: any }>,
+    agentBroker: 'OKX' | 'MT4' | 'BINANCE',
+    agentCategory?: string
+  ): Promise<Array<{ signal: any; brokerSymbol: string }>> {
+    if (agentBroker !== 'MT4' || agentCategory !== 'SCALPING') {
+      // Not an MT4 scalping agent, use normal filtering
+      return this.filterSignalsForAgent(signals, agentBroker);
+    }
+
+    // MT4 scalping: Only allow BTC signals
+    const filteredSignals: Array<{ signal: any; brokerSymbol: string }> = [];
+
+    for (const signal of signals) {
+      if (this.isBTCSymbol(signal.symbol)) {
+        const filterResult = await this.canExecuteSignal(signal.symbol, agentBroker, agentCategory);
+
+        if (filterResult.allowed && filterResult.brokerSymbol) {
+          filteredSignals.push({
+            signal,
+            brokerSymbol: filterResult.brokerSymbol
+          });
+        }
+      } else {
+        console.log(`⏭️  Signal filtered: ${signal.symbol} not BTC - MT4 scalping agents trade BTC only`);
+      }
+    }
+
+    return filteredSignals;
   }
 
   /**

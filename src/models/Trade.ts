@@ -66,6 +66,10 @@ const TradeSchema = new Schema<TradeDocument>({
   okxOrderId: {
     type: String,
   },
+  mt4Ticket: {
+    type: Number,
+    index: true,
+  },
   signalId: {
     type: String,
   },
@@ -86,6 +90,10 @@ const TradeSchema = new Schema<TradeDocument>({
   performanceNotes: {
     type: String,
   },
+  closeReason: {
+    type: String,
+    enum: ['manual', 'sell-signal', 'market-drop', 'stop-loss', 'take-profit'],
+  },
 }, {
   timestamps: true,
 });
@@ -95,5 +103,6 @@ TradeSchema.index({ agentId: 1 });
 TradeSchema.index({ symbol: 1 });
 TradeSchema.index({ status: 1 });
 TradeSchema.index({ createdAt: -1 });
+TradeSchema.index({ mt4Ticket: 1 });
 
 export default mongoose.model<TradeDocument>('Trade', TradeSchema);

@@ -9,6 +9,9 @@ import { rateLimitMiddleware } from './middleware/rateLimiter';
 import { agendaService } from './services/agendaService';
 import { binanceService } from './services/binanceService';
 import { validatedSignalExecutor } from './services/validatedSignalExecutor';
+import { mt4TradeManager } from './services/mt4TradeManager';
+import { marketDropDetector } from './services/marketDropDetector';
+import { scalpingPatternService } from './services/scalpingPatternService';
 import { initializeWebSocketService } from './services/websocketService';
 import { analysisWebSocketService } from './services/analysisWebSocket';
 import routes from './routes';
@@ -136,6 +139,28 @@ const startServer = async (): Promise<void> => {
 
     await binanceService.start();
     console.log('✅ Binance service started with Redis integration');
+
+    // NEW: Initialize MT4 scalping services
+    try {
+      await scalpingPatternService.initialize();
+      console.log('✅ Scalping pattern service initialized for BTC');
+    } catch (error) {
+      console.error('⚠️  Failed to initialize scalping pattern service:', error);
+    }
+
+    try {
+      await marketDropDetector.start();
+      console.log('✅ Market drop detector started for BTC monitoring');
+    } catch (error) {
+      console.error('⚠️  Failed to start market drop detector:', error);
+    }
+
+    try {
+      await mt4TradeManager.start();
+      console.log('✅ MT4 trade manager started - monitoring positions every 10s');
+    } catch (error) {
+      console.error('⚠️  Failed to start MT4 trade manager:', error);
+    }
 
     try {
       initializeWebSocketService(server);
