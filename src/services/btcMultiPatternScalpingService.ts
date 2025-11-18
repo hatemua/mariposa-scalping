@@ -644,8 +644,12 @@ export class BTCMultiPatternScalpingService {
 
     const confluenceScore = (agreement / allTimeframes.length) * 100;
 
-    // Overall confidence is primary confidence adjusted by confluence
-    const overallConfidence = primary.confidence * (confluenceScore / 100);
+    // Overall confidence: primary confidence boosted by confluence (not penalized)
+    // Uses weighted blend where confluence amplifies confidence rather than reducing it
+    const baseWeight = 0.7;
+    const confluenceWeight = 0.3;
+    const overallConfidence = (primary.confidence * baseWeight) +
+                             (primary.confidence * (confluenceScore / 100) * confluenceWeight);
 
     return {
       primary,

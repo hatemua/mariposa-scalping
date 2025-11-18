@@ -7,6 +7,15 @@
     "dev": "nodemon src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:fibonacci": "node dist/fibonacci-worker.js",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:restart": "pm2 restart ecosystem.config.js",
+    "pm2:stop": "pm2 stop ecosystem.config.js",
+    "pm2:delete": "pm2 delete ecosystem.config.js",
+    "pm2:logs": "pm2 logs",
+    "pm2:logs:main": "pm2 logs mariposa-main",
+    "pm2:logs:fibonacci": "pm2 logs fibonacci-worker",
+    "pm2:status": "pm2 list",
     "test": "jest",
     "test:mt4": "ts-node scripts/test-mt4-connection.ts",
     "test:mt4:trading": "./scripts/test-mt4-trading-simple.sh",
@@ -49,6 +58,7 @@
     "rate-limiter-flexible": "^2.4.2",
     "redis": "^4.6.10",
     "socket.io": "^4.7.4",
+    "technicalindicators": "^3.1.0",
     "ws": "^8.14.2"
   },
   "devDependencies": {

@@ -47,7 +47,7 @@ export class SymbolMappingService {
     { universal: 'XAGUSD', okx: 'SILVER-USDT', mt4: 'XAGUSD', binance: undefined, description: 'Silver vs US Dollar', assetClass: 'COMMODITIES', type: 'SPOT' },
 
     // Crypto (Major)
-    { universal: 'BTCUSD', okx: 'BTC-USDT', mt4: 'BTCUSD', binance: 'BTCUSDT', description: 'Bitcoin vs US Dollar', assetClass: 'CRYPTO', type: 'MAJOR' },
+    { universal: 'BTCUSD', okx: 'BTC-USDT', mt4: 'BTCUSDm', binance: 'BTCUSDT', description: 'Bitcoin vs US Dollar', assetClass: 'CRYPTO', type: 'MAJOR' },
     { universal: 'ETHUSD', okx: 'ETH-USDT', mt4: 'ETHUSD', binance: 'ETHUSDT', description: 'Ethereum vs US Dollar', assetClass: 'CRYPTO', type: 'MAJOR' },
     { universal: 'BNBUSD', okx: 'BNB-USDT', mt4: undefined, binance: 'BNBUSDT', description: 'Binance Coin vs US Dollar', assetClass: 'CRYPTO', type: 'MAJOR' },
     { universal: 'SOLUSD', okx: 'SOL-USDT', mt4: 'SOLUSD', binance: 'SOLUSDT', description: 'Solana vs US Dollar', assetClass: 'CRYPTO', type: 'MAJOR' },
