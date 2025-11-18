@@ -537,6 +537,95 @@ export const getMT4RecommendedSymbols = async (req: AuthRequest, res: Response):
 };
 
 /**
+ * Get MT4 connection status
+ */
+export const getMT4Status = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?._id;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error: 'Unauthorized'
+      } as ApiResponse);
+      return;
+    }
+
+    // Check if user has MT4 credentials configured
+    const user = await User.findById(userId);
+
+    // Debug logging
+    console.log(`[MT4 Status] Checking credentials for user: ${userId} (${user?.email || 'unknown'})`);
+    console.log(`[MT4 Status] Credential fields:`, {
+      hasServerUrl: !!user?.mt4ServerUrl,
+      hasAccountNumber: !!user?.mt4AccountNumber,
+      hasPassword: !!user?.mt4Password,
+      serverUrlLength: user?.mt4ServerUrl?.length || 0,
+      accountNumberLength: user?.mt4AccountNumber?.length || 0,
+      passwordLength: user?.mt4Password?.length || 0,
+      brokerName: user?.mt4BrokerName || '(not set)'
+    });
+
+    const hasCredentials = !!(user?.mt4ServerUrl && user?.mt4AccountNumber && user?.mt4Password);
+
+    if (!hasCredentials) {
+      console.log(`[MT4 Status] User ${userId} has incomplete credentials - returning not_configured`);
+      res.json({
+        success: true,
+        data: {
+          connected: false,
+          status: 'not_configured',
+          message: 'MT4 credentials not configured',
+          debug: {
+            userId: userId.toString(),
+            email: user?.email,
+            hasServerUrl: !!user?.mt4ServerUrl,
+            hasAccountNumber: !!user?.mt4AccountNumber,
+            hasPassword: !!user?.mt4Password
+          },
+          timestamp: new Date().toISOString()
+        }
+      } as ApiResponse);
+      return;
+    }
+
+    // Test connection to MT4 bridge
+    const pingSuccess = await mt4Service.ping(userId);
+
+    if (!pingSuccess) {
+      res.json({
+        success: true,
+        data: {
+          connected: false,
+          status: 'bridge_offline',
+          message: 'MT4 bridge is not responding',
+          timestamp: new Date().toISOString()
+        }
+      } as ApiResponse);
+      return;
+    }
+
+    // Bridge is online and responsive
+    res.json({
+      success: true,
+      data: {
+        connected: true,
+        status: 'connected',
+        message: 'MT4 bridge is online and ready',
+        timestamp: new Date().toISOString()
+      }
+    } as ApiResponse);
+
+  } catch (error) {
+    console.error('Error getting MT4 status:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to get MT4 status'
+    } as ApiResponse);
+  }
+};
+
+/**
  * Delete MT4 credentials
  */
 export const deleteMT4Credentials = async (req: AuthRequest, res: Response): Promise<void> => {

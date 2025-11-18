@@ -475,6 +475,20 @@ export class AgendaService {
 
       await this.agenda.start();
       console.log('✅ Agenda service started with Redis integration');
+
+      // BTC Fibonacci Scalping Service MOVED TO DEDICATED WORKER
+      // This service now runs in a separate PM2 process (fibonacci-worker.ts)
+      // to avoid LLM API competition with other services
+      console.log('ℹ️  BTC Fibonacci Scalping runs in dedicated worker (not started here)');
+
+      // COMMENTED OUT - Now runs in fibonacci-worker.ts:
+      // try {
+      //   const { btcMultiPatternScalpingService } = await import('./btcMultiPatternScalpingService');
+      //   await btcMultiPatternScalpingService.start();
+      //   console.log('✅ BTC Fibonacci Scalping Service auto-started');
+      // } catch (error: any) {
+      //   console.error('❌ Failed to start BTC Fibonacci Scalping Service:', error.message);
+      // }
     } catch (error) {
       console.error('❌ Failed to start Agenda service:', error);
       throw error;
@@ -1100,6 +1114,30 @@ export class AgendaService {
         await this.updateJobMetrics('expire-whale-activities', 'error');
       }
     });
+
+    // BTC Fibonacci Scalping Signal Generation Job
+    // DEPRECATED: Signal generation now happens via WebSocket (real-time on candle close)
+    //             This job is kept for backward compatibility but not scheduled
+    // this.agenda.define('generate-fibonacci-signals', async (job: any) => { ... });
+
+    // BTC Fibonacci Position Monitoring Job
+    this.agenda.define('monitor-fibonacci-positions', async (job: any) => {
+      try {
+        const { positionMonitorService } = await import('./positionMonitorService');
+
+        console.log('🔍 Monitoring Fibonacci scalping positions...');
+        await positionMonitorService.monitorAllPositions();
+
+        const count = positionMonitorService.getMonitoredCount();
+        console.log(`✅ Monitored ${count} Fibonacci positions`);
+
+        await this.updateJobMetrics('monitor-fibonacci-positions', 'success');
+
+      } catch (error: any) {
+        console.error('❌ Error monitoring Fibonacci positions:', error.message);
+        await this.updateJobMetrics('monitor-fibonacci-positions', 'error');
+      }
+    });
   }
 
   private async performSystemHealthCheck(): Promise<void> {
@@ -1197,11 +1235,12 @@ export class AgendaService {
       console.log('  ✓ process-execution-queue (every 15s)');
 
       // AUTO-SCAN: Continuously scan market for opportunities/whales (FAST REAL-TIME!)
-      await this.agenda.every('30 seconds', 'auto-scan-opportunities');
-      console.log('  ✓ auto-scan-opportunities (every 30s) - SIGNAL DETECTION ACTIVE');
+      // REDUCED FREQUENCY: Prioritize MT4 Fibonacci scalping (free up LLM API quota)
+      await this.agenda.every('5 minutes', 'auto-scan-opportunities');
+      console.log('  ✓ auto-scan-opportunities (every 5min) - SIGNAL DETECTION ACTIVE (reduced for Fibonacci priority)');
 
-      await this.agenda.every('45 seconds', 'auto-detect-whales');
-      console.log('  ✓ auto-detect-whales (every 45s) - WHALE DETECTION ACTIVE');
+      await this.agenda.every('3 minutes', 'auto-detect-whales');
+      console.log('  ✓ auto-detect-whales (every 3min) - WHALE DETECTION ACTIVE (reduced for Fibonacci priority)');
 
       // Broadcast active opportunities every minute (backup signal broadcaster)
       await this.agenda.every('1 minute', 'broadcast-opportunities');
@@ -1210,8 +1249,8 @@ export class AgendaService {
       // Update performance metrics every 5 minutes
       await this.agenda.every('5 minutes', 'update-performance-metrics');
 
-      // Refresh real-time analysis cache every 2 minutes (faster refresh)
-      await this.agenda.every('2 minutes', 'refresh-realtime-analysis', {
+      // Refresh real-time analysis cache (REDUCED: Prioritize Fibonacci scalping)
+      await this.agenda.every('10 minutes', 'refresh-realtime-analysis', {
         symbols: ['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOTUSDT', 'LINKUSDT']
       });
 
@@ -1245,6 +1284,11 @@ export class AgendaService {
       // Expire old whale activities every 5 minutes
       await this.agenda.every('5 minutes', 'expire-whale-activities');
       console.log('  ✓ expire-whale-activities (every 5min)');
+
+      // BTC Fibonacci Scalping - MOVED TO DEDICATED WORKER
+      // Position monitoring now runs in fibonacci-worker.ts for resource isolation
+      // await this.agenda.every('1 minute', 'monitor-fibonacci-positions');
+      console.log('  ℹ️  Fibonacci position monitoring runs in dedicated worker (not scheduled here)');
 
       // Daily market report to Telegram (if enabled)
       const reportEnabled = process.env.DAILY_REPORT_TELEGRAM_ENABLED === 'true';

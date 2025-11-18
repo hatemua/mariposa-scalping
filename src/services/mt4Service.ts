@@ -160,6 +160,17 @@ export class MT4Service {
         throw new Error(`Volume too small: ${volume}. Minimum is 0.01 lots`);
       }
 
+      // Debug logging
+      console.log(`[MT4 Service] Creating market order:`, {
+        userId: userId.substring(0, 8) + '...',
+        universalSymbol,
+        mt4Symbol,
+        side,
+        volume,
+        stopLoss: stopLoss || 'none',
+        takeProfit: takeProfit || 'none'
+      });
+
       const response = await client.post('/api/v1/orders', {
         symbol: mt4Symbol,
         type: side === 'buy' ? 'BUY' : 'SELL',
@@ -181,10 +192,15 @@ export class MT4Service {
       // Start polling for order updates
       setTimeout(() => this.pollOrderStatus(userId, order.ticket), this.orderPollingInterval);
 
-      // Log latency
-      if (response.data.latency_ms) {
-        console.log(`MT4 Order executed in ${response.data.latency_ms}ms | Ticket: ${order.ticket}`);
-      }
+      // Log success with details
+      console.log(`[MT4 Service] ✅ Order created successfully:`, {
+        ticket: order.ticket,
+        symbol: order.symbol,
+        side: order.type,
+        volume: order.volume,
+        openPrice: order.openPrice,
+        latency_ms: response.data.latency_ms || 'unknown'
+      });
 
       return order;
 
@@ -201,6 +217,13 @@ export class MT4Service {
     try {
       const client = await this.getClient(userId);
 
+      // Debug logging
+      console.log(`[MT4 Service] Closing position:`, {
+        userId: userId.substring(0, 8) + '...',
+        ticket,
+        volume: volume || 'full position'
+      });
+
       const response = await client.post('/api/v1/orders/close', {
         ticket: ticket,
         volume: volume || 0 // 0 means close full position
@@ -211,6 +234,15 @@ export class MT4Service {
       }
 
       const closedOrder = this.mapMT4OrderResponse(response.data);
+
+      // Log successful closure
+      console.log(`[MT4 Service] ✅ Position closed successfully:`, {
+        ticket: closedOrder.ticket,
+        symbol: closedOrder.symbol,
+        openPrice: closedOrder.openPrice,
+        closePrice: (closedOrder as any).closePrice,
+        profit: closedOrder.profit
+      });
 
       // Update cache
       await this.cacheOrderData(closedOrder);

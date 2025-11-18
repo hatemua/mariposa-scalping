@@ -138,7 +138,7 @@ const ScalpingAgentSchema = new Schema<ScalpingAgentDocument>({
   },
   allowedSignalCategories: [{
     type: String,
-    enum: ['BREAKOUT', 'REVERSAL', 'MOMENTUM', 'ARBITRAGE', 'VOLUME_SURGE', 'WHALE_ACTIVITY'],
+    enum: ['BREAKOUT', 'REVERSAL', 'MOMENTUM', 'ARBITRAGE', 'VOLUME_SURGE', 'WHALE_ACTIVITY', 'FIBONACCI_SCALPING'],
   }],
   tags: [{
     type: String,
@@ -216,7 +216,7 @@ ScalpingAgentSchema.pre('save', function(next) {
 
   // Auto-set allowed signal categories based on agent category
   if (this.category === 'SCALPING') {
-    this.allowedSignalCategories = ['MOMENTUM', 'VOLUME_SURGE', 'WHALE_ACTIVITY'];
+    this.allowedSignalCategories = ['MOMENTUM', 'VOLUME_SURGE', 'WHALE_ACTIVITY', 'FIBONACCI_SCALPING'];
   } else if (this.category === 'SWING') {
     this.allowedSignalCategories = ['BREAKOUT', 'REVERSAL'];
   } else if (this.category === 'DAY_TRADING') {
@@ -227,7 +227,7 @@ ScalpingAgentSchema.pre('save', function(next) {
     this.allowedSignalCategories = ['ARBITRAGE'];
   } else {
     // ALL category - accept all signal types
-    this.allowedSignalCategories = ['BREAKOUT', 'REVERSAL', 'MOMENTUM', 'ARBITRAGE', 'VOLUME_SURGE', 'WHALE_ACTIVITY'];
+    this.allowedSignalCategories = ['BREAKOUT', 'REVERSAL', 'MOMENTUM', 'ARBITRAGE', 'VOLUME_SURGE', 'WHALE_ACTIVITY', 'FIBONACCI_SCALPING'];
   }
 
   next();

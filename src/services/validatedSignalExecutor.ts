@@ -10,13 +10,47 @@ import { ScalpingAgent } from '../models';
 import AgentSignalLogModel from '../models/AgentSignalLog';
 
 /**
+ * Filter configuration for ValidatedSignalExecutor
+ */
+export interface ExecutorFilterConfig {
+  symbolFilter?: string[];      // Only process signals for these symbols (e.g., ['BTCUSDT'])
+  categoryFilter?: string[];    // Only process signals with these categories (e.g., ['FIBONACCI_SCALPING'])
+  queueNames?: string[];        // Which queues to process (defaults to both)
+}
+
+/**
  * ValidatedSignalExecutor - Consumes validated signals from queue and executes trades
  * This is the MISSING LINK in the signal execution pipeline
  */
 export class ValidatedSignalExecutor {
   private readonly VALIDATED_SIGNALS_QUEUE = 'validated_signals';
+  private readonly FIBONACCI_PRIORITY_QUEUE = 'fibonacci_priority_signals'; // NEW: Priority queue for Fibonacci
   private isProcessing = false;
   private processInterval: NodeJS.Timeout | null = null;
+
+  // Filter configuration (optional - for specialized workers)
+  private filterConfig?: ExecutorFilterConfig;
+
+  /**
+   * Constructor with optional filter configuration
+   * @param filterConfig - Filter to restrict which signals this executor processes
+   */
+  constructor(filterConfig?: ExecutorFilterConfig) {
+    this.filterConfig = filterConfig;
+
+    if (filterConfig) {
+      console.log('📋 ValidatedSignalExecutor initialized with filters:');
+      if (filterConfig.symbolFilter) {
+        console.log(`   - Symbols: ${filterConfig.symbolFilter.join(', ')}`);
+      }
+      if (filterConfig.categoryFilter) {
+        console.log(`   - Categories: ${filterConfig.categoryFilter.join(', ')}`);
+      }
+      if (filterConfig.queueNames) {
+        console.log(`   - Queues: ${filterConfig.queueNames.join(', ')}`);
+      }
+    }
+  }
 
   /**
    * Start the validated signal executor
@@ -28,12 +62,12 @@ export class ValidatedSignalExecutor {
     // Process immediately on startup
     await this.processQueue();
 
-    // Then process every 5 seconds
+    // Then process every 1 second (OPTIMIZED: Faster for MT4 Fibonacci scalping)
     this.processInterval = setInterval(async () => {
       await this.processQueue();
-    }, 5000);
+    }, 1000);
 
-    console.log('✅ ValidatedSignalExecutor started - processing every 5 seconds');
+    console.log('✅ ValidatedSignalExecutor started - processing every 1 second (optimized for Fibonacci scalping)');
   }
 
   /**
@@ -69,16 +103,26 @@ export class ValidatedSignalExecutor {
 
       console.log(`📤 Processing ${signals.length} validated signals from queue`);
 
-      // Process each signal
+      // Process each signal (with optional filtering)
+      let processedCount = 0;
+      let filteredCount = 0;
       for (const signal of signals) {
         try {
+          // Check if signal passes filters
+          if (!this.shouldProcessSignal(signal)) {
+            filteredCount++;
+            console.log(`⏭️  Signal ${signal.signalId} filtered out: ${signal.symbol} (category: ${signal.category || 'unknown'})`);
+            continue;
+          }
+
           await this.executeSignal(signal);
+          processedCount++;
         } catch (error) {
           console.error(`Failed to execute signal ${signal.id}:`, error);
         }
       }
 
-      console.log(`✅ Processed ${signals.length} validated signals`);
+      console.log(`✅ Processed ${processedCount} validated signals${filteredCount > 0 ? ` (filtered: ${filteredCount})` : ''}`);
     } catch (error) {
       console.error('Error processing validated signals queue:', error);
     } finally {
@@ -87,17 +131,73 @@ export class ValidatedSignalExecutor {
   }
 
   /**
-   * Dequeue signals from Redis queue (priority-sorted)
+   * Check if a signal should be processed based on filter configuration
+   */
+  private shouldProcessSignal(signal: any): boolean {
+    // No filters = process all signals
+    if (!this.filterConfig) {
+      return true;
+    }
+
+    // Check symbol filter
+    if (this.filterConfig.symbolFilter && this.filterConfig.symbolFilter.length > 0) {
+      if (!this.filterConfig.symbolFilter.includes(signal.symbol)) {
+        return false;
+      }
+    }
+
+    // Check category filter
+    if (this.filterConfig.categoryFilter && this.filterConfig.categoryFilter.length > 0) {
+      if (!signal.category || !this.filterConfig.categoryFilter.includes(signal.category)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Dequeue signals from Redis queue (PRIORITY: Fibonacci signals first)
    */
   private async dequeueSignals(limit: number): Promise<any[]> {
     try {
       const signals: any[] = [];
 
-      for (let i = 0; i < limit; i++) {
-        const item = await redisService.dequeue(this.VALIDATED_SIGNALS_QUEUE);
-        if (!item) break;
+      // Determine which queues to process based on filter config
+      const shouldProcessFibonacci = !this.filterConfig?.queueNames ||
+        this.filterConfig.queueNames.includes('fibonacci_priority_signals');
+      const shouldProcessRegular = !this.filterConfig?.queueNames ||
+        this.filterConfig.queueNames.includes('validated_signals');
 
-        signals.push(item.data);
+      // PRIORITY 1: Dequeue Fibonacci signals first (up to 50% of limit)
+      let fibCount = 0;
+      if (shouldProcessFibonacci) {
+        const fibLimit = Math.ceil(limit / 2);
+        for (let i = 0; i < fibLimit; i++) {
+          const item = await redisService.dequeue(this.FIBONACCI_PRIORITY_QUEUE);
+          if (!item) break;
+
+          signals.push(item.data);
+          fibCount++;
+          console.log(`🎯 [PRIORITY] Dequeued Fibonacci signal ${item.data.signalId} for agent ${item.data.agentId}`);
+        }
+      }
+
+      // PRIORITY 2: Fill remaining slots with regular signals
+      let regularCount = 0;
+      if (shouldProcessRegular) {
+        const remaining = limit - signals.length;
+        for (let i = 0; i < remaining; i++) {
+          const item = await redisService.dequeue(this.VALIDATED_SIGNALS_QUEUE);
+          if (!item) break;
+
+          signals.push(item.data);
+          regularCount++;
+        }
+      }
+
+      if (signals.length > 0) {
+        console.log(`📤 Dequeued ${signals.length} signals total (Fibonacci: ${fibCount}, Other: ${regularCount})`);
       }
 
       return signals;
@@ -144,8 +244,12 @@ export class ValidatedSignalExecutor {
         return;
       }
 
-      // NEW: Check if symbol is available at agent's broker
-      const filterResult = await brokerFilterService.canExecuteSignal(symbol, agent.broker);
+      // NEW: Check if symbol is available at agent's broker (pass category for MT4 BTC-only filtering)
+      const filterResult = await brokerFilterService.canExecuteSignal(
+        symbol,
+        agent.broker,
+        validatedSignal.category  // Required for MT4 Fibonacci scalping BTC-only restriction
+      );
 
       if (!filterResult.allowed) {
         console.log(`⏭️  Signal filtered: ${symbol} not available at ${agent.broker} - ${filterResult.reason}`);
@@ -332,6 +436,19 @@ export class ValidatedSignalExecutor {
 
     // Execute MT4 order immediately (no scheduling needed - MT4 is ultra-fast)
     try {
+      // Debug logging before execution
+      console.log(`[ValidatedSignalExecutor] Executing MT4 signal:`, {
+        agentId,
+        agentName: agent.name,
+        universalSymbol,
+        mt4Symbol,
+        recommendation,
+        lotSize,
+        stopLoss: stopLoss || 'none',
+        takeProfit: takeProfit || 'none',
+        executionPrice
+      });
+
       const order = await mt4Service.createMarketOrder(
         agent.userId.toString(),
         universalSymbol,
@@ -355,6 +472,21 @@ export class ValidatedSignalExecutor {
         stopLoss: order.stopLoss,
         takeProfit: order.takeProfit
       });
+
+      // NEW: Track Fibonacci scalping positions for LLM-based early exit
+      if (validatedSignal.category === 'FIBONACCI_SCALPING') {
+        const { positionMonitorService } = await import('./positionMonitorService');
+        await positionMonitorService.addPosition(
+          signalId,
+          agent.userId.toString(),
+          agentId,
+          universalSymbol,
+          order.openPrice,
+          validatedSignal, // Store full signal data for exit analysis
+          order.ticket
+        );
+        console.log(`📊 Added Fibonacci position ${signalId} to LLM monitoring`);
+      }
 
       // Update signal log
       await AgentSignalLogModel.updateOne(

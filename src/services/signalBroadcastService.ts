@@ -31,6 +31,7 @@ interface ValidatedSignalForAgent {
   rejectionReasons: string[];
   riskRewardRatio: number;
   timestamp: Date;
+  category?: string; // NEW: Signal category for priority routing
   // Execution parameters from LLM validation
   positionSize: number;
   positionSizePercent: number;
@@ -101,8 +102,14 @@ export class SignalBroadcastService {
 
       console.log(`Eligible agents: ${eligibleAgents.length}, Excluded agents: ${excludedCount}`);
 
-      // SECOND PASS: Validate signal for each eligible agent concurrently
-      const validationPromises = eligibleAgents.map(async (agent) => {
+      // SECOND PASS: Validate signal for each eligible agent in BATCHES
+      // Batch validation to avoid overwhelming LLM API (prioritize Fibonacci scalping)
+      const batchSize = signal.category === 'FIBONACCI_SCALPING' ? 2 : 3; // Smaller batches for Fibonacci
+      const validationPromises: Promise<ValidatedSignalForAgent | null>[] = [];
+
+      for (let i = 0; i < eligibleAgents.length; i += batchSize) {
+        const batch = eligibleAgents.slice(i, i + batchSize);
+        const batchPromises = batch.map(async (agent) => {
         try {
           // Create validation signal with agentId
           const validationSignal = {
@@ -128,6 +135,7 @@ export class SignalBroadcastService {
             rejectionReasons: validationResult.isValid ? [] : [validationResult.reasoning],
             riskRewardRatio: 0, // No longer calculated - LLM handles this
             timestamp: new Date(),
+            category: signal.category, // NEW: Pass through signal category for priority routing
             // CRITICAL: Include execution parameters from LLM validation
             positionSize: validationResult.positionSize,
             positionSizePercent: validationResult.positionSizePercent,
@@ -189,8 +197,21 @@ export class SignalBroadcastService {
           rejectedCount++;
           return null;
         }
-      });
+        });
 
+        // Process batch concurrently
+        const batchResults = await Promise.all(batchPromises);
+        validationPromises.push(...batchResults.map(r => Promise.resolve(r)));
+
+        // Small delay between batches to prevent LLM API rate limiting
+        // Skip delay for last batch
+        if (i + batchSize < eligibleAgents.length) {
+          await new Promise(resolve => setTimeout(resolve, 400)); // 400ms between batches
+          console.log(`  Processed batch ${Math.floor(i / batchSize) + 1}, waiting 400ms before next batch...`);
+        }
+      }
+
+      // Wait for all batches to complete (already resolved, just collecting)
       await Promise.all(validationPromises);
 
       // Publish broadcast summary
@@ -283,11 +304,17 @@ export class SignalBroadcastService {
 
   /**
    * Queue a validated signal for execution
+   * NEW: Fibonacci signals get priority queue routing
    */
   private async queueValidatedSignal(validatedSignal: ValidatedSignalForAgent): Promise<void> {
     const priority = validatedSignal.llmValidationScore;
 
-    await redisService.enqueue(this.VALIDATED_SIGNALS_QUEUE, {
+    // Determine queue based on signal category (Fibonacci signals get priority)
+    const queueName = validatedSignal.category === 'FIBONACCI_SCALPING'
+      ? 'fibonacci_priority_signals'
+      : this.VALIDATED_SIGNALS_QUEUE;
+
+    await redisService.enqueue(queueName, {
       id: `${validatedSignal.signalId}:${validatedSignal.agentId}`,
       data: validatedSignal,
       timestamp: Date.now(),
@@ -299,7 +326,7 @@ export class SignalBroadcastService {
     await redisService.set(key, validatedSignal, { ttl: 3600 });
 
     console.log(
-      `Queued validated signal for agent ${validatedSignal.agentName} with priority ${priority}`
+      `✅ Queued ${validatedSignal.category || 'signal'} to ${queueName === 'fibonacci_priority_signals' ? 'PRIORITY' : 'regular'} queue for agent ${validatedSignal.agentName} (priority: ${priority})`
     );
   }
 

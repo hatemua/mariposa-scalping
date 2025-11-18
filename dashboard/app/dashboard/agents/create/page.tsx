@@ -25,7 +25,7 @@ const CATEGORY_INFO = {
     label: 'Scalping',
     description: 'Quick trades lasting seconds to minutes',
     icon: '⚡',
-    signals: ['MOMENTUM', 'VOLUME_SURGE', 'WHALE_ACTIVITY']
+    signals: ['MOMENTUM', 'VOLUME_SURGE', 'WHALE_ACTIVITY', 'FIBONACCI_SCALPING']
   },
   SWING: {
     label: 'Swing Trading',
@@ -55,7 +55,7 @@ const CATEGORY_INFO = {
     label: 'Mixed Strategy',
     description: 'Flexible, all trading styles',
     icon: '🌟',
-    signals: ['BREAKOUT', 'REVERSAL', 'MOMENTUM', 'ARBITRAGE', 'VOLUME_SURGE', 'WHALE_ACTIVITY']
+    signals: ['BREAKOUT', 'REVERSAL', 'MOMENTUM', 'ARBITRAGE', 'VOLUME_SURGE', 'WHALE_ACTIVITY', 'FIBONACCI_SCALPING']
   }
 };
 

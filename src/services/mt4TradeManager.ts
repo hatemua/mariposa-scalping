@@ -133,6 +133,17 @@ export class MT4TradeManager extends EventEmitter {
         `Closing position ${ticket}`
       );
 
+      // Debug logging for auto-close trigger
+      console.log(`[MT4 TradeManager] Auto-close triggered:`, {
+        ticket,
+        symbol,
+        side,
+        reason: 'sell-signal',
+        patternConfidence: pattern.confidence,
+        patternDirection: pattern.direction,
+        reasoning: pattern.reasoning.substring(0, 100) + '...'
+      });
+
       await this.closePosition(ticket, userId._id.toString(), 'sell-signal', pattern.reasoning);
 
       result.positionsClosed++;
@@ -272,6 +283,18 @@ export class MT4TradeManager extends EventEmitter {
     takeProfit?: number;
   }): Promise<void> {
     try {
+      // Debug logging
+      console.log(`[MT4 TradeManager] Tracking new position:`, {
+        ticket: positionData.ticket,
+        agentId: positionData.agentId,
+        symbol: positionData.symbol,
+        side: positionData.side,
+        lotSize: positionData.lotSize,
+        entryPrice: positionData.entryPrice,
+        stopLoss: positionData.stopLoss || 'none',
+        takeProfit: positionData.takeProfit || 'none'
+      });
+
       // Check if position already exists
       const existing = await MT4Position.findOne({ ticket: positionData.ticket });
 
@@ -305,6 +328,7 @@ export class MT4TradeManager extends EventEmitter {
         `📝 Tracking new MT4 position | Ticket: ${positionData.ticket} | ` +
         `${positionData.side.toUpperCase()} ${positionData.lotSize} lots ${positionData.symbol} @ $${positionData.entryPrice}`
       );
+      console.log(`[MT4 TradeManager] ✅ Position saved to database and cached`);
 
       // Emit event
       this.emit('position_opened', {
@@ -379,7 +403,7 @@ export class MT4TradeManager extends EventEmitter {
         trade = new Trade({
           userId: position.userId,
           agentId: position.agentId,
-          symbol: position.symbol.replace('m', ''), // BTCUSDm -> BTCUSD
+          symbol: position.symbol, // Symbol mapping now correct - no workaround needed
           side: position.side,
           type: 'market',
           quantity: position.lotSize,

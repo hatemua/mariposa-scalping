@@ -19,7 +19,8 @@ import {
   calculateMT4LotSize,
   getMT4Capabilities,
   getMT4RecommendedSymbols,
-  deleteMT4Credentials
+  deleteMT4Credentials,
+  getMT4Status
 } from '../controllers/mt4Controller';
 
 const router = Router();
@@ -27,7 +28,8 @@ const router = Router();
 // All routes require authentication
 router.use(authenticate);
 
-// Configuration endpoints
+// Status and configuration endpoints
+router.get('/status', getMT4Status);
 router.post('/configure', configureMT4Credentials);
 router.post('/test-connection', testMT4Connection);
 router.delete('/credentials', deleteMT4Credentials);
