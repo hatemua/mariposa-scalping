@@ -2,6 +2,7 @@ import { redisService } from './redisService';
 import { signalValidationService } from './signalValidationService';
 import { signalDatabaseLoggingService } from './signalDatabaseLoggingService';
 import { telegramService } from './telegramService';
+import { validatedSignalExecutor } from './validatedSignalExecutor';
 import { ScalpingAgent } from '../models';
 
 interface BroadcastSignal {
@@ -163,8 +164,15 @@ export class SignalBroadcastService {
 
           if (validationResult.isValid) {
             validatedCount++;
-            // Queue for execution
-            await this.queueValidatedSignal(validatedSignal);
+            validatedSignals.push(validatedSignal);
+
+            // MT4 signals: Execute immediately without queueing (ultra-low latency)
+            // Other brokers: Queue for execution (rate limiting, scheduling)
+            if (agent.broker === 'MT4') {
+              await this.executeMT4SignalDirectly(agent, validatedSignal, signal);
+            } else {
+              await this.queueValidatedSignal(validatedSignal);
+            }
           } else {
             rejectedCount++;
             console.log(
@@ -278,7 +286,10 @@ export class SignalBroadcastService {
 
       // Send Telegram notification if enabled
       // Only send for high-priority signals or signals validated by multiple agents
-      const shouldNotify = signal.priority >= 70 || validatedCount >= 2;
+      // Skip Telegram for MT4-only signals (MT4 executes immediately without notification)
+      const mt4AgentIds = mt4Agents.map((a: any) => a._id.toString());
+      const hasNonMT4Validated = validatedSignals.some(s => !mt4AgentIds.includes(s.agentId));
+      const shouldNotify = (signal.priority >= 70 || validatedCount >= 2) && hasNonMT4Validated;
 
       if (shouldNotify) {
         try {
@@ -597,6 +608,29 @@ export class SignalBroadcastService {
     } catch (error) {
       console.error('Error getting open positions:', error);
       return 0;
+    }
+  }
+
+  /**
+   * Execute MT4 signal immediately without queueing
+   * Called directly from validation loop for ultra-low latency execution
+   */
+  private async executeMT4SignalDirectly(
+    agent: any,
+    validatedSignal: ValidatedSignalForAgent,
+    signal: BroadcastSignal
+  ): Promise<void> {
+    try {
+      console.log(`⚡ IMMEDIATE MT4 EXECUTION (no queue): ${signal.symbol} for agent ${agent.name}`);
+
+      // Call the validated signal executor's execute method directly
+      // This bypasses the Redis queue entirely for instant execution
+      await validatedSignalExecutor.executeSignalDirect(agent, validatedSignal, signal.symbol);
+
+      console.log(`✅ MT4 signal executed immediately for ${agent.name}: ${signal.symbol}`);
+    } catch (error) {
+      console.error(`❌ Failed to execute MT4 signal directly for ${agent.name}:`, error);
+      // Log the failure but don't throw - other agents should still process
     }
   }
 }

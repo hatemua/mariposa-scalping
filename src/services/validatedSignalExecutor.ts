@@ -631,6 +631,25 @@ export class ValidatedSignalExecutor {
       return 0;
     }
   }
+
+  /**
+   * Execute a signal immediately without queueing
+   * Used for MT4 signals that need ultra-low latency execution
+   */
+  async executeSignalDirect(agent: any, validatedSignal: any, symbol: string): Promise<void> {
+    try {
+      console.log(`⚡ DIRECT EXECUTION (no queue): ${symbol} for agent ${agent.name} (${agent.broker})`);
+
+      // Call the main executeSignal method directly
+      // This bypasses the Redis queue and processes immediately
+      await this.executeSignal(validatedSignal);
+
+      console.log(`✅ Direct execution completed for ${agent.name}: ${symbol}`);
+    } catch (error) {
+      console.error(`❌ Direct execution failed for ${agent.name}:`, error);
+      throw error; // Re-throw so caller knows it failed
+    }
+  }
 }
 
 export const validatedSignalExecutor = new ValidatedSignalExecutor();
