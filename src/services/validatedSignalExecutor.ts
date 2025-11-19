@@ -220,14 +220,49 @@ export class ValidatedSignalExecutor {
 
       // Safety check: only execute if signal is valid
       if (!isValid) {
-        console.warn(`⚠️  Signal ${signalId} is not valid, skipping execution`);
+        console.warn(`[DEBUG] ❌ Signal ${signalId} VALIDATION FAILED, skipping execution`);
+        console.warn(`[DEBUG] Agent ID: ${agentId}, Signal:`, {
+          signalId,
+          symbol,
+          recommendation,
+          category: validatedSignal.category
+        });
+
+        // Update DB with rejection reason
+        await AgentSignalLogModel.updateOne(
+          { signalId, agentId },
+          {
+            $set: {
+              status: 'REJECTED',
+              failedReason: 'Signal validation failed - isValid=false'
+            }
+          }
+        );
         return;
       }
 
       // Safety check: position size must be valid
       if (!positionSize || positionSize <= 0 || isNaN(positionSize)) {
-        console.error(`⚠️  Invalid position size: ${positionSize}, skipping execution`);
-        console.error(`📋 Full signal data:`, JSON.stringify(validatedSignal, null, 2));
+        console.error(`[DEBUG] ❌ INVALID POSITION SIZE: ${positionSize}, skipping execution`);
+        console.error(`[DEBUG] Agent ID: ${agentId}, Signal:`, {
+          signalId,
+          symbol,
+          recommendation,
+          positionSize,
+          category: validatedSignal.category
+        });
+        console.error(`[DEBUG] Full signal data:`, JSON.stringify(validatedSignal, null, 2));
+
+        // Update DB with rejection reason
+        await AgentSignalLogModel.updateOne(
+          { signalId, agentId },
+          {
+            $set: {
+              status: 'REJECTED',
+              failedReason: `Invalid position size: ${positionSize}`
+            }
+          }
+        );
         return;
       }
 
@@ -236,6 +271,23 @@ export class ValidatedSignalExecutor {
       if (!agent) {
         console.error(`Agent ${agentId} not found, cannot execute signal`);
         return;
+      }
+
+      // DEBUG: Log execution start for MT4 agents
+      if (agent.broker === 'MT4') {
+        console.log(`[DEBUG] ========== MT4 SIGNAL EXECUTION START ==========`);
+        console.log(`[DEBUG] Executing MT4 signal for agent ${agent.name}:`, {
+          signalId,
+          agentId,
+          agentName: agent.name,
+          broker: agent.broker,
+          category: agent.category,
+          symbol,
+          recommendation,
+          positionSize,
+          isValid,
+          allowedSignalCategories: agent.allowedSignalCategories
+        });
       }
 
       // Check if agent is still active
@@ -250,6 +302,8 @@ export class ValidatedSignalExecutor {
         agent.broker,
         validatedSignal.category  // Required for MT4 Fibonacci scalping BTC-only restriction
       );
+
+      console.log(`🔍 Broker filter check for ${symbol} @ ${agent.broker} (${agent.category}): ${filterResult.allowed ? '✅ ALLOWED' : '❌ BLOCKED'} ${filterResult.reason ? `- ${filterResult.reason}` : ''}`);
 
       if (!filterResult.allowed) {
         console.log(`⏭️  Signal filtered: ${symbol} not available at ${agent.broker} - ${filterResult.reason}`);
@@ -397,6 +451,8 @@ export class ValidatedSignalExecutor {
    */
   private async executeMT4Signal(agent: any, validatedSignal: any, universalSymbol: string, mt4Symbol: string): Promise<void> {
     const { signalId, agentId, recommendation, positionSize } = validatedSignal;
+
+    console.log(`🎯 Starting MT4 execution: ${recommendation} ${universalSymbol} (${mt4Symbol}) for agent ${agent.name} (${agentId})`);
 
     // Get current market price
     let executionPrice = validatedSignal.takeProfitPrice || validatedSignal.recommendedEntry;

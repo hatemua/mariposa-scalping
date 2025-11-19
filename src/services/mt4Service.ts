@@ -173,7 +173,7 @@ export class MT4Service {
 
       const response = await client.post('/api/v1/orders', {
         symbol: mt4Symbol,
-        type: side === 'buy' ? 'BUY' : 'SELL',
+        side: side === 'buy' ? 'BUY' : 'SELL',
         volume: volume,
         stopLoss: stopLoss || 0,
         takeProfit: takeProfit || 0,

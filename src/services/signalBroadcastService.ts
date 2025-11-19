@@ -57,12 +57,25 @@ export class SignalBroadcastService {
     validatedSignals: ValidatedSignalForAgent[];
   }> {
     try {
-      console.log(`Broadcasting signal ${signal.id} for ${signal.symbol} to all agents`);
+      console.log(`\n[DEBUG] ========== SIGNAL BROADCAST START ==========`);
+      console.log(`[DEBUG] Broadcasting signal ${signal.id}:`, {
+        symbol: signal.symbol,
+        category: signal.category,
+        recommendation: signal.recommendation,
+        confidence: (signal.confidence * 100).toFixed(1) + '%',
+        entryPrice: signal.entryPrice,
+        timestamp: signal.timestamp
+      });
 
       // Get ALL agents (including inactive) to track exclusions
       const allAgents = await ScalpingAgent.find({});
 
-      console.log(`Found ${allAgents.length} total agents in system`);
+      console.log(`[DEBUG] Found ${allAgents.length} total agents in system`);
+
+      // Count MT4 agents specifically
+      const mt4Agents = allAgents.filter(a => a.broker === 'MT4');
+      const mt4ActiveAgents = mt4Agents.filter(a => a.isActive);
+      console.log(`[DEBUG] MT4 agents: ${mt4Agents.length} total, ${mt4ActiveAgents.length} active`);
 
       const eligibleAgents = [];
       const validatedSignals: ValidatedSignalForAgent[] = [];
@@ -100,7 +113,8 @@ export class SignalBroadcastService {
         }
       }
 
-      console.log(`Eligible agents: ${eligibleAgents.length}, Excluded agents: ${excludedCount}`);
+      const eligibleMT4Agents = eligibleAgents.filter(a => a.broker === 'MT4');
+      console.log(`[DEBUG] Eligible agents: ${eligibleAgents.length} (${eligibleMT4Agents.length} MT4), Excluded: ${excludedCount}`);
 
       // SECOND PASS: Validate signal for each eligible agent in BATCHES
       // Batch validation to avoid overwhelming LLM API (prioritize Fibonacci scalping)
@@ -225,9 +239,24 @@ export class SignalBroadcastService {
         timestamp: new Date(),
       });
 
-      console.log(
-        `Broadcast complete: ${validatedCount} validated, ${rejectedCount} rejected out of ${eligibleAgents.length} eligible agents`
-      );
+      const validatedMT4Agents = validatedSignals.filter(s => {
+        const agent = eligibleAgents.find(a => a._id.toString() === s.agentId);
+        return agent?.broker === 'MT4';
+      });
+
+      console.log(`[DEBUG] ========== SIGNAL BROADCAST COMPLETE ==========`);
+      console.log(`[DEBUG] Broadcast summary for signal ${signal.id}:`, {
+        symbol: signal.symbol,
+        category: signal.category,
+        recommendation: signal.recommendation,
+        totalAgents: allAgents.length,
+        eligibleAgents: eligibleAgents.length,
+        excludedAgents: excludedCount,
+        validatedAgents: validatedCount,
+        validatedMT4Agents: validatedMT4Agents.length,
+        rejectedAgents: rejectedCount
+      });
+      console.log(`[DEBUG] ==================================================\n`);
 
       // Log the broadcast to database with correct counts
       await signalDatabaseLoggingService.logBroadcastedSignal({
@@ -282,8 +311,9 @@ export class SignalBroadcastService {
               rejectedAgents: rejectedCount
             }
           );
-        } catch (error) {
-          console.error('Error sending Telegram notification (non-critical):', error);
+          console.log(`✅ Telegram notification sent successfully for ${signal.symbol}`);
+        } catch (error: any) {
+          console.error(`❌ Error sending Telegram notification (non-critical) for ${signal.symbol}:`, error.message);
           // Don't throw - Telegram failures shouldn't break trading
         }
       } else {
@@ -470,18 +500,32 @@ export class SignalBroadcastService {
   private async checkAgentEligibility(agent: any, signal: BroadcastSignal): Promise<string[]> {
     const reasons = [];
 
+    // DEBUG: Log agent details for MT4 agents
+    if (agent.broker === 'MT4') {
+      console.log(`[DEBUG] Checking eligibility for MT4 agent ${agent.name} (${agent._id}):`, {
+        isActive: agent.isActive,
+        category: agent.category,
+        broker: agent.broker,
+        allowedSignalCategories: agent.allowedSignalCategories,
+        signalCategory: signal.category,
+        signalSymbol: signal.symbol,
+        signalRecommendation: signal.recommendation
+      });
+    }
+
     // Check 1: Is agent active?
     if (!agent.isActive) {
       reasons.push(`Agent not active (status: STOPPED)`);
+      console.log(`[DEBUG] ❌ Agent ${agent.name} rejected: not active`);
       return reasons; // Skip other checks if inactive
     }
 
     // Check 2: Category compatibility (for intelligent agents)
     if (signal.category && agent.allowedSignalCategories && agent.allowedSignalCategories.length > 0) {
       if (!agent.allowedSignalCategories.includes(signal.category)) {
-        reasons.push(
-          `Signal category '${signal.category}' not in allowed [${agent.allowedSignalCategories.join(', ')}]`
-        );
+        const reason = `Signal category '${signal.category}' not in allowed [${agent.allowedSignalCategories.join(', ')}]`;
+        reasons.push(reason);
+        console.log(`[DEBUG] ❌ Agent ${agent.name} rejected: ${reason}`);
       }
     }
 
@@ -489,7 +533,9 @@ export class SignalBroadcastService {
     try {
       const balance = await this.getAgentAvailableBalance(agent);
       if (balance < 10) {
-        reasons.push(`Insufficient balance: $${balance.toFixed(2)} (min $10)`);
+        const reason = `Insufficient balance: $${balance.toFixed(2)} (min $10)`;
+        reasons.push(reason);
+        console.log(`[DEBUG] ❌ Agent ${agent.name} rejected: ${reason}`);
       }
     } catch (error) {
       console.error(`Error checking balance for agent ${agent.name}:`, error);
@@ -500,9 +546,9 @@ export class SignalBroadcastService {
     try {
       const openPositions = await this.getAgentOpenPositions((agent._id as any).toString());
       if (openPositions >= agent.maxOpenPositions) {
-        reasons.push(
-          `Max open positions reached (${openPositions}/${agent.maxOpenPositions})`
-        );
+        const reason = `Max open positions reached (${openPositions}/${agent.maxOpenPositions})`;
+        reasons.push(reason);
+        console.log(`[DEBUG] ❌ Agent ${agent.name} rejected: ${reason}`);
       }
     } catch (error) {
       console.error(`Error checking open positions for agent ${agent.name}:`, error);
@@ -510,9 +556,14 @@ export class SignalBroadcastService {
 
     // Check 5: Signal confidence vs agent minimum
     if (agent.minLLMConfidence && signal.confidence < agent.minLLMConfidence) {
-      reasons.push(
-        `Signal confidence ${(signal.confidence * 100).toFixed(0)}% below min ${(agent.minLLMConfidence * 100).toFixed(0)}%`
-      );
+      const reason = `Signal confidence ${(signal.confidence * 100).toFixed(0)}% below min ${(agent.minLLMConfidence * 100).toFixed(0)}%`;
+      reasons.push(reason);
+      console.log(`[DEBUG] ❌ Agent ${agent.name} rejected: ${reason}`);
+    }
+
+    // DEBUG: Log if agent passed all checks
+    if (reasons.length === 0 && agent.broker === 'MT4') {
+      console.log(`[DEBUG] ✅ Agent ${agent.name} PASSED all eligibility checks`);
     }
 
     return reasons;

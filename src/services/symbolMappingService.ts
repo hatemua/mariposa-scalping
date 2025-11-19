@@ -69,20 +69,30 @@ export class SymbolMappingService {
    * Convert universal symbol to broker-specific format
    */
   async convertSymbol(
-    universalSymbol: string,
+    inputSymbol: string,
     targetBroker: 'OKX' | 'MT4' | 'BINANCE'
   ): Promise<string | null> {
     try {
       // Check cache first
-      const cacheKey = `${this.CACHE_PREFIX}${universalSymbol}:${targetBroker}`;
+      const cacheKey = `${this.CACHE_PREFIX}${inputSymbol}:${targetBroker}`;
       const cached = await redisService.get(cacheKey);
 
       if (cached) {
         return cached === 'null' ? null : cached;
       }
 
-      // Find in static mappings
-      const mapping = this.STATIC_MAPPINGS.find(m => m.universal === universalSymbol);
+      // Step 1: Try to find mapping by universal symbol first
+      let mapping = this.STATIC_MAPPINGS.find(m => m.universal === inputSymbol);
+
+      // Step 2: If not found, normalize by searching all broker formats
+      // This handles cases like BTCUSDT (Binance) → BTCUSD (universal) → BTCUSDm (MT4)
+      if (!mapping) {
+        mapping = this.STATIC_MAPPINGS.find(m =>
+          m.okx === inputSymbol ||
+          m.mt4 === inputSymbol ||
+          m.binance === inputSymbol
+        );
+      }
 
       if (mapping) {
         let result: string | null = null;
@@ -109,7 +119,7 @@ export class SymbolMappingService {
       return null;
 
     } catch (error) {
-      console.error(`Error converting symbol ${universalSymbol} to ${targetBroker}:`, error);
+      console.error(`Error converting symbol ${inputSymbol} to ${targetBroker}:`, error);
       return null;
     }
   }

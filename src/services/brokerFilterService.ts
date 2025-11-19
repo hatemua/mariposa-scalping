@@ -40,48 +40,62 @@ export class BrokerFilterService {
     agentCategory?: string
   ): Promise<SignalFilterResult> {
     try {
+      // DEBUG: Log MT4 filtering checks
+      if (userBroker === 'MT4') {
+        console.log(`[DEBUG] BrokerFilter checking MT4 signal:`, {
+          universalSymbol,
+          userBroker,
+          agentCategory,
+          isMT4: userBroker === 'MT4',
+          isScalping: agentCategory === 'SCALPING'
+        });
+      }
+
       // NEW: MT4 Scalping agents can ONLY trade BTC
       if (userBroker === 'MT4' && agentCategory === 'SCALPING') {
         const isBTC = this.isBTCSymbol(universalSymbol);
 
+        console.log(`[DEBUG] MT4 BTC-only check for ${universalSymbol}: isBTC=${isBTC}`);
+
         if (!isBTC) {
+          const reason = `MT4 scalping agents can only trade BTC. Symbol ${universalSymbol} not allowed.`;
+          console.log(`[DEBUG] ❌ BrokerFilter rejected: ${reason}`);
           return {
             allowed: false,
-            reason: `MT4 scalping agents can only trade BTC. Symbol ${universalSymbol} not allowed.`
+            reason
           };
         }
       }
 
       // Convert to broker-specific symbol
+      // NOTE: inputSymbol might be in any format (BTCUSDT, BTCUSD, BTCUSDm)
+      // convertSymbol now handles normalization automatically
       const brokerSymbol = await symbolMappingService.convertSymbol(
         universalSymbol,
         userBroker
       );
 
+      console.log(`[DEBUG] Symbol mapping result: ${universalSymbol} → ${brokerSymbol} (broker: ${userBroker})`);
+
       if (!brokerSymbol) {
+        const reason = `Symbol ${universalSymbol} not available at ${userBroker}`;
+        console.log(`[DEBUG] ❌ BrokerFilter rejected: ${reason}`);
         return {
           allowed: false,
-          reason: `Symbol ${universalSymbol} not available at ${userBroker}`
+          reason
         };
       }
 
-      // Check if symbol is in broker's available symbols
-      const capabilities = await this.getBrokerCapabilities(userBroker);
-
-      if (!capabilities.availableSymbols.includes(universalSymbol)) {
-        return {
-          allowed: false,
-          reason: `Symbol ${universalSymbol} not supported by ${userBroker}`
-        };
-      }
-
+      // If convertSymbol succeeded, the symbol is valid and in the mapping table
+      // No need for additional availability checks that can cause false negatives
+      console.log(`[DEBUG] ✅ BrokerFilter PASSED: ${universalSymbol} allowed at ${userBroker} as ${brokerSymbol}`);
       return {
         allowed: true,
         brokerSymbol: brokerSymbol
       };
 
     } catch (error) {
-      console.error(`Error filtering signal for ${universalSymbol} at ${userBroker}:`, error);
+      console.error(`[DEBUG] ❌ BrokerFilter ERROR for ${universalSymbol} at ${userBroker}:`, error);
       return {
         allowed: false,
         reason: `Error checking symbol availability: ${(error as Error).message}`

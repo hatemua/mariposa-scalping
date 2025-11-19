@@ -160,6 +160,14 @@ export class TelegramService {
   }
 
   /**
+   * Escape special Markdown characters to prevent parsing errors
+   */
+  private escapeMarkdown(text: string): string {
+    // Escape all special Markdown characters
+    return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
+  }
+
+  /**
    * Format signal as Telegram message with rich formatting
    */
   private async formatSignalMessage(
@@ -231,7 +239,7 @@ export class TelegramService {
     try {
       const { aiAnalysisService } = await import('./aiAnalysisService');
       const explanation = await aiAnalysisService.generateSignalExplanation(signal);
-      message += `📝 *In Simple Terms:*\n_${explanation}_\n`;
+      message += `📝 *In Simple Terms:*\n_${this.escapeMarkdown(explanation)}_\n`;
       message += `\n`;
     } catch (error) {
       console.error('Failed to generate LLM explanation:', error);
@@ -239,7 +247,7 @@ export class TelegramService {
       const shortReasoning = signal.reasoning.length > 200
         ? signal.reasoning.substring(0, 197) + '...'
         : signal.reasoning;
-      message += `💡 *Reasoning:*\n_${shortReasoning}_\n`;
+      message += `💡 *Reasoning:*\n_${this.escapeMarkdown(shortReasoning)}_\n`;
       message += `\n`;
     }
 
