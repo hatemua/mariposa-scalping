@@ -88,7 +88,9 @@ export const configureMT4Credentials = async (req: AuthRequest, res: Response): 
 };
 
 /**
- * Test MT4 connection
+ * Test MT4 bridge connection
+ * This endpoint checks if the MT4 bridge is reachable using shared credentials
+ * No user-specific credentials required
  */
 export const testMT4Connection = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -102,25 +104,27 @@ export const testMT4Connection = async (req: AuthRequest, res: Response): Promis
       return;
     }
 
-    // Test ping
-    const pingSuccess = await mt4Service.ping(userId);
+    // Ping the bridge directly using shared credentials
+    const bridgeStatus = await mt4Service.pingBridge();
 
-    if (!pingSuccess) {
+    if (!bridgeStatus.connected) {
       res.status(503).json({
         success: false,
-        error: 'MT4 bridge not responding. Please check if MT4 is running and bridge service is active.'
+        error: bridgeStatus.error || 'MT4 bridge not responding. Please check if MT4 is running and bridge service is active.',
+        data: {
+          connected: false,
+          error: bridgeStatus.error
+        }
       } as ApiResponse);
       return;
     }
 
-    // Get account info to verify connection
-    const accountInfo = await mt4Service.getBalance(userId);
-
     res.json({
       success: true,
       data: {
-        message: 'MT4 connection successful',
-        account: accountInfo
+        connected: true,
+        bridgeUrl: bridgeStatus.bridgeUrl,
+        message: 'MT4 bridge is connected and ready'
       }
     } as ApiResponse);
 
@@ -128,7 +132,11 @@ export const testMT4Connection = async (req: AuthRequest, res: Response): Promis
     console.error('Error testing MT4 connection:', error);
     res.status(500).json({
       success: false,
-      error: error instanceof Error ? error.message : 'MT4 connection test failed'
+      error: error instanceof Error ? error.message : 'MT4 connection test failed',
+      data: {
+        connected: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
     } as ApiResponse);
   }
 };

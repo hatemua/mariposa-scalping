@@ -459,7 +459,7 @@ export class MT4Service {
   }
 
   /**
-   * Ping MT4 bridge to test connection
+   * Ping MT4 bridge to test connection (using user credentials)
    */
   async ping(userId: string): Promise<boolean> {
     try {
@@ -472,6 +472,48 @@ export class MT4Service {
     } catch (error) {
       console.error('Error pinging MT4 bridge:', error);
       return false;
+    }
+  }
+
+  /**
+   * Ping MT4 bridge directly using shared bridge credentials
+   * Does not require user credentials - for status checking
+   */
+  async pingBridge(): Promise<{ connected: boolean; bridgeUrl?: string; error?: string }> {
+    try {
+      // Create a direct client with bridge credentials
+      const bridgeUsername = process.env.MT4_BRIDGE_USERNAME || 'admin';
+      const bridgePassword = process.env.MT4_BRIDGE_PASSWORD || 'changeme123';
+
+      const client = axios.create({
+        baseURL: this.bridgeURL,
+        timeout: 10000,
+        auth: {
+          username: bridgeUsername,
+          password: bridgePassword
+        }
+      });
+
+      const response = await client.get('/api/v1/ping');
+
+      if (response.data && response.data.zmq_connected) {
+        return {
+          connected: true,
+          bridgeUrl: this.bridgeURL
+        };
+      } else {
+        return {
+          connected: false,
+          error: 'Bridge responded but ZMQ not connected to MT4'
+        };
+      }
+
+    } catch (error) {
+      console.error('Error pinging MT4 bridge directly:', error);
+      return {
+        connected: false,
+        error: error instanceof Error ? error.message : 'Bridge connection failed'
+      };
     }
   }
 

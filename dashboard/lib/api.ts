@@ -418,7 +418,7 @@ export const publicApi = {
 
 // MT4 API endpoints
 export const mt4Api = {
-  // Configure MT4 credentials
+  // Configure MT4 credentials (for advanced users)
   configureMT4: async (credentials: {
     serverUrl: string;
     accountNumber: string;
@@ -429,14 +429,9 @@ export const mt4Api = {
     return response.data;
   },
 
-  // Test MT4 connection
-  testConnection: async (credentials: {
-    serverUrl: string;
-    accountNumber: string;
-    password: string;
-    brokerName?: string;
-  }): Promise<ApiResponse> => {
-    const response = await api.post('/mt4/test-connection', credentials);
+  // Test MT4 bridge connection (no credentials required)
+  testConnection: async (): Promise<ApiResponse> => {
+    const response = await api.post('/mt4/test-connection');
     return response.data;
   },
 

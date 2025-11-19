@@ -39,11 +39,11 @@ export default function SettingsPage() {
     },
     {
       id: 'mt4',
-      title: 'MT4 Configuration',
-      description: 'Connect your MT4 broker account for MetaTrader 4 trading',
+      title: 'MT4 Bridge Status',
+      description: 'Monitor MT4 bridge connection for MetaTrader 4 trading',
       icon: Key,
       href: '/dashboard/settings/mt4',
-      status: 'required'
+      status: 'optional'
     },
     {
       id: 'api-keys',

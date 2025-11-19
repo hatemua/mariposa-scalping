@@ -6,177 +6,62 @@ import { toast } from 'react-hot-toast';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import {
   Server,
-  Shield,
   CheckCircle,
   XCircle,
   AlertTriangle,
-  Eye,
-  EyeOff,
-  RefreshCw,
-  ExternalLink,
   Info,
-  Loader2
+  Loader2,
+  RefreshCw
 } from 'lucide-react';
 
-interface MT4Credentials {
-  serverUrl: string;
-  accountNumber: string;
-  password: string;
-  brokerName: string;
-}
-
-interface ValidationResult {
-  valid: boolean;
-  balance?: number;
-  leverage?: number;
+interface BridgeStatus {
+  connected: boolean;
+  bridgeUrl?: string;
   error?: string;
 }
 
 export default function MT4SettingsPage() {
-  const [credentials, setCredentials] = useState<MT4Credentials>({
-    serverUrl: process.env.NEXT_PUBLIC_MT4_BRIDGE_URL || 'http://localhost:8080',
-    accountNumber: '',
-    password: '',
-    brokerName: ''
-  });
-
-  const [showSecrets, setShowSecrets] = useState({
-    accountNumber: false,
-    password: false
-  });
-
-  const [isValidating, setIsValidating] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
-  const [hasCredentials, setHasCredentials] = useState(false);
+  const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus | null>(null);
+  const [isChecking, setIsChecking] = useState(false);
+  const [lastChecked, setLastChecked] = useState<Date | null>(null);
 
   useEffect(() => {
-    // Check if user already has credentials configured
-    checkExistingCredentials();
+    // Check bridge status on mount
+    checkBridgeStatus();
   }, []);
 
-  const checkExistingCredentials = async () => {
-    try {
-      const response = await mt4Api.getStatus();
-      setHasCredentials(response.success && response.data?.connected);
-    } catch (error) {
-      setHasCredentials(false);
-    }
-  };
-
-  const handleCredentialChange = (field: keyof MT4Credentials, value: string) => {
-    setCredentials(prev => ({
-      ...prev,
-      [field]: value
-    }));
-
-    // Clear validation when credentials change
-    if (validationResult) {
-      setValidationResult(null);
-    }
-  };
-
-  const toggleSecretVisibility = (field: keyof typeof showSecrets) => {
-    setShowSecrets(prev => ({
-      ...prev,
-      [field]: !prev[field]
-    }));
-  };
-
-  const validateCredentials = async () => {
-    if (!credentials.serverUrl || !credentials.accountNumber || !credentials.password) {
-      toast.error('Please fill in all required fields');
-      return;
-    }
-
-    setIsValidating(true);
-    setValidationResult(null);
+  const checkBridgeStatus = async () => {
+    setIsChecking(true);
 
     try {
-      const response = await mt4Api.testConnection({
-        serverUrl: credentials.serverUrl,
-        accountNumber: credentials.accountNumber,
-        password: credentials.password,
-        brokerName: credentials.brokerName || undefined
-      });
+      const response = await mt4Api.testConnection();
 
-      if (response.success && response.data?.valid) {
-        setValidationResult({
-          valid: true,
-          balance: response.data.balance,
-          leverage: response.data.leverage
+      if (response.success && response.data?.connected) {
+        setBridgeStatus({
+          connected: true,
+          bridgeUrl: response.data.bridgeUrl
         });
-        toast.success('MT4 credentials validated successfully!');
+        setLastChecked(new Date());
+        toast.success('MT4 bridge is connected and ready!');
       } else {
-        throw new Error(response.error || response.data?.error || 'Validation failed');
+        setBridgeStatus({
+          connected: false,
+          error: response.error || response.data?.error || 'Bridge connection failed'
+        });
+        setLastChecked(new Date());
+        toast.error('MT4 bridge connection failed');
       }
     } catch (error: any) {
-      console.error('Credential validation error:', error);
-      setValidationResult({
-        valid: false,
-        error: error.message || 'Invalid credentials or connection error'
+      console.error('Bridge status check error:', error);
+      setBridgeStatus({
+        connected: false,
+        error: error.message || 'Failed to check bridge status'
       });
-      toast.error('Credential validation failed');
+      setLastChecked(new Date());
+      toast.error('Failed to check MT4 bridge status');
     } finally {
-      setIsValidating(false);
+      setIsChecking(false);
     }
-  };
-
-  const saveCredentials = async () => {
-    if (!validationResult?.valid) {
-      toast.error('Please validate credentials first');
-      return;
-    }
-
-    setIsSaving(true);
-
-    try {
-      const response = await mt4Api.configureMT4({
-        serverUrl: credentials.serverUrl,
-        accountNumber: credentials.accountNumber,
-        password: credentials.password,
-        brokerName: credentials.brokerName || undefined
-      });
-
-      if (response.success) {
-        toast.success('MT4 credentials saved successfully!');
-        setHasCredentials(true);
-
-        // Clear the form for security
-        setCredentials({
-          serverUrl: process.env.NEXT_PUBLIC_MT4_BRIDGE_URL || 'http://localhost:8080',
-          accountNumber: '',
-          password: '',
-          brokerName: ''
-        });
-        setShowSecrets({
-          accountNumber: false,
-          password: false
-        });
-        setValidationResult(null);
-      } else {
-        throw new Error(response.error || 'Failed to save credentials');
-      }
-    } catch (error: any) {
-      console.error('Save credentials error:', error);
-      toast.error(error.message || 'Failed to save credentials');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const clearForm = () => {
-    setCredentials({
-      serverUrl: process.env.NEXT_PUBLIC_MT4_BRIDGE_URL || 'http://localhost:8080',
-      accountNumber: '',
-      password: '',
-      brokerName: ''
-    });
-    setValidationResult(null);
-    setShowSecrets({
-      accountNumber: false,
-      password: false
-    });
   };
 
   return (
@@ -186,248 +71,154 @@ export default function MT4SettingsPage() {
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-4">
             <Server className="h-8 w-8 text-blue-600" />
-            <h1 className="text-3xl font-bold text-gray-900">MT4 Configuration</h1>
+            <h1 className="text-3xl font-bold text-gray-900">MT4 Bridge Status</h1>
           </div>
           <p className="text-gray-600 text-lg">
-            Connect your MT4 broker account to enable automated trading on MetaTrader 4.
+            Monitor your MT4 bridge connection for automated trading on MetaTrader 4.
           </p>
         </div>
 
         {/* Status Card */}
-        {hasCredentials && (
-          <div className="bg-green-50 border border-green-200 rounded-xl p-6 mb-8">
-            <div className="flex items-center gap-3">
-              <CheckCircle className="h-6 w-6 text-green-600" />
-              <h3 className="text-lg font-semibold text-green-900">MT4 Account Connected</h3>
-            </div>
-            <p className="text-green-700 mt-2">
-              Your MT4 broker credentials are configured and working. You can now create MT4 trading agents.
+        <div className="bg-white border border-gray-200 rounded-xl shadow-lg mb-8">
+          <div className="border-b border-gray-200 px-6 py-4">
+            <h2 className="text-xl font-semibold text-gray-900">Bridge Connection Status</h2>
+            <p className="text-gray-600 mt-1">
+              The MT4 bridge connects your system to MetaTrader 4 for order execution.
             </p>
           </div>
-        )}
 
-        {/* Setup Instructions */}
+          <div className="p-6">
+            {/* Status Display */}
+            {bridgeStatus && (
+              <div className={`p-6 rounded-lg border-2 mb-6 ${
+                bridgeStatus.connected
+                  ? 'bg-green-50 border-green-300'
+                  : 'bg-red-50 border-red-300'
+              }`}>
+                <div className="flex items-center gap-4 mb-4">
+                  {bridgeStatus.connected ? (
+                    <CheckCircle className="h-12 w-12 text-green-600" />
+                  ) : (
+                    <XCircle className="h-12 w-12 text-red-600" />
+                  )}
+                  <div>
+                    <h3 className={`text-2xl font-bold ${
+                      bridgeStatus.connected ? 'text-green-900' : 'text-red-900'
+                    }`}>
+                      {bridgeStatus.connected ? 'Bridge Connected' : 'Bridge Disconnected'}
+                    </h3>
+                    {lastChecked && (
+                      <p className={`text-sm mt-1 ${
+                        bridgeStatus.connected ? 'text-green-700' : 'text-red-700'
+                      }`}>
+                        Last checked: {lastChecked.toLocaleTimeString()}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {bridgeStatus.connected ? (
+                  <div className="space-y-2 text-green-800">
+                    <p className="flex items-center gap-2">
+                      <CheckCircle className="h-5 w-5" />
+                      <span>MT4 bridge is online and ready to execute orders</span>
+                    </p>
+                    {bridgeStatus.bridgeUrl && (
+                      <p className="flex items-center gap-2">
+                        <CheckCircle className="h-5 w-5" />
+                        <span>Connected to: {bridgeStatus.bridgeUrl}</span>
+                      </p>
+                    )}
+                    <p className="flex items-center gap-2">
+                      <CheckCircle className="h-5 w-5" />
+                      <span>All MT4 agents can now execute signals</span>
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 text-red-800">
+                    <p className="flex items-center gap-2">
+                      <XCircle className="h-5 w-5" />
+                      <span>MT4 bridge is not responding</span>
+                    </p>
+                    {bridgeStatus.error && (
+                      <p className="text-sm mt-2 p-3 bg-red-100 rounded">
+                        Error: {bridgeStatus.error}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Check Connection Button */}
+            <button
+              onClick={checkBridgeStatus}
+              disabled={isChecking}
+              className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {isChecking ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-5 w-5" />
+              )}
+              {isChecking ? 'Checking Connection...' : 'Check Connection'}
+            </button>
+          </div>
+        </div>
+
+        {/* Information Card */}
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-6 mb-8">
           <div className="flex items-start gap-3">
             <Info className="h-6 w-6 text-blue-600 mt-0.5" />
             <div>
-              <h3 className="text-lg font-semibold text-blue-900 mb-3">How to Configure MT4</h3>
+              <h3 className="text-lg font-semibold text-blue-900 mb-3">About MT4 Bridge</h3>
               <div className="space-y-2 text-blue-800">
-                <p>1. Ensure your MT4 Bridge is running (default: http://localhost:8080)</p>
-                <p>2. Enter your MT4 broker <strong>Server URL</strong> (or use the bridge URL)</p>
-                <p>3. Provide your MT4 <strong>Account Number</strong> and <strong>Password</strong></p>
-                <p>4. Optionally add your <strong>Broker Name</strong> for reference</p>
-                <p>5. Click <strong>Validate Credentials</strong> to test the connection</p>
-                <p>6. Once validated, click <strong>Save Credentials</strong> to enable trading</p>
+                <p>The MT4 bridge is a service that connects this platform to your MetaTrader 4 terminal.</p>
+                <p>• <strong>No configuration needed</strong> - The bridge uses shared credentials from the system</p>
+                <p>• <strong>Automatic setup</strong> - All MT4 agents use the same bridge connection</p>
+                <p>• <strong>Real-time execution</strong> - Orders are sent directly to MT4 with ultra-low latency</p>
+                <p>• <strong>Secure connection</strong> - Communication uses encrypted channels</p>
               </div>
               <div className="mt-4 p-3 bg-blue-100 rounded-lg">
                 <p className="text-sm text-blue-900 font-medium">
-                  💡 Tip: If you're using the local MT4 bridge, leave the Server URL as default.
+                  💡 The bridge is configured by system administrators. You don't need to enter any credentials.
                 </p>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Credentials Form */}
-        <div className="bg-white border border-gray-200 rounded-xl shadow-lg">
-          <div className="border-b border-gray-200 px-6 py-4">
-            <h2 className="text-xl font-semibold text-gray-900">MT4 Credentials</h2>
-            <p className="text-gray-600 mt-1">
-              Enter your MT4 broker credentials. All data is encrypted and stored securely.
-            </p>
-          </div>
-
-          <div className="p-6 space-y-6">
-            {/* Server URL */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Server URL <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={credentials.serverUrl}
-                onChange={(e) => handleCredentialChange('serverUrl', e.target.value)}
-                placeholder="http://localhost:8080"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                The URL of your MT4 bridge server (default: http://localhost:8080)
-              </p>
-            </div>
-
-            {/* Account Number */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Account Number <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <input
-                  type={showSecrets.accountNumber ? 'text' : 'password'}
-                  value={credentials.accountNumber}
-                  onChange={(e) => handleCredentialChange('accountNumber', e.target.value)}
-                  placeholder="Enter your MT4 account number"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-12"
-                />
-                <button
-                  type="button"
-                  onClick={() => toggleSecretVisibility('accountNumber')}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                >
-                  {showSecrets.accountNumber ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
-              </div>
-            </div>
-
-            {/* Password */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Password <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <input
-                  type={showSecrets.password ? 'text' : 'password'}
-                  value={credentials.password}
-                  onChange={(e) => handleCredentialChange('password', e.target.value)}
-                  placeholder="Enter your MT4 password"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-12"
-                />
-                <button
-                  type="button"
-                  onClick={() => toggleSecretVisibility('password')}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                >
-                  {showSecrets.password ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
-              </div>
-            </div>
-
-            {/* Broker Name */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Broker Name <span className="text-gray-400">(Optional)</span>
-              </label>
-              <input
-                type="text"
-                value={credentials.brokerName}
-                onChange={(e) => handleCredentialChange('brokerName', e.target.value)}
-                placeholder="e.g., IC Markets, FTMO, etc."
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Optional: Your broker's name for reference
-              </p>
-            </div>
-
-            {/* Validation Result */}
-            {validationResult && (
-              <div className={`p-4 rounded-lg border ${
-                validationResult.valid
-                  ? 'bg-green-50 border-green-200'
-                  : 'bg-red-50 border-red-200'
-              }`}>
-                <div className="flex items-center gap-3 mb-2">
-                  {validationResult.valid ? (
-                    <CheckCircle className="h-5 w-5 text-green-600" />
-                  ) : (
-                    <XCircle className="h-5 w-5 text-red-600" />
-                  )}
-                  <span className={`font-medium ${
-                    validationResult.valid ? 'text-green-900' : 'text-red-900'
-                  }`}>
-                    {validationResult.valid ? 'Credentials Valid' : 'Validation Failed'}
-                  </span>
-                </div>
-
-                {validationResult.valid ? (
-                  <div className="text-green-800 text-sm space-y-1">
-                    <p>✓ Connection successful</p>
-                    {validationResult.balance !== undefined && (
-                      <p>✓ Account balance: ${validationResult.balance.toLocaleString()}</p>
-                    )}
-                    {validationResult.leverage && (
-                      <p>✓ Leverage: 1:{validationResult.leverage}</p>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-red-800 text-sm">
-                    {validationResult.error}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* Action Buttons */}
-            <div className="flex items-center gap-4 pt-4">
-              <button
-                onClick={validateCredentials}
-                disabled={isValidating || !credentials.serverUrl || !credentials.accountNumber || !credentials.password}
-                className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {isValidating ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                ) : (
-                  <Shield className="h-5 w-5" />
-                )}
-                {isValidating ? 'Validating...' : 'Validate Credentials'}
-              </button>
-
-              {validationResult?.valid && (
-                <button
-                  onClick={saveCredentials}
-                  disabled={isSaving}
-                  className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {isSaving ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                  ) : (
-                    <CheckCircle className="h-5 w-5" />
-                  )}
-                  {isSaving ? 'Saving...' : 'Save Credentials'}
-                </button>
-              )}
-
-              <button
-                onClick={clearForm}
-                className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Clear Form
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Security Notice */}
-        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6 mt-8">
+        {/* Troubleshooting */}
+        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6">
           <div className="flex items-start gap-3">
             <AlertTriangle className="h-6 w-6 text-yellow-600 mt-0.5" />
             <div>
-              <h3 className="text-lg font-semibold text-yellow-900 mb-2">Security Notice</h3>
-              <div className="text-yellow-800 space-y-2">
-                <p>• Your MT4 credentials are encrypted using AES-256 encryption before storage</p>
-                <p>• Never share your MT4 account credentials with anyone</p>
-                <p>• Use demo accounts for testing before deploying to live accounts</p>
-                <p>• Monitor your MT4 terminal regularly for unauthorized activity</p>
-                <p>• You can revoke access by changing your MT4 password at any time</p>
-              </div>
-            </div>
-          </div>
-        </div>
+              <h3 className="text-lg font-semibold text-yellow-900 mb-2">Troubleshooting</h3>
+              <div className="text-yellow-800 space-y-3 text-sm">
+                <div>
+                  <p className="font-semibold">Bridge Not Connected?</p>
+                  <p className="mt-1">1. Check if the MT4 bridge service is running:</p>
+                  <code className="block bg-yellow-100 p-2 rounded mt-1 font-mono">curl http://localhost:8080/api/v1/ping</code>
+                </div>
 
-        {/* Troubleshooting */}
-        <div className="bg-gray-50 border border-gray-200 rounded-xl p-6 mt-8">
-          <div className="flex items-start gap-3">
-            <Info className="h-6 w-6 text-gray-600 mt-0.5" />
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Troubleshooting</h3>
-              <div className="text-gray-700 space-y-2 text-sm">
-                <p><strong>Connection Failed?</strong> Ensure your MT4 bridge is running:</p>
-                <code className="block bg-gray-100 p-2 rounded mt-1">curl http://localhost:8080/api/v1/ping</code>
+                <div className="mt-3">
+                  <p className="font-semibold">MT4 Terminal Issues?</p>
+                  <p className="mt-1">2. Ensure MetaTrader 4 is running and logged in</p>
+                  <p className="mt-1">3. Check that the ZeroMQ Expert Advisor is attached to a chart</p>
+                </div>
 
-                <p className="mt-3"><strong>Invalid Credentials?</strong> Double-check your account number and password in MT4 terminal</p>
+                <div className="mt-3">
+                  <p className="font-semibold">Docker Setup?</p>
+                  <p className="mt-1">4. Check bridge container status:</p>
+                  <code className="block bg-yellow-100 p-2 rounded mt-1 font-mono">docker ps | grep mt4-bridge</code>
+                  <p className="mt-1">5. View bridge logs:</p>
+                  <code className="block bg-yellow-100 p-2 rounded mt-1 font-mono">docker logs mt4-bridge-server --tail 50</code>
+                </div>
 
-                <p className="mt-3"><strong>Need Help?</strong> Check the bridge logs:</p>
-                <code className="block bg-gray-100 p-2 rounded mt-1">docker logs mt4-bridge-server --tail 50</code>
+                <div className="mt-3">
+                  <p className="font-semibold">Need Help?</p>
+                  <p className="mt-1">Contact your system administrator if the bridge remains disconnected.</p>
+                </div>
               </div>
             </div>
           </div>
