@@ -64,76 +64,61 @@ interface MT4SymbolInfo {
 }
 
 export class MT4Service {
-  private clients = new Map<string, AxiosInstance>();
+  private sharedClient: AxiosInstance;
   private readonly bridgeURL = process.env.MT4_BRIDGE_URL || 'http://localhost:8080';
+  private readonly bridgeUsername = process.env.MT4_BRIDGE_USERNAME || 'admin';
+  private readonly bridgePassword = process.env.MT4_BRIDGE_PASSWORD || 'changeme123';
   private readonly orderPollingInterval = 2000; // 2 seconds
   private readonly orderCache = new Map<number, MT4Order>();
   private symbolInfoCache = new Map<string, { info: MT4SymbolInfo; timestamp: number }>();
   private readonly SYMBOL_CACHE_TTL = 300000; // 5 minutes
 
-  /**
-   * Get MT4 client for specific user
-   * Pattern: Same as OKXService
-   */
-  async getClient(userId: string): Promise<AxiosInstance> {
-    if (this.clients.has(userId)) {
-      return this.clients.get(userId)!;
-    }
+  constructor() {
+    // Create ONE shared client for all users using environment credentials
+    console.log(`🔧 Initializing MT4 Service with shared bridge: ${this.bridgeURL}`);
 
-    const user = await User.findById(userId);
-    if (!user) {
-      throw new Error(`User ${userId} not found`);
-    }
-
-    if (!user.mt4ServerUrl || !user.mt4AccountNumber || !user.mt4Password) {
-      console.error(`❌ MT4 credentials missing for user ${userId}`);
-      console.error(`   Has Server URL: ${!!user.mt4ServerUrl}, Has Account: ${!!user.mt4AccountNumber}, Has Password: ${!!user.mt4Password}`);
-      throw new Error(`MT4 API credentials not configured for user ${userId}. Please add your MT4 broker credentials in settings.`);
-    }
-
-    const credentials = this.decryptCredentials({
-      serverUrl: user.mt4ServerUrl,
-      accountNumber: user.mt4AccountNumber,
-      password: user.mt4Password,
-      brokerName: user.mt4BrokerName || undefined
-    });
-
-    const client = axios.create({
-      baseURL: credentials.serverUrl || this.bridgeURL,
-      timeout: 30000, // MT4 can be slower than OKX
+    this.sharedClient = axios.create({
+      baseURL: this.bridgeURL,
+      timeout: 30000,
       headers: {
-        'Content-Type': 'application/json',
-        'X-MT4-Account': credentials.accountNumber
+        'Content-Type': 'application/json'
       }
     });
 
-    // Add request interceptor for authentication
-    client.interceptors.request.use((config) => {
-      // Use bridge credentials from environment, not MT4 account credentials
-      const bridgeUsername = process.env.MT4_BRIDGE_USERNAME || 'admin';
-      const bridgePassword = process.env.MT4_BRIDGE_PASSWORD || 'changeme123';
-      const auth = Buffer.from(`${bridgeUsername}:${bridgePassword}`).toString('base64');
+    // Add request interceptor for Basic Authentication with shared bridge credentials
+    this.sharedClient.interceptors.request.use((config) => {
+      const auth = Buffer.from(`${this.bridgeUsername}:${this.bridgePassword}`).toString('base64');
       config.headers['Authorization'] = `Basic ${auth}`;
       return config;
     });
 
     // Add response interceptor for error handling
-    client.interceptors.response.use(
+    this.sharedClient.interceptors.response.use(
       (response) => response,
       (error) => {
         if (error.response) {
-          console.error(`MT4 API Error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+          console.error(`MT4 Bridge Error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
         } else if (error.request) {
-          console.error('MT4 API Error: No response from bridge. Is MT4 bridge running?');
+          console.error('MT4 Bridge Error: No response from bridge. Is MT4 bridge running?');
+          console.error(`  Bridge URL: ${this.bridgeURL}`);
         } else {
-          console.error(`MT4 API Error: ${error.message}`);
+          console.error(`MT4 Bridge Error: ${error.message}`);
         }
         throw error;
       }
     );
 
-    this.clients.set(userId, client);
-    return client;
+    console.log(`✅ MT4 Service initialized - using shared bridge at ${this.bridgeURL}`);
+  }
+
+  /**
+   * Get MT4 client (now returns shared client for all users)
+   * userId parameter kept for backward compatibility and logging
+   */
+  async getClient(userId: string): Promise<AxiosInstance> {
+    // Simply return the shared client - no user credential lookup needed
+    console.log(`[MT4 Service] Getting shared client for user ${userId.substring(0, 8)}...`);
+    return this.sharedClient;
   }
 
   /**
@@ -571,19 +556,23 @@ export class MT4Service {
   /**
    * Decrypt MT4 credentials
    */
-  private decryptCredentials(encryptedCreds: any): MT4Credentials {
-    try {
-      return {
-        serverUrl: decrypt(JSON.parse(encryptedCreds.serverUrl)),
-        accountNumber: decrypt(JSON.parse(encryptedCreds.accountNumber)),
-        password: decrypt(JSON.parse(encryptedCreds.password)),
-        brokerName: encryptedCreds.brokerName
-      };
-    } catch (error) {
-      console.error('Error decrypting MT4 credentials:', error);
-      throw new Error('Invalid MT4 credentials format');
-    }
-  }
+  /**
+   * DEPRECATED: No longer needed with shared bridge credentials
+   * Kept for reference only
+   */
+  // private decryptCredentials(encryptedCreds: any): MT4Credentials {
+  //   try {
+  //     return {
+  //       serverUrl: decrypt(JSON.parse(encryptedCreds.serverUrl)),
+  //       accountNumber: decrypt(JSON.parse(encryptedCreds.accountNumber)),
+  //       password: decrypt(JSON.parse(encryptedCreds.password)),
+  //       brokerName: encryptedCreds.brokerName
+  //     };
+  //   } catch (error) {
+  //     console.error('Error decrypting MT4 credentials:', error);
+  //     throw new Error('Invalid MT4 credentials format');
+  //   }
+  // }
 
   /**
    * Map MT4 API response to MT4Order interface
@@ -675,9 +664,12 @@ export class MT4Service {
   /**
    * Clear user client cache
    */
+  /**
+   * DEPRECATED: No longer needed with shared client
+   * Kept for backward compatibility (does nothing)
+   */
   clearUserClient(userId: string): void {
-    this.clients.delete(userId);
-    console.log(`Cleared MT4 client cache for user ${userId}`);
+    console.log(`[MT4 Service] clearUserClient called for ${userId} - no-op with shared client`);
   }
 }
 
