@@ -418,6 +418,34 @@ export const publicApi = {
 
 // MT4 API endpoints
 export const mt4Api = {
+  // Configure MT4 credentials
+  configureMT4: async (credentials: {
+    serverUrl: string;
+    accountNumber: string;
+    password: string;
+    brokerName?: string;
+  }): Promise<ApiResponse> => {
+    const response = await api.post('/mt4/configure', credentials);
+    return response.data;
+  },
+
+  // Test MT4 connection
+  testConnection: async (credentials: {
+    serverUrl: string;
+    accountNumber: string;
+    password: string;
+    brokerName?: string;
+  }): Promise<ApiResponse> => {
+    const response = await api.post('/mt4/test-connection', credentials);
+    return response.data;
+  },
+
+  // Delete MT4 credentials
+  deleteCredentials: async (): Promise<ApiResponse> => {
+    const response = await api.delete('/mt4/credentials');
+    return response.data;
+  },
+
   // Get MT4 Bridge connection status
   getStatus: async (): Promise<ApiResponse> => {
     const response = await api.get('/mt4/status');

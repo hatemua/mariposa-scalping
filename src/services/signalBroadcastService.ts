@@ -77,7 +77,7 @@ export class SignalBroadcastService {
       const mt4ActiveAgents = mt4Agents.filter(a => a.isActive);
       console.log(`[DEBUG] MT4 agents: ${mt4Agents.length} total, ${mt4ActiveAgents.length} active`);
 
-      const eligibleAgents = [];
+      const eligibleAgents: any[] = [];
       const validatedSignals: ValidatedSignalForAgent[] = [];
       let validatedCount = 0;
       let rejectedCount = 0;

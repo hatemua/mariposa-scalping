@@ -38,6 +38,14 @@ export default function SettingsPage() {
       status: 'required'
     },
     {
+      id: 'mt4',
+      title: 'MT4 Configuration',
+      description: 'Connect your MT4 broker account for MetaTrader 4 trading',
+      icon: Key,
+      href: '/dashboard/settings/mt4',
+      status: 'required'
+    },
+    {
       id: 'api-keys',
       title: 'API Keys',
       description: 'Manage API keys for external integrations and automation',

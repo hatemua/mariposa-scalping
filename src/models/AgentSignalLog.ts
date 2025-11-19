@@ -15,10 +15,16 @@ export interface IAgentSignalLog extends Document {
   signalCategory?: string;
 
   // Agent processing status
-  status: 'EXCLUDED' | 'RECEIVED' | 'VALIDATED' | 'REJECTED' | 'EXECUTED';
+  status: 'EXCLUDED' | 'RECEIVED' | 'VALIDATED' | 'REJECTED' | 'EXECUTED' | 'FAILED' | 'FILTERED';
 
   // If EXCLUDED - why didn't agent receive signal?
   exclusionReasons: string[];
+
+  // If FILTERED - why was signal filtered?
+  filterReason?: string;
+
+  // If FAILED - why did execution fail?
+  failedReason?: string;
 
   // If RECEIVED - validation results
   isValid: boolean;
@@ -45,6 +51,10 @@ export interface IAgentSignalLog extends Document {
   orderId?: string;
   executionPrice?: number;
   executionQuantity?: number;
+
+  // Broker-specific fields
+  broker?: 'OKX' | 'MT4' | 'BINANCE';
+  mt4Ticket?: number;
 
   // Timestamps
   processedAt: Date;
@@ -102,12 +112,18 @@ const AgentSignalLogSchema = new Schema<IAgentSignalLog>({
   status: {
     type: String,
     required: true,
-    enum: ['EXCLUDED', 'RECEIVED', 'VALIDATED', 'REJECTED', 'EXECUTED'],
+    enum: ['EXCLUDED', 'RECEIVED', 'VALIDATED', 'REJECTED', 'EXECUTED', 'FAILED', 'FILTERED'],
     index: true,
   },
   exclusionReasons: {
     type: [String],
     default: [],
+  },
+  filterReason: {
+    type: String,
+  },
+  failedReason: {
+    type: String,
   },
   isValid: {
     type: Boolean,
@@ -158,6 +174,13 @@ const AgentSignalLogSchema = new Schema<IAgentSignalLog>({
     type: Number,
   },
   executionQuantity: {
+    type: Number,
+  },
+  broker: {
+    type: String,
+    enum: ['OKX', 'MT4', 'BINANCE'],
+  },
+  mt4Ticket: {
     type: Number,
   },
   processedAt: {

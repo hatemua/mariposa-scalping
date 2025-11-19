@@ -109,8 +109,10 @@ export class MT4Service {
 
     // Add request interceptor for authentication
     client.interceptors.request.use((config) => {
-      // Simple authentication (can be enhanced with HMAC if needed)
-      const auth = Buffer.from(`${credentials.accountNumber}:${credentials.password}`).toString('base64');
+      // Use bridge credentials from environment, not MT4 account credentials
+      const bridgeUsername = process.env.MT4_BRIDGE_USERNAME || 'admin';
+      const bridgePassword = process.env.MT4_BRIDGE_PASSWORD || 'changeme123';
+      const auth = Buffer.from(`${bridgeUsername}:${bridgePassword}`).toString('base64');
       config.headers['Authorization'] = `Basic ${auth}`;
       return config;
     });

@@ -111,7 +111,20 @@ export class ValidatedSignalExecutor {
           // Check if signal passes filters
           if (!this.shouldProcessSignal(signal)) {
             filteredCount++;
-            console.log(`⏭️  Signal ${signal.signalId} filtered out: ${signal.symbol} (category: ${signal.category || 'unknown'})`);
+            const filterReason = `Signal filtered: category=${signal.category || 'unknown'}, passes shouldProcessSignal check=false`;
+            console.log(`⏭️  Signal ${signal.signalId} filtered out: ${signal.symbol} - ${filterReason}`);
+
+            // Log filtered signal to database so it's not lost
+            await AgentSignalLogModel.updateOne(
+              { signalId: signal.signalId, agentId: signal.agentId },
+              {
+                $set: {
+                  status: 'FILTERED',
+                  filterReason: filterReason,
+                  processedAt: new Date()
+                }
+              }
+            );
             continue;
           }
 
