@@ -167,11 +167,16 @@ export class MT4Service {
         slippage: 3 // pips
       });
 
+      // Debug: Log full response to verify structure
+      console.log('[DEBUG] MT4 Bridge create order response:', JSON.stringify(response.data, null, 2));
+
       if (!response.data.success) {
         throw new Error(`MT4 order failed: ${response.data.error}`);
       }
 
-      const order = this.mapMT4OrderResponse(response.data);
+      // FIX: MT4 Bridge returns { success, data: {...}, error }
+      // We need response.data.data (the nested order object)
+      const order = this.mapMT4OrderResponse(response.data.data);
 
       // Cache order for tracking
       await this.cacheOrderData(order);
@@ -216,11 +221,15 @@ export class MT4Service {
         volume: volume || 0 // 0 means close full position
       });
 
+      // Debug: Log full response
+      console.log('[DEBUG] MT4 Bridge close order response:', JSON.stringify(response.data, null, 2));
+
       if (!response.data.success) {
         throw new Error(`MT4 close order failed: ${response.data.error}`);
       }
 
-      const closedOrder = this.mapMT4OrderResponse(response.data);
+      // FIX: MT4 Bridge returns { success, data: {...}, error }
+      const closedOrder = this.mapMT4OrderResponse(response.data.data);
 
       // Log successful closure
       console.log(`[MT4 Service] ✅ Position closed successfully:`, {
@@ -309,12 +318,18 @@ export class MT4Service {
       const params = mt4Symbol ? { symbol: mt4Symbol } : {};
       const response = await client.get('/api/v1/orders/open', { params });
 
+      // Debug: Log response structure
+      console.log('[DEBUG] MT4 Bridge open positions response:', JSON.stringify(response.data, null, 2));
+
       if (!response.data.success) {
         throw new Error(`MT4 get positions failed: ${response.data.error}`);
       }
 
-      const positions: MT4Order[] = response.data.positions.map((pos: any) =>
-        this.mapMT4OrderResponse({ ...response.data, ...pos })
+      // FIX: MT4 Bridge returns { success, data: { orders: [...] } }
+      // Access response.data.data.orders or response.data.orders
+      const ordersArray = response.data.data?.orders || response.data.orders || [];
+      const positions: MT4Order[] = ordersArray.map((pos: any) =>
+        this.mapMT4OrderResponse(pos)
       );
 
       // Cache positions
