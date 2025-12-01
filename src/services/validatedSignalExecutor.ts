@@ -8,6 +8,7 @@ import { symbolMappingService } from './symbolMappingService';
 import { brokerFilterService } from './brokerFilterService';
 import { ScalpingAgent } from '../models';
 import AgentSignalLogModel from '../models/AgentSignalLog';
+import { riskManager, RISK_CONFIG } from './riskManager';
 
 /**
  * Filter configuration for ValidatedSignalExecutor
@@ -365,7 +366,7 @@ export class ValidatedSignalExecutor {
     const { signalId, agentId, recommendation, positionSize } = validatedSignal;
 
     // Get current market price
-    let executionPrice = validatedSignal.takeProfitPrice || validatedSignal.recommendedEntry;
+    let executionPrice = validatedSignal.recommendedEntry || validatedSignal.takeProfitPrice;
 
     if (!executionPrice || executionPrice <= 0) {
       console.log(`⚠️  No price in signal, fetching current market price for ${symbol}...`);
@@ -460,6 +461,64 @@ export class ValidatedSignalExecutor {
   }
 
   /**
+   * Verify that Stop Loss and Take Profit were actually set in MT4
+   */
+  private async verifyMT4SLTP(
+    userId: string,
+    symbol: string,
+    ticket: number,
+    expectedStopLoss?: number,
+    expectedTakeProfit?: number
+  ): Promise<void> {
+    try {
+      // Wait a moment for MT4 to process the order
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Get the position from MT4
+      const positions = await mt4Service.getOpenPositions(userId, symbol);
+      const position = positions.find(p => p.ticket === ticket);
+
+      if (!position) {
+        console.warn(`⚠️  [SL/TP VERIFY] Position ${ticket} not found in MT4 open positions`);
+        return;
+      }
+
+      // Check Stop Loss
+      if (expectedStopLoss) {
+        const slDifference = position.stopLoss ? Math.abs(position.stopLoss - expectedStopLoss) : Infinity;
+        const slTolerance = expectedStopLoss * 0.001; // 0.1% tolerance for price differences
+
+        if (slDifference > slTolerance) {
+          console.error(
+            `❌ [SL/TP VERIFY] Stop Loss mismatch for position ${ticket}: ` +
+            `Expected ${expectedStopLoss}, Got ${position.stopLoss || 'NONE'}`
+          );
+        } else {
+          console.log(`✅ [SL/TP VERIFY] Stop Loss confirmed: ${position.stopLoss}`);
+        }
+      }
+
+      // Check Take Profit
+      if (expectedTakeProfit) {
+        const tpDifference = position.takeProfit ? Math.abs(position.takeProfit - expectedTakeProfit) : Infinity;
+        const tpTolerance = expectedTakeProfit * 0.001; // 0.1% tolerance
+
+        if (tpDifference > tpTolerance) {
+          console.error(
+            `❌ [SL/TP VERIFY] Take Profit mismatch for position ${ticket}: ` +
+            `Expected ${expectedTakeProfit}, Got ${position.takeProfit || 'NONE'}`
+          );
+        } else {
+          console.log(`✅ [SL/TP VERIFY] Take Profit confirmed: ${position.takeProfit}`);
+        }
+      }
+
+    } catch (error) {
+      console.error(`⚠️  Error verifying SL/TP for position ${ticket}:`, error);
+    }
+  }
+
+  /**
    * Execute signal on MT4 (NEW)
    */
   private async executeMT4Signal(agent: any, validatedSignal: any, universalSymbol: string, mt4Symbol: string): Promise<void> {
@@ -467,8 +526,101 @@ export class ValidatedSignalExecutor {
 
     console.log(`🎯 Starting MT4 execution: ${recommendation} ${universalSymbol} (${mt4Symbol}) for agent ${agent.name} (${agentId})`);
 
+    // ============================================================
+    // CRITICAL: All pre-trade validation via centralized RiskManager
+    // This uses mutex locks to prevent race conditions
+    // ============================================================
+
+    // CRITICAL CHECK 1: Position limits (max 1 BUY, 1 SELL, 2 total) - with mutex lock
+    // Pass userId to query LIVE MT4 positions instead of stale MongoDB data
+    const positionCheck = await riskManager.canOpenPosition(recommendation.toUpperCase() as 'BUY' | 'SELL', agent.userId.toString());
+    if (!positionCheck.allowed) {
+      console.warn(`❌ POSITION LIMIT - Rejecting signal ${signalId}: ${positionCheck.reason}`);
+      await AgentSignalLogModel.updateOne(
+        { signalId: signalId, agentId: agentId },
+        {
+          $set: {
+            status: 'REJECTED',
+            executed: false,
+            failedReason: positionCheck.reason
+          }
+        }
+      );
+      return;
+    }
+
+    // CRITICAL CHECK 2: Trade cooldown (15 min between trades, 30 min after loss, 60 min after 3 losses) - atomic
+    const cooldownCheck = await riskManager.checkAndStartCooldown();
+    if (!cooldownCheck.allowed) {
+      console.warn(`⏳ COOLDOWN - Rejecting signal ${signalId}: ${cooldownCheck.reason}`);
+      await AgentSignalLogModel.updateOne(
+        { signalId: signalId, agentId: agentId },
+        {
+          $set: {
+            status: 'REJECTED',
+            executed: false,
+            failedReason: cooldownCheck.reason
+          }
+        }
+      );
+      return;
+    }
+
+    // CRITICAL CHECK 3: Daily limits (max $100 loss, max 40 trades per day)
+    const dailyCheck = await riskManager.checkDailyLimits();
+    if (!dailyCheck.allowed) {
+      console.warn(`🛑 DAILY LIMIT - Rejecting signal ${signalId}: ${dailyCheck.reason}`);
+      await AgentSignalLogModel.updateOne(
+        { signalId: signalId, agentId: agentId },
+        {
+          $set: {
+            status: 'REJECTED',
+            executed: false,
+            failedReason: dailyCheck.reason
+          }
+        }
+      );
+      return;
+    }
+
+    // Log current position status (using live MT4 data)
+    const positionSummary = await riskManager.getPositionCountSummary(agent.userId.toString());
+    console.log(`📊 Position check passed: BUY=${positionSummary.buy}, SELL=${positionSummary.sell}, Total=${positionSummary.total}`);
+    console.log(`🔍 [DEBUG] executeMT4Signal called:`, {
+      signalId,
+      agentId,
+      agentName: agent.name,
+      userId: agent.userId?.toString(),
+      universalSymbol,
+      mt4Symbol,
+      recommendation,
+      positionSize,
+      category: validatedSignal.category,
+      stopLoss: validatedSignal.stopLossPrice,
+      takeProfit: validatedSignal.takeProfitPrice
+    });
+
+    // NOTE: Position limits are now checked earlier using mt4TradeManager.checkPositionLimits()
+    // This legacy check is kept as a secondary validation against MT4 directly
+    try {
+      const openPositions = await mt4Service.getOpenPositions(agent.userId.toString(), universalSymbol);
+
+      // Log MT4 position count for debugging
+      const sameDirectionPositions = openPositions.filter(pos => {
+        const posType = pos.type?.toLowerCase();
+        const signalType = recommendation.toLowerCase();
+        return posType === signalType;
+      });
+
+      console.log(`📊 MT4 position check: ${sameDirectionPositions.length} ${recommendation} positions for ${universalSymbol}`);
+
+    } catch (error) {
+      console.error(`⚠️  Error checking MT4 positions:`, error);
+      // Continue - primary check was done earlier with mt4TradeManager
+    }
+
     // Get current market price
-    let executionPrice = validatedSignal.takeProfitPrice || validatedSignal.recommendedEntry;
+    let executionPrice = validatedSignal.recommendedEntry || validatedSignal.takeProfitPrice;
 
     if (!executionPrice || executionPrice <= 0) {
       console.log(`⚠️  No price in signal, fetching current MT4 price for ${mt4Symbol}...`);
@@ -482,17 +634,92 @@ export class ValidatedSignalExecutor {
       }
     }
 
-    const stopLoss = validatedSignal.stopLossPrice;
-    const takeProfit = validatedSignal.takeProfitPrice;
+    // ============================================================
+    // CRITICAL: CAP STOP LOSS AND CALCULATE REALISTIC TAKE PROFIT
+    // ============================================================
+    // Problem: LLM generates SL 394-566 points (too wide) and TP 1300+ points (unrealistic)
+    // Solution: Cap SL at MAX_SL_POINTS and set TP = SL × RR_RATIO
+
+    const MAX_SL_POINTS = parseFloat(process.env.MT4_MAX_SL_POINTS || '200');
+    const DEFAULT_SL_POINTS = parseFloat(process.env.MT4_DEFAULT_SL_POINTS || '150');
+    const RR_RATIO = parseFloat(process.env.MT4_RR_RATIO || '1.5');
+
+    let stopLoss: number | undefined = validatedSignal.stopLossPrice;
+    let takeProfit: number | undefined = validatedSignal.takeProfitPrice;
+
+    // Calculate SL distance in points
+    const isBuy = recommendation.toLowerCase() === 'buy';
+
+    if (stopLoss && executionPrice) {
+      const slDistancePoints = Math.abs(executionPrice - stopLoss);
+
+      console.log(`📊 [SL/TP] Original SL: ${stopLoss}, Distance: ${slDistancePoints.toFixed(2)} points`);
+
+      // Cap SL if too wide
+      if (slDistancePoints > MAX_SL_POINTS) {
+        console.warn(`⚠️  [SL/TP] SL too wide (${slDistancePoints.toFixed(2)} > ${MAX_SL_POINTS}), capping to ${MAX_SL_POINTS} points`);
+        const cappedSL = isBuy
+          ? executionPrice - MAX_SL_POINTS
+          : executionPrice + MAX_SL_POINTS;
+        stopLoss = cappedSL;
+        console.log(`   New SL: ${cappedSL.toFixed(2)}`);
+      }
+    } else if (!stopLoss && executionPrice) {
+      // No SL provided - set default
+      console.warn(`⚠️  [SL/TP] No stop loss provided, setting default ${DEFAULT_SL_POINTS} points`);
+      const defaultSL = isBuy
+        ? executionPrice - DEFAULT_SL_POINTS
+        : executionPrice + DEFAULT_SL_POINTS;
+      stopLoss = defaultSL;
+      console.log(`   Default SL: ${defaultSL.toFixed(2)}`);
+    }
+
+    // Calculate TP based on SL distance and R:R ratio (instead of using unrealistic LLM TP)
+    if (stopLoss && executionPrice) {
+      const actualSlDistance = Math.abs(executionPrice - stopLoss);
+      const tpDistance = actualSlDistance * RR_RATIO;
+
+      const newTakeProfit = isBuy
+        ? executionPrice + tpDistance
+        : executionPrice - tpDistance;
+
+      console.log(`📊 [SL/TP] Calculating TP: SL distance=${actualSlDistance.toFixed(2)}, R:R=${RR_RATIO}, TP distance=${tpDistance.toFixed(2)}`);
+
+      if (takeProfit) {
+        const oldTpDistance = Math.abs(takeProfit - executionPrice);
+        console.log(`   Original TP: ${takeProfit.toFixed(2)} (${oldTpDistance.toFixed(2)} pts)`);
+      }
+
+      takeProfit = newTakeProfit;
+      console.log(`   New TP: ${newTakeProfit.toFixed(2)} (${tpDistance.toFixed(2)} pts) [R:R = 1:${RR_RATIO}]`);
+    }
+
+    console.log(`✅ [SL/TP] Final values: Entry=${executionPrice.toFixed(2)}, SL=${stopLoss?.toFixed(2) || 'NONE'}, TP=${takeProfit?.toFixed(2) || 'NONE'}`);
 
     // Calculate lot size (MT4 uses lots, not quantity)
+    // Now uses dynamic position sizing based on risk % and stop loss distance
     let lotSize: number;
     try {
-      lotSize = await mt4Service.calculateLotSize(agent.userId.toString(), universalSymbol, positionSize);
-      console.log(`💰 MT4 Lot size calculation: ${positionSize} USDT → ${lotSize} lots`);
+      lotSize = await mt4Service.calculateLotSize(
+        agent.userId.toString(),
+        universalSymbol,
+        positionSize,
+        stopLoss,        // Pass stop loss for risk-based calculation
+        executionPrice   // Pass entry price
+      );
+      console.log(`💰 MT4 Lot size calculation: Risk-based → ${lotSize} lots`);
     } catch (error) {
       console.error(`Failed to calculate lot size:`, error);
       return;
+    }
+
+    // NOTE: LLM consensus multiplier has been removed.
+    // Position sizing is now handled by LLM risk classification (SAFE=100%, MODERATE=70%, RISKY=40%)
+    // in signalValidationService.ts, which already accounts for signal quality and market conditions.
+    const llmConsensus = validatedSignal.llmConsensus;
+    if (llmConsensus && llmConsensus.votesFor !== undefined) {
+      console.log(`📊 [LLM CONSENSUS] ${llmConsensus.votesFor}/4 agree, ${llmConsensus.votesAgainst || 0} disagree, ${llmConsensus.votesNeutral || 0} neutral`);
+      console.log(`   Position size already adjusted by risk classification - no additional multiplier applied`);
     }
 
     // Validate lot size
@@ -517,6 +744,101 @@ export class ValidatedSignalExecutor {
         takeProfit: takeProfit || 'none',
         executionPrice
       });
+      console.log(`🔍 [DEBUG] About to call mt4Service.createMarketOrder with:`, {
+        userId: agent.userId.toString(),
+        symbol: universalSymbol,
+        type: recommendation.toLowerCase(),
+        lotSize,
+        stopLoss,
+        takeProfit
+      });
+
+      // CRITICAL: Check account balance before creating order
+      const accountInfo = await mt4Service.getBalance(agent.userId.toString());
+      const currentPrice = executionPrice || (await mt4Service.getPrice(agent.userId.toString(), universalSymbol)).ask;
+
+      // Get symbol info for contract size
+      const symbolInfo = await symbolMappingService.getSymbolInfo(universalSymbol);
+      let contractSize = 1; // Default: 1 unit per lot for crypto
+      let leverage = 100;   // Default: 1:100 leverage typical for crypto
+
+      // Get broker-specific contract size if configured
+      if (mt4Symbol) {
+        const envKey = `MT4_CONTRACT_SIZE_${mt4Symbol.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+        const configuredSize = process.env[envKey];
+        console.log(`🔍 Looking for contract size: ${envKey} = ${configuredSize || 'NOT FOUND (using default)'}`);
+        if (configuredSize) {
+          contractSize = parseFloat(configuredSize);
+          console.log(`✅ Using configured contract size: ${contractSize}`);
+        } else {
+          console.warn(`⚠️  Contract size not configured for ${mt4Symbol}. Using default: ${contractSize}`);
+        }
+
+        // Get leverage from environment or use default
+        const leverageKey = `MT4_LEVERAGE_${mt4Symbol.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+        const configuredLeverage = process.env[leverageKey];
+        console.log(`🔍 Looking for leverage: ${leverageKey} = ${configuredLeverage || 'NOT FOUND (using default)'}`);
+        if (configuredLeverage) {
+          leverage = parseFloat(configuredLeverage);
+          console.log(`✅ Using configured leverage: 1:${leverage}`);
+        } else {
+          console.warn(`⚠️  Leverage not configured for ${mt4Symbol}. Using default: 1:${leverage}`);
+        }
+      }
+
+      // Validate contract size to detect configuration issues
+      if (contractSize > 1000 || contractSize <= 0) {
+        const errorMsg = `Invalid contract size: ${contractSize} for ${mt4Symbol}. Expected range: 0.01-1000`;
+        console.error(`❌ ${errorMsg}`);
+        await AgentSignalLogModel.updateOne(
+          { signalId: signalId, agentId: agentId },
+          {
+            $set: {
+              status: 'FAILED',
+              executed: false,
+              failedReason: errorMsg
+            }
+          }
+        );
+        throw new Error(errorMsg);
+      }
+
+      // Correct margin calculation: (lot size * contract size * price) / leverage
+      const estimatedMargin = (lotSize * contractSize * currentPrice) / leverage;
+
+      console.log(`💰 Balance check for ${mt4Symbol}:`);
+      console.log(`   Lot size: ${lotSize}`);
+      console.log(`   Contract size: ${contractSize}`);
+      console.log(`   Price: $${currentPrice.toFixed(2)}`);
+      console.log(`   Leverage: 1:${leverage}`);
+      console.log(`   Free margin: $${accountInfo.freeMargin.toFixed(2)}`);
+      console.log(`   Estimated margin required: $${estimatedMargin.toFixed(2)}`);
+
+      // Validate margin calculation sanity - warn if margin seems unrealistic
+      const positionValue = lotSize * contractSize * currentPrice;
+      if (estimatedMargin > positionValue) {
+        console.warn(`⚠️  WARNING: Estimated margin ($${estimatedMargin.toFixed(2)}) exceeds position value ($${positionValue.toFixed(2)}). This indicates a configuration error.`);
+        console.warn(`⚠️  Check: Contract size=${contractSize}, Leverage=${leverage}, Price=${currentPrice}`);
+      }
+
+      if (accountInfo.freeMargin < estimatedMargin) {
+        const errorMsg = `Insufficient margin: Free=${accountInfo.freeMargin.toFixed(2)}, Required=${estimatedMargin.toFixed(2)}`;
+        console.error(`❌ ${errorMsg}`);
+
+        // Mark as FAILED in log
+        await AgentSignalLogModel.updateOne(
+          { signalId: signalId, agentId: agentId },
+          {
+            $set: {
+              status: 'FAILED',
+              executed: false,
+              failedReason: errorMsg
+            }
+          }
+        );
+
+        throw new Error(errorMsg);
+      }
 
       const order = await mt4Service.createMarketOrder(
         agent.userId.toString(),
@@ -528,6 +850,14 @@ export class ValidatedSignalExecutor {
       );
 
       console.log(`✅ MT4 Order executed: ${recommendation} ${lotSize} lots ${mt4Symbol} | Ticket: ${order.ticket} | Price: ${order.openPrice}`);
+
+      // CRITICAL: Record trade opened for cooldown system and daily stats
+      await riskManager.recordTradeOpened();
+
+      // NEW: Verify SL/TP were actually set in MT4
+      if (stopLoss || takeProfit) {
+        await this.verifyMT4SLTP(agent.userId.toString(), universalSymbol, order.ticket, stopLoss, takeProfit);
+      }
 
       // NEW: Track position in MT4 Trade Manager for auto-close monitoring
       await mt4TradeManager.trackPosition({
@@ -576,7 +906,16 @@ export class ValidatedSignalExecutor {
       console.log(`📝 Position tracking started for ticket ${order.ticket}`);
 
     } catch (error) {
-      console.error(`Failed to execute MT4 order:`, error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`❌ Failed to execute MT4 order for ${agent.name}:`, errorMessage);
+
+      // Check for specific MT4 error 4109 (AutoTrading disabled)
+      if (errorMessage.includes('4109')) {
+        console.error(`⚠️  MT4 ERROR 4109: AutoTrading is disabled or EA not allowed to trade`);
+        console.error(`    Fix: Enable AutoTrading in MT4:`);
+        console.error(`    1. Tools → Options → Expert Advisors → Check "Allow automated trading"`);
+        console.error(`    2. Right-click chart → EA Properties (F7) → Check "Allow live trading"`);
+      }
 
       // Mark as FAILED in log
       await AgentSignalLogModel.updateOne(
@@ -585,7 +924,7 @@ export class ValidatedSignalExecutor {
           $set: {
             status: 'FAILED',
             executed: false,
-            failedReason: error instanceof Error ? error.message : 'Unknown error'
+            failedReason: errorMessage
           }
         }
       );
@@ -639,6 +978,15 @@ export class ValidatedSignalExecutor {
   async executeSignalDirect(agent: any, validatedSignal: any, symbol: string): Promise<void> {
     try {
       console.log(`⚡ DIRECT EXECUTION (no queue): ${symbol} for agent ${agent.name} (${agent.broker})`);
+      console.log(`🔍 [DEBUG] executeSignalDirect called with:`, {
+        agentId: agent._id?.toString(),
+        agentName: agent.name,
+        broker: agent.broker,
+        symbol,
+        category: validatedSignal.category,
+        recommendation: validatedSignal.recommendation,
+        positionSize: validatedSignal.positionSize
+      });
 
       // Call the main executeSignal method directly
       // This bypasses the Redis queue and processes immediately

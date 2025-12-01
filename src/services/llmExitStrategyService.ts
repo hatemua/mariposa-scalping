@@ -41,8 +41,26 @@ interface PositionContext {
 }
 
 export class LLMExitStrategyService {
-  private readonly EXIT_DECISION_CACHE_TTL = 60; // 1 minute cache
   private readonly EXIT_DECISION_PREFIX = 'exit_decision:';
+
+  /**
+   * Calculate dynamic cache TTL based on position P&L state
+   * - In profit > 1%: 60s (fast reaction to protect gains)
+   * - Break-even (-0.5% to +0.5%): 120s
+   * - Small loss (-0.5% to -1%): 150s
+   * - Large loss < -1%: 180s (monitor but don't spam)
+   */
+  private getDynamicCacheTTL(unrealizedPnLPercent: number): number {
+    if (unrealizedPnLPercent > 1.0) {
+      return 60;  // In profit - fast reaction to protect gains
+    } else if (unrealizedPnLPercent >= -0.5 && unrealizedPnLPercent <= 0.5) {
+      return 120; // Break-even zone
+    } else if (unrealizedPnLPercent > -1.0) {
+      return 150; // Small loss
+    } else {
+      return 180; // Large loss - monitor but don't spam
+    }
+  }
 
   /**
    * Analyze a position and decide if/when to exit using LLM
@@ -69,12 +87,15 @@ export class LLMExitStrategyService {
       // Build LLM prompt for exit analysis
       const decision = await this.getLLMExitDecision(agent, position, marketConditions);
 
-      // Cache the decision
-      await redisService.set(cacheKey, decision, { ttl: this.EXIT_DECISION_CACHE_TTL });
+      // Calculate dynamic TTL based on P&L state
+      const dynamicTTL = this.getDynamicCacheTTL(position.unrealizedPnLPercent);
 
-      // Log the decision
+      // Cache the decision with dynamic TTL
+      await redisService.set(cacheKey, decision, { ttl: dynamicTTL });
+
+      // Log the decision with TTL info
       console.log(
-        `Exit decision for ${agent.name} (${position.symbol}): ${decision.action} - ${decision.reasoning.substring(0, 100)}...`
+        `Exit decision for ${agent.name} (${position.symbol}): ${decision.action} [PnL: ${position.unrealizedPnLPercent.toFixed(2)}%, TTL: ${dynamicTTL}s]`
       );
 
       return decision;

@@ -393,87 +393,61 @@ export class AIAnalysisService {
     analyses: LLMAnalysis[],
     originalPrompt: string
   ): Promise<ConsolidatedAnalysis> {
-    try {
-      const consolidationPrompt = `
-        Based on the following ${analyses.length} AI model analyses for ${symbol}, provide a final consolidated trading recommendation:
+    // OPTIMIZED: Use voting logic instead of 5th LLM call to save tokens
+    // This saves ~2,300 tokens per analysis without sacrificing quality
 
-        ${analyses.map((analysis, index) => `
-        Model ${index + 1} (${analysis.model}):
-        - Recommendation: ${analysis.recommendation}
-        - Confidence: ${analysis.confidence}
-        - Reasoning: ${analysis.reasoning}
-        - Target Price: ${analysis.targetPrice || 'N/A'}
-        - Stop Loss: ${analysis.stopLoss || 'N/A'}
-        `).join('\n')}
+    const buyCount = analyses.filter(a => a.recommendation === 'BUY').length;
+    const sellCount = analyses.filter(a => a.recommendation === 'SELL').length;
+    const holdCount = analyses.filter(a => a.recommendation === 'HOLD').length;
 
-        Provide a final recommendation (BUY/SELL/HOLD), confidence level (0-1), target price if applicable, stop loss if applicable, and reasoning.
-        Format your response as JSON: {
-          "recommendation": "BUY/SELL/HOLD",
-          "confidence": 0.0-1.0,
-          "targetPrice": number or null,
-          "stopLoss": number or null,
-          "reasoning": "your consolidated reasoning"
-        }
-      `;
-
-      const response = await this.retryWithBackoff(
-        () => this.httpClient.post<TogetherAIResponse>('/v1/chat/completions', {
-          model: this.models[1], // Use the most capable model for consolidation
-          messages: [
-            {
-              role: 'system',
-              content: 'You are a senior trading analyst consolidating multiple AI analyses. Provide a balanced, well-reasoned final recommendation.'
-            },
-            {
-              role: 'user',
-              content: consolidationPrompt
-            }
-          ],
-          max_tokens: 300,
-          temperature: 0.05
-        }),
-        3,
-        2000,
-        `${symbol} analysis consolidation`
-      );
-
-      const content = response.data.choices[0].message.content;
-      const consolidated = this.parseConsolidatedResponse(content);
-
-      return {
-        symbol,
-        recommendation: consolidated.recommendation,
-        confidence: consolidated.confidence,
-        targetPrice: consolidated.targetPrice,
-        stopLoss: consolidated.stopLoss,
-        reasoning: consolidated.reasoning,
-        individualAnalyses: analyses,
-        timestamp: new Date()
-      };
-    } catch (error) {
-      console.error('Error consolidating analyses:', error);
-
-      const buyCount = analyses.filter(a => a.recommendation === 'BUY').length;
-      const sellCount = analyses.filter(a => a.recommendation === 'SELL').length;
-
-      let finalRecommendation: 'BUY' | 'SELL' | 'HOLD';
-      if (buyCount > sellCount) {
-        finalRecommendation = 'BUY';
-      } else if (sellCount > buyCount) {
-        finalRecommendation = 'SELL';
-      } else {
-        finalRecommendation = 'HOLD';
-      }
-
-      return {
-        symbol,
-        recommendation: finalRecommendation,
-        confidence: 0.5,
-        reasoning: 'Fallback consolidation due to AI error',
-        individualAnalyses: analyses,
-        timestamp: new Date()
-      };
+    // Determine final recommendation by majority vote
+    let finalRecommendation: 'BUY' | 'SELL' | 'HOLD';
+    if (buyCount > sellCount && buyCount > holdCount) {
+      finalRecommendation = 'BUY';
+    } else if (sellCount > buyCount && sellCount > holdCount) {
+      finalRecommendation = 'SELL';
+    } else {
+      finalRecommendation = 'HOLD';
     }
+
+    // Calculate weighted confidence based on agreeing models
+    const agreeingModels = analyses.filter(a => a.recommendation === finalRecommendation);
+    const avgConfidence = agreeingModels.length > 0
+      ? agreeingModels.reduce((sum, a) => sum + a.confidence, 0) / agreeingModels.length
+      : 0.5;
+
+    // Boost confidence if strong consensus (3/4 or 4/4 agree)
+    const consensusBoost = agreeingModels.length >= 3 ? 0.1 : 0;
+    const finalConfidence = Math.min(avgConfidence + consensusBoost, 1.0);
+
+    // Get target/stop from agreeing models (use median to avoid outliers)
+    const targetPrices = agreeingModels.map(a => a.targetPrice).filter(p => p != null) as number[];
+    const stopLosses = agreeingModels.map(a => a.stopLoss).filter(p => p != null) as number[];
+
+    const medianTarget = targetPrices.length > 0
+      ? targetPrices.sort((a, b) => a - b)[Math.floor(targetPrices.length / 2)]
+      : null;
+    const medianStop = stopLosses.length > 0
+      ? stopLosses.sort((a, b) => a - b)[Math.floor(stopLosses.length / 2)]
+      : null;
+
+    // Build reasoning from individual models
+    const reasoning = `Voting consensus: ${buyCount} BUY, ${sellCount} SELL, ${holdCount} HOLD. ` +
+      `${agreeingModels.length}/${analyses.length} models agree on ${finalRecommendation}. ` +
+      agreeingModels.map(a => a.reasoning).join(' | ').substring(0, 300);
+
+    console.log(`📊 [VOTING] ${symbol}: BUY=${buyCount}, SELL=${sellCount}, HOLD=${holdCount} → ${finalRecommendation} (${(finalConfidence * 100).toFixed(1)}%)`);
+
+    return {
+      symbol,
+      recommendation: finalRecommendation,
+      confidence: finalConfidence,
+      targetPrice: medianTarget ?? undefined,
+      stopLoss: medianStop ?? undefined,
+      reasoning,
+      individualAnalyses: analyses,
+      timestamp: new Date()
+    };
   }
 
   private parseConsolidatedResponse(content: string): any {
@@ -1270,110 +1244,116 @@ export class AIAnalysisService {
     microstructure: any,
     originalPrompt: string
   ): Promise<any> {
-    try {
-      // Enhanced consolidation with technical data
-      const consolidationPrompt = `
-        DEEP ANALYSIS CONSOLIDATION for ${symbol}:
+    // OPTIMIZED: Use intelligent voting with technical indicator validation
+    // This saves significant tokens while maintaining analysis quality
 
-        Individual AI Model Analyses:
-        ${analyses.map((analysis, index) => `
-        Model ${index + 1} (${analysis.model}):
-        - Recommendation: ${analysis.recommendation}
-        - Confidence: ${(analysis.confidence * 100).toFixed(1)}%
-        - Reasoning: ${analysis.reasoning}
-        - Target: ${analysis.targetPrice || 'N/A'}
-        - Stop Loss: ${analysis.stopLoss || 'N/A'}
-        `).join('\n')}
+    const buyCount = analyses.filter(a => a.recommendation === 'BUY').length;
+    const sellCount = analyses.filter(a => a.recommendation === 'SELL').length;
+    const holdCount = analyses.filter(a => a.recommendation === 'HOLD').length;
 
-        Technical Indicators Summary:
-        - Multi-timeframe trend alignment: ${this.assessTrendAlignment(technicalIndicators)}
-        - Overall RSI signal: ${this.assessRSISignal(technicalIndicators)}
-        - Volume confirmation: ${this.assessVolumeConfirmation(technicalIndicators)}
-        - Risk level: ${this.assessRiskLevel(riskMetrics)}
-        - Market microstructure: ${microstructure.marketPressure.dominance} bias
+    // Assess technical factors
+    const trendAlignment = this.assessTrendAlignment(technicalIndicators);
+    const rsiSignal = this.assessRSISignal(technicalIndicators);
+    const volumeConfirmation = this.assessVolumeConfirmation(technicalIndicators);
+    const riskLevel = this.assessRiskLevel(riskMetrics);
+    const marketBias = microstructure?.marketPressure?.dominance || 'NEUTRAL';
 
-        Provide final consolidated recommendation as JSON:
-        {
-          "recommendation": "BUY/SELL/HOLD",
-          "confidence": 0.0-1.0,
-          "targetPrice": number or null,
-          "stopLoss": number or null,
-          "reasoning": "comprehensive reasoning with technical justification",
-          "profitScore": 1-10,
-          "riskLevel": "LOW/MEDIUM/HIGH",
-          "timeframe": "optimal trading timeframe",
-          "positionSize": "recommended position size percentage",
-          "entryStrategy": "specific entry approach",
-          "exitStrategy": "specific exit approach",
-          "keyCatalysts": ["list", "of", "potential", "catalysts"],
-          "technicalSetup": "description of technical setup",
-          "riskManagement": "specific risk management approach"
-        }
-      `;
+    // Determine recommendation with technical validation
+    let finalRecommendation: 'BUY' | 'SELL' | 'HOLD';
+    let technicalBonus = 0;
 
-      const response = await this.retryWithBackoff(
-        () => this.httpClient.post<TogetherAIResponse>('/v1/chat/completions', {
-          model: this.models[1], // Use most capable model
-          messages: [
-            {
-              role: 'system',
-              content: 'You are a senior quantitative analyst consolidating deep market analysis. Provide institutional-grade recommendations with specific actionable insights.'
-            },
-            {
-              role: 'user',
-              content: consolidationPrompt
-            }
-          ],
-          max_tokens: 800,
-          temperature: 0.05
-        }),
-        3,
-        2000,
-        `Deep analysis consolidation`
-      );
-
-      const content = response.data.choices[0].message.content;
-      const consolidated = this.parseConsolidatedResponse(content);
-
-      // Enhanced analysis result with all technical data
-      return {
-        symbol,
-        recommendation: consolidated.recommendation,
-        confidence: consolidated.confidence,
-        targetPrice: consolidated.targetPrice,
-        stopLoss: consolidated.stopLoss,
-        reasoning: consolidated.reasoning,
-
-        // Enhanced fields for deep analysis
-        profitScore: consolidated.profitScore || 5,
-        riskLevel: consolidated.riskLevel || 'MEDIUM',
-        timeframe: consolidated.timeframe || '5m-15m',
-        positionSize: consolidated.positionSize || '2-3%',
-        entryStrategy: consolidated.entryStrategy || 'Market entry with confirmation',
-        exitStrategy: consolidated.exitStrategy || 'Target-based with trailing stop',
-        keyCatalysts: consolidated.keyCatalysts || [],
-        technicalSetup: consolidated.technicalSetup || 'Mixed signals',
-        riskManagement: consolidated.riskManagement || 'Standard risk management',
-
-        // Technical data
-        technicalIndicators,
-        riskMetrics,
-        microstructure,
-
-        // Individual analyses
-        individualAnalyses: analyses,
-        timestamp: new Date(),
-
-        // Analysis metadata
-        analysisType: 'DEEP_ANALYSIS',
-        dataQuality: this.assessDataQuality(technicalIndicators, riskMetrics)
-      };
-    } catch (error) {
-      console.error('Error consolidating deep analyses:', error);
-
-      // Enhanced fallback with technical indicators
-      return this.generateFallbackDeepAnalysis(symbol, analyses, technicalIndicators, riskMetrics, microstructure);
+    if (buyCount > sellCount && buyCount > holdCount) {
+      finalRecommendation = 'BUY';
+      // Validate BUY with technicals
+      if (trendAlignment === 'BULLISH_ALIGNED') technicalBonus += 0.05;
+      if (rsiSignal === 'OVERSOLD') technicalBonus += 0.05;
+      if (marketBias === 'BUY') technicalBonus += 0.03;
+      // Penalize if technical conflicts
+      if (trendAlignment === 'BEARISH_ALIGNED') technicalBonus -= 0.1;
+      if (rsiSignal === 'OVERBOUGHT') technicalBonus -= 0.08;
+    } else if (sellCount > buyCount && sellCount > holdCount) {
+      finalRecommendation = 'SELL';
+      // Validate SELL with technicals
+      if (trendAlignment === 'BEARISH_ALIGNED') technicalBonus += 0.05;
+      if (rsiSignal === 'OVERBOUGHT') technicalBonus += 0.05;
+      if (marketBias === 'SELL') technicalBonus += 0.03;
+      // Penalize if technical conflicts
+      if (trendAlignment === 'BULLISH_ALIGNED') technicalBonus -= 0.1;
+      if (rsiSignal === 'OVERSOLD') technicalBonus -= 0.08;
+    } else {
+      finalRecommendation = 'HOLD';
     }
+
+    // Calculate confidence
+    const agreeingModels = analyses.filter(a => a.recommendation === finalRecommendation);
+    const avgConfidence = agreeingModels.length > 0
+      ? agreeingModels.reduce((sum, a) => sum + a.confidence, 0) / agreeingModels.length
+      : 0.5;
+
+    const consensusBoost = agreeingModels.length >= 3 ? 0.1 : 0;
+    const finalConfidence = Math.max(0.1, Math.min(avgConfidence + consensusBoost + technicalBonus, 1.0));
+
+    // Get target/stop from agreeing models
+    const targetPrices = agreeingModels.map(a => a.targetPrice).filter(p => p != null) as number[];
+    const stopLosses = agreeingModels.map(a => a.stopLoss).filter(p => p != null) as number[];
+
+    const medianTarget = targetPrices.length > 0
+      ? targetPrices.sort((a, b) => a - b)[Math.floor(targetPrices.length / 2)]
+      : null;
+    const medianStop = stopLosses.length > 0
+      ? stopLosses.sort((a, b) => a - b)[Math.floor(stopLosses.length / 2)]
+      : null;
+
+    // Calculate profit score (1-10)
+    let profitScore = 5;
+    if (volumeConfirmation === 'HIGH_VOLUME') profitScore += 1;
+    if (agreeingModels.length >= 3) profitScore += 1;
+    if (trendAlignment !== 'MIXED_SIGNALS') profitScore += 1;
+    if (riskLevel === 'LOW') profitScore += 1;
+    if (finalConfidence > 0.7) profitScore += 1;
+    profitScore = Math.min(10, Math.max(1, profitScore));
+
+    // Build reasoning
+    const reasoning = `Voting: ${buyCount} BUY, ${sellCount} SELL, ${holdCount} HOLD. ` +
+      `Technical validation: ${trendAlignment}, RSI=${rsiSignal}, Volume=${volumeConfirmation}. ` +
+      `Market bias: ${marketBias}. Profit score: ${profitScore}/10.`;
+
+    console.log(`📊 [DEEP VOTING] ${symbol}: BUY=${buyCount}, SELL=${sellCount}, HOLD=${holdCount} → ${finalRecommendation}`);
+    console.log(`   Technical: Trend=${trendAlignment}, RSI=${rsiSignal}, Risk=${riskLevel}`);
+
+    // Return voting-based result directly (no LLM consolidation call)
+    return {
+      symbol,
+      recommendation: finalRecommendation,
+      confidence: finalConfidence,
+      targetPrice: medianTarget,
+      stopLoss: medianStop,
+      reasoning,
+
+      // Enhanced fields for deep analysis (calculated locally)
+      profitScore,
+      riskLevel,
+      timeframe: '5m-15m',
+      positionSize: riskLevel === 'LOW' ? '3-5%' : riskLevel === 'HIGH' ? '1-2%' : '2-3%',
+      entryStrategy: finalRecommendation === 'HOLD' ? 'Wait for confirmation' : 'Market entry with confirmation',
+      exitStrategy: 'Target-based with trailing stop',
+      keyCatalysts: [],
+      technicalSetup: trendAlignment === 'MIXED_SIGNALS' ? 'Mixed signals' : `${trendAlignment} with ${rsiSignal} RSI`,
+      riskManagement: `${riskLevel} risk - use ${riskLevel === 'HIGH' ? 'tight' : 'standard'} stops`,
+
+      // Technical data
+      technicalIndicators,
+      riskMetrics,
+      microstructure,
+
+      // Individual analyses
+      individualAnalyses: analyses,
+      timestamp: new Date(),
+
+      // Analysis metadata
+      analysisType: 'DEEP_ANALYSIS',
+      dataQuality: this.assessDataQuality(technicalIndicators, riskMetrics)
+    };
   }
 
   // ===============================

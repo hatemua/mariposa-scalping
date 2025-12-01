@@ -19,6 +19,7 @@ import { redisService } from './services/redisService';
 import { btcMultiPatternScalpingService } from './services/btcMultiPatternScalpingService';
 import { ValidatedSignalExecutor } from './services/validatedSignalExecutor';
 import { binanceService } from './services/binanceService';
+import { positionMonitorService } from './services/positionMonitorService';
 
 // Load environment variables
 dotenv.config();
@@ -76,6 +77,21 @@ async function startFibonacciWorker() {
     await fibonacciExecutor.start();
     console.log('✅ Filtered Signal Executor started\n');
 
+    // Step 6: Start LLM-based Position Monitoring (for early exits)
+    console.log('🔍 Starting LLM Position Monitoring (4-LLM Exit Analysis)...');
+    await positionMonitorService.loadExistingPositions();
+
+    // Monitor positions every 1 minute
+    const monitoringInterval = setInterval(async () => {
+      try {
+        await positionMonitorService.monitorAllPositions();
+      } catch (error) {
+        console.error('❌ Error in position monitoring loop:', error);
+      }
+    }, 60000); // 1 minute
+
+    console.log('✅ LLM Position Monitoring started (checking every 1 minute)\n');
+
     console.log('═══════════════════════════════════════════════════════');
     console.log('✅ Fibonacci Worker Ready');
     console.log('═══════════════════════════════════════════════════════');
@@ -83,12 +99,14 @@ async function startFibonacciWorker() {
     console.log('📈 Timeframes: 1m, 5m, 15m, 30m');
     console.log('🤖 LLMs: 4 specialists (Fibonacci, Chart, Candle, S/R)');
     console.log('⏱️  Signal generation: Every 5m candle close');
+    console.log('🔍 Position monitoring: Every 1 minute (LLM-based exits)');
     console.log('🎯 Priority: 100% dedicated to Fibonacci scalping');
     console.log('═══════════════════════════════════════════════════════\n');
 
     // Log worker health status every 5 minutes
     setInterval(() => {
-      console.log(`[${new Date().toISOString()}] ❤️  Fibonacci Worker healthy`);
+      const posCount = positionMonitorService.getMonitoredCount();
+      console.log(`[${new Date().toISOString()}] ❤️  Fibonacci Worker healthy | Monitoring ${posCount} positions`);
     }, 300000); // 5 minutes
 
   } catch (error) {

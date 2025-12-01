@@ -18,16 +18,22 @@ interface ValidationSignal {
 
 interface LLMExecutionDecision {
   shouldExecute: boolean;
+  riskLevel: 'SAFE' | 'MODERATE' | 'RISKY'; // Risk classification for position sizing
   reasoning: string;
-  positionSizePercent: number; // 0-40 percentage of available balance
   recommendedEntry: number | null;
   stopLossPrice: number | null;
   takeProfitPrice: number | null;
-  maxRiskPercent: number; // 1-5 percentage of budget to risk
   confidence: number; // 0-1
   keyRisks: string[];
   keyOpportunities: string[];
 }
+
+// Risk level to position size percentage mapping
+const RISK_POSITION_SIZE: Record<string, number> = {
+  'SAFE': 100,      // 100% of available margin - high confidence trades
+  'MODERATE': 70,   // 70% of available margin - normal conditions
+  'RISKY': 40       // 40% of available margin - uncertain conditions
+};
 
 interface ValidationResult {
   isValid: boolean;
@@ -35,9 +41,9 @@ interface ValidationResult {
   reasoning: string;
   positionSize: number; // Calculated position size in USDT
   positionSizePercent: number; // Percentage of available balance
+  riskLevel: 'SAFE' | 'MODERATE' | 'RISKY'; // Risk classification
   stopLossPrice: number | null;
   takeProfitPrice: number | null;
-  maxRiskPercent: number;
   keyRisks: string[];
   keyOpportunities: string[];
   marketConditions: {
@@ -76,7 +82,9 @@ export class SignalValidationService {
         const openPositions = await this.getAgentOpenPositions(agentId);
 
         // Simple validation: just check balance and positions
-        const positionSize = Math.min(availableBalance * 0.1, 50); // 10% of balance, max $50
+        // Use 70% of available balance (MODERATE risk) when LLM validation is disabled
+        const positionSizePercent = RISK_POSITION_SIZE['MODERATE'];
+        const positionSize = availableBalance * (positionSizePercent / 100);
 
         return {
           isValid: availableBalance >= 10 && openPositions < agent.maxOpenPositions,
@@ -87,10 +95,10 @@ export class SignalValidationService {
             ? `Max positions reached: ${openPositions}/${agent.maxOpenPositions}`
             : 'LLM validation disabled - using basic validation',
           positionSize,
-          positionSizePercent: (positionSize / availableBalance) * 100,
+          positionSizePercent,
+          riskLevel: 'MODERATE' as const,
           stopLossPrice: signal.stopLoss || null,
           takeProfitPrice: signal.targetPrice || null,
-          maxRiskPercent: 2,
           keyRisks: [],
           keyOpportunities: [],
           marketConditions: {
@@ -122,9 +130,9 @@ export class SignalValidationService {
           reasoning: `Cannot execute: Insufficient available balance ($${availableBalance.toFixed(2)}, minimum $10 required)`,
           positionSize: 0,
           positionSizePercent: 0,
+          riskLevel: 'RISKY' as const,
           stopLossPrice: null,
           takeProfitPrice: null,
-          maxRiskPercent: 0,
           keyRisks: ['Insufficient funds'],
           keyOpportunities: [],
           marketConditions,
@@ -145,9 +153,9 @@ export class SignalValidationService {
           reasoning: `Cannot execute: Agent has reached maximum open positions (${openPositions}/${agent.maxOpenPositions})`,
           positionSize: 0,
           positionSizePercent: 0,
+          riskLevel: 'RISKY' as const,
           stopLossPrice: null,
           takeProfitPrice: null,
-          maxRiskPercent: 0,
           keyRisks: ['Max positions reached'],
           keyOpportunities: [],
           marketConditions,
@@ -171,18 +179,22 @@ export class SignalValidationService {
         marketConditions
       );
 
-      // Step 5: Calculate actual position size from LLM's percentage recommendation
-      const positionSize = availableBalance * (llmDecision.positionSizePercent / 100);
+      // Step 5: Calculate actual position size from LLM's risk classification
+      const riskLevel = llmDecision.riskLevel || 'MODERATE';
+      const positionSizePercent = RISK_POSITION_SIZE[riskLevel] || 70;
+      const positionSize = availableBalance * (positionSizePercent / 100);
+
+      console.log(`📊 Risk Level: ${riskLevel} → Position Size: ${positionSizePercent}% ($${positionSize.toFixed(2)})`);
 
       return {
         isValid: llmDecision.shouldExecute,
         confidence: llmDecision.confidence,
         reasoning: llmDecision.reasoning,
         positionSize: Math.min(positionSize, availableBalance), // Never exceed available balance
-        positionSizePercent: llmDecision.positionSizePercent,
+        positionSizePercent,
+        riskLevel,
         stopLossPrice: llmDecision.stopLossPrice,
         takeProfitPrice: llmDecision.takeProfitPrice,
-        maxRiskPercent: llmDecision.maxRiskPercent,
         keyRisks: llmDecision.keyRisks,
         keyOpportunities: llmDecision.keyOpportunities,
         marketConditions,
@@ -250,25 +262,27 @@ Consider:
 1. Is this trade appropriate for agent's ${agent.category} category and risk level ${agent.riskLevel}?
 2. Is agent's health good enough to trade? (${recentPerformance.consecutiveLosses} consecutive losses, ${agent.performance.maxDrawdown.toFixed(1)}% drawdown)
 3. Are market conditions favorable? (liquidity: ${marketConditions.liquidity}, spread: ${marketConditions.spread.toFixed(3)}%)
-4. What position size (% of available $${availableBalance.toFixed(2)}) captures opportunity while managing risk?
+4. What is the overall RISK LEVEL of this trade?
 5. What stop-loss and take-profit levels protect capital?
 
-IMPORTANT POSITION SIZING RULES:
-- Minimum trade size: $10 (to meet exchange minimums)
-- For small balances (<$50): Use 30-50% per trade to ensure meaningful positions
-- For medium balances ($50-200): Use 20-40% per trade
-- For large balances (>$200): Use 10-25% per trade
-- Risk Level ${agent.riskLevel}/5: Higher risk = larger position sizes
+RISK CLASSIFICATION GUIDE:
+- SAFE: Strong signal, good market conditions, low volatility, aligned with HTF trend, agent health is good
+- MODERATE: Normal conditions, acceptable signal strength, minor concerns
+- RISKY: Weak signal, high volatility, poor liquidity, counter-trend, agent health issues (consecutive losses/drawdown)
+
+POSITION SIZING (based on risk level):
+- SAFE: 100% of available margin (maximum position size)
+- MODERATE: 70% of available margin
+- RISKY: 40% of available margin
 
 Respond in JSON format ONLY:
 {
   "shouldExecute": <true or false>,
-  "reasoning": "<2-3 sentences explaining your decision>",
-  "positionSizePercent": <percentage of available balance to use, 10-80 for small accounts, 10-40 for larger>,
+  "riskLevel": "SAFE" | "MODERATE" | "RISKY",
+  "reasoning": "<2-3 sentences explaining your decision and risk classification>",
   "recommendedEntry": <price number or null>,
   "stopLossPrice": <price number or null>,
   "takeProfitPrice": <price number or null>,
-  "maxRiskPercent": <max % of budget to risk, 1-5>,
   "confidence": <your confidence in this decision, 0-1>,
   "keyRisks": ["risk1", "risk2"],
   "keyOpportunities": ["opportunity1", "opportunity2"]
@@ -280,30 +294,23 @@ Respond in JSON format ONLY:
       try {
         const result = JSON.parse(analysis);
 
-        // Calculate position size with minimum enforcement
-        // Allow up to 80% for small balances, 40% for larger ones
-        const maxPercent = availableBalance < 50 ? 80 : 40;
-        let positionSizePercent = Math.min(maxPercent, Math.max(0, result.positionSizePercent || 0));
-        let calculatedPositionSize = (availableBalance * positionSizePercent) / 100;
+        // Validate and normalize riskLevel
+        const validRiskLevels = ['SAFE', 'MODERATE', 'RISKY'];
+        let riskLevel: 'SAFE' | 'MODERATE' | 'RISKY' = 'MODERATE'; // Default to MODERATE
 
-        // IMPORTANT: Enforce minimum position size of $10 to avoid "too small" errors
-        const MIN_POSITION_SIZE = 10; // $10 minimum
-
-        if (result.shouldExecute && calculatedPositionSize < MIN_POSITION_SIZE && availableBalance >= MIN_POSITION_SIZE) {
-          // Increase percentage to meet minimum
-          positionSizePercent = Math.min(100, (MIN_POSITION_SIZE / availableBalance) * 100);
-          calculatedPositionSize = MIN_POSITION_SIZE;
-          console.log(`📊 Adjusted position size to minimum: ${positionSizePercent.toFixed(1)}% ($${calculatedPositionSize}) for ${signal.symbol}`);
+        if (result.riskLevel && validRiskLevels.includes(result.riskLevel.toUpperCase())) {
+          riskLevel = result.riskLevel.toUpperCase() as 'SAFE' | 'MODERATE' | 'RISKY';
         }
+
+        console.log(`🎯 LLM Risk Classification: ${riskLevel}`);
 
         return {
           shouldExecute: result.shouldExecute || false,
+          riskLevel,
           reasoning: result.reasoning || 'No reasoning provided',
-          positionSizePercent: positionSizePercent,
           recommendedEntry: result.recommendedEntry || signal.targetPrice || null,
           stopLossPrice: result.stopLossPrice || signal.stopLoss || null,
           takeProfitPrice: result.takeProfitPrice || null,
-          maxRiskPercent: Math.min(5, Math.max(1, result.maxRiskPercent || 2)),
           confidence: Math.min(1, Math.max(0, result.confidence || 0.5)),
           keyRisks: Array.isArray(result.keyRisks) ? result.keyRisks : [],
           keyOpportunities: Array.isArray(result.keyOpportunities) ? result.keyOpportunities : [],
@@ -313,12 +320,11 @@ Respond in JSON format ONLY:
         console.warn('Failed to parse LLM response, using conservative fallback');
         return {
           shouldExecute: false,
+          riskLevel: 'RISKY' as const,
           reasoning: 'LLM response parsing failed - rejecting for safety',
-          positionSizePercent: 0,
           recommendedEntry: signal.targetPrice || null,
           stopLossPrice: signal.stopLoss || null,
           takeProfitPrice: null,
-          maxRiskPercent: 2,
           confidence: 0,
           keyRisks: ['LLM parsing error'],
           keyOpportunities: [],
@@ -329,12 +335,11 @@ Respond in JSON format ONLY:
       // Return conservative decision on error
       return {
         shouldExecute: false,
+        riskLevel: 'RISKY' as const,
         reasoning: 'LLM unavailable - rejecting for safety',
-        positionSizePercent: 0,
         recommendedEntry: null,
         stopLossPrice: null,
         takeProfitPrice: null,
-        maxRiskPercent: 2,
         confidence: 0,
         keyRisks: ['LLM error'],
         keyOpportunities: [],

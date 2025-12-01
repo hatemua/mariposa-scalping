@@ -302,11 +302,23 @@ RECENT PRICE ACTION (last 50 candles):
 ${JSON.stringify(recentKlines.slice(-10), null, 2)}
 
 TASK:
-Analyze if price is at a key Fibonacci level for entry. Look for:
-1. Price bouncing off 61.8% or 78.6% retracement (Golden Pocket)
-2. Price respecting Fibonacci levels with confirmations
-3. Fibonacci extension targets for take profit
-4. Confluence with indicators (RSI oversold at Fib support, etc.)
+Analyze if price is at a key Fibonacci level for entry. Consider BOTH long and short opportunities.
+
+BULLISH SETUP (recommend BUY):
+1. Price bouncing off 61.8% or 78.6% retracement (Golden Pocket) in UPTREND
+2. Price respecting Fibonacci support levels with confirmations
+3. RSI oversold at Fib support level
+4. Price pulling back to test previous breakout level
+
+BEARISH SETUP (recommend SELL):
+1. Price rejecting at 61.8% or 78.6% retracement in DOWNTREND
+2. Price failing at Fibonacci resistance levels (38.2%, 50%, 61.8%)
+3. RSI overbought at Fib resistance level
+4. Price retracing up into a sell zone (premium zone above 50% in downtrend)
+5. Failed breakout - price pushed above Fib level but immediately rejected
+
+CRITICAL: In a DOWNTREND, if price retraces to 50%-61.8% and shows rejection, recommend SELL.
+Use Fibonacci extension levels for take profit targets.
 
 Respond ONLY with valid JSON (no markdown):
 {
@@ -390,13 +402,25 @@ RECENT PRICE ACTION (last 50 candles):
 ${JSON.stringify(recentKlines.slice(-15), null, 2)}
 
 TASK:
-Identify chart patterns such as:
-- Head and Shoulders (bullish/bearish)
-- Triangles (ascending, descending, symmetrical)
-- Flags and Pennants
-- Wedges (rising, falling)
-- Double Tops / Double Bottoms
+Identify chart patterns. Be EQUALLY attentive to BEARISH and BULLISH patterns.
 
+BULLISH PATTERNS (signal BUY):
+- Inverse Head and Shoulders (bottom reversal)
+- Ascending Triangle (breakout up)
+- Bull Flag / Bullish Pennant
+- Falling Wedge (reversal up)
+- Double Bottom / Triple Bottom
+- Cup and Handle
+
+BEARISH PATTERNS (signal SELL):
+- Head and Shoulders Top (major reversal signal)
+- Descending Triangle (breakdown)
+- Bear Flag / Bearish Pennant
+- Rising Wedge (reversal down)
+- Double Top / Triple Top
+- Failed Breakout at resistance (price rejected after attempted breakout)
+
+IMPORTANT: If you detect a BEARISH pattern, you MUST recommend SELL.
 Analyze pattern completion percentage, breakout direction, and invalidation levels.
 
 Respond ONLY with valid JSON (no markdown):
@@ -480,14 +504,28 @@ RECENT CANDLESTICKS (last 30 candles):
 ${JSON.stringify(recentKlines.slice(-10), null, 2)}
 
 TASK:
-Identify candlestick patterns such as:
-- Engulfing (bullish/bearish)
-- Doji, Hammer, Hanging Man
-- Shooting Star, Inverted Hammer
-- Morning Star, Evening Star
-- Piercing Line, Dark Cloud Cover
-- Three White Soldiers, Three Black Crows
+Identify candlestick patterns. Be EQUALLY attentive to BEARISH and BULLISH patterns.
 
+BULLISH PATTERNS (signal BUY):
+- Bullish Engulfing (especially at support)
+- Hammer (long lower wick, at support)
+- Inverted Hammer (at bottom)
+- Morning Star (3-candle reversal)
+- Piercing Line
+- Three White Soldiers
+- Tweezer Bottom
+
+BEARISH PATTERNS (signal SELL):
+- Bearish Engulfing (ESPECIALLY at resistance - strong SELL signal)
+- Shooting Star (long upper wick, at resistance)
+- Hanging Man (at top)
+- Evening Star (3-candle reversal - SELL)
+- Dark Cloud Cover
+- Three Black Crows
+- Tweezer Top
+- Gravestone Doji (at resistance)
+
+CRITICAL: If price is at/near resistance AND you see bearish patterns, you MUST recommend SELL.
 Focus on recent patterns (last 5-10 candles) and their significance.
 
 Respond ONLY with valid JSON (no markdown):
@@ -573,13 +611,30 @@ RECENT PRICE ACTION (last 50 candles):
 ${JSON.stringify(recentKlines.slice(-15), null, 2)}
 
 TASK:
-Identify key support and resistance levels:
+Identify key support and resistance levels AND determine if we should BUY or SELL.
+
+KEY LEVELS TO IDENTIFY:
 1. Horizontal support/resistance (multiple touches)
-2. Dynamic S/R (moving averages)
+2. Dynamic S/R (moving averages - EMA20, EMA50, SMA200)
 3. Trendlines (ascending/descending)
 4. Order blocks and institutional levels
 5. Previous highs/lows
 
+BEARISH SIGNALS (recommend SELL):
+- Price rejected at strong resistance (failed to break through)
+- Lower highs forming (downtrend structure)
+- Support breakdown imminent (price testing support multiple times)
+- Price below EMA20 AND EMA50 (bearish momentum)
+- Descending trendline respected
+
+BULLISH SIGNALS (recommend BUY):
+- Price bouncing off strong support
+- Higher lows forming (uptrend structure)
+- Resistance breakout imminent
+- Price above EMA20 AND EMA50 (bullish momentum)
+- Ascending trendline respected
+
+CRITICAL: If price is at resistance and showing rejection, recommend SELL.
 Determine current price context and nearest levels.
 
 Respond ONLY with valid JSON (no markdown):
@@ -636,11 +691,41 @@ Respond ONLY with valid JSON (no markdown):
 
   /**
    * Extract vote from reasoning text (fallback when recommendation field missing)
+   * Fixed: Now counts keyword occurrences to avoid BUY bias when both directions mentioned
    */
   private extractVoteFromReasoning(reasoning: string): 'BUY' | 'SELL' | 'HOLD' {
     const upper = reasoning.toUpperCase();
-    if (upper.includes('BUY') || upper.includes('BULLISH')) return 'BUY';
-    if (upper.includes('SELL') || upper.includes('BEARISH')) return 'SELL';
+
+    // Check for explicit recommendation patterns first (highest priority)
+    const explicitSellPatterns = ['RECOMMEND SELL', 'RECOMMENDATION: SELL', 'RECOMMENDATION:"SELL',
+      'SUGGESTS SELL', 'ADVISE SELL', 'SIGNAL: SELL', 'ACTION: SELL'];
+    const explicitBuyPatterns = ['RECOMMEND BUY', 'RECOMMENDATION: BUY', 'RECOMMENDATION:"BUY',
+      'SUGGESTS BUY', 'ADVISE BUY', 'SIGNAL: BUY', 'ACTION: BUY'];
+
+    for (const pattern of explicitSellPatterns) {
+      if (upper.includes(pattern)) return 'SELL';
+    }
+    for (const pattern of explicitBuyPatterns) {
+      if (upper.includes(pattern)) return 'BUY';
+    }
+
+    // Count directional keywords (avoids bias when both directions mentioned)
+    const bullishKeywords = ['BUY', 'BULLISH', 'LONG', 'UPWARD', 'BOUNCE', 'SUPPORT HOLDING', 'BREAKOUT'];
+    const bearishKeywords = ['SELL', 'BEARISH', 'SHORT', 'DOWNWARD', 'DROP', 'RESISTANCE REJECTED', 'BREAKDOWN'];
+
+    let bullishCount = 0;
+    let bearishCount = 0;
+
+    for (const keyword of bullishKeywords) {
+      if (upper.includes(keyword)) bullishCount++;
+    }
+    for (const keyword of bearishKeywords) {
+      if (upper.includes(keyword)) bearishCount++;
+    }
+
+    // Return based on which direction has more keywords
+    if (bearishCount > bullishCount) return 'SELL';
+    if (bullishCount > bearishCount) return 'BUY';
     return 'HOLD';
   }
 

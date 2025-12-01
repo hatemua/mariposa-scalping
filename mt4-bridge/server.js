@@ -67,23 +67,48 @@ const authenticate = (req, res, next) => {
 // ZeroMQ socket setup with request queue
 const zmqHost = process.env.ZMQ_HOST || 'localhost';
 const zmqPort = process.env.ZMQ_PORT || 5555;
+const ZMQ_TIMEOUT_MS = parseInt(process.env.ZMQ_TIMEOUT_MS) || 10000;  // 10s default (was 5s)
+const ZMQ_MAX_RETRIES = parseInt(process.env.ZMQ_MAX_RETRIES) || 2;    // 2 retries = 3 total attempts
+const ZMQ_RECONNECT_THRESHOLD = 5;  // Reconnect after 5 consecutive failures
+
 let sock;
 let requestId = 0;
 let isProcessing = false;
 const requestQueue = [];
+
+// Health tracking
+let lastSuccessfulRequest = Date.now();
+let consecutiveFailures = 0;
 
 async function initZMQ() {
   try {
     sock = new zmq.Request();
     sock.connect(`tcp://${zmqHost}:${zmqPort}`);
     logger.info(`ZMQ connected to tcp://${zmqHost}:${zmqPort}`);
+    logger.info(`ZMQ timeout: ${ZMQ_TIMEOUT_MS}ms, max retries: ${ZMQ_MAX_RETRIES}`);
   } catch (error) {
     logger.error('Failed to connect to ZMQ:', error);
     throw error;
   }
 }
 
-// Process queued requests sequentially
+// Reconnect ZMQ socket after persistent failures
+async function reconnectZMQ() {
+  logger.warn('Attempting ZMQ socket reconnection due to persistent failures...');
+  try {
+    if (sock) {
+      sock.close();
+    }
+    sock = new zmq.Request();
+    sock.connect(`tcp://${zmqHost}:${zmqPort}`);
+    consecutiveFailures = 0;
+    logger.info('ZMQ socket reconnected successfully');
+  } catch (error) {
+    logger.error('Failed to reconnect ZMQ socket:', error);
+  }
+}
+
+// Process queued requests sequentially with retry logic
 async function processQueue() {
   if (isProcessing || requestQueue.length === 0) {
     return;
@@ -93,43 +118,84 @@ async function processQueue() {
 
   while (requestQueue.length > 0) {
     const { request, resolve, reject } = requestQueue.shift();
+    let lastError = null;
+    let success = false;
 
-    try {
-      logger.debug('Processing queued MT4 request:', request);
-
-      await sock.send(JSON.stringify(request));
-
-      const timeoutMs = 10000;
-      const response = await Promise.race([
-        sock.receive(),
-        new Promise((_, rej) =>
-          setTimeout(() => rej(new Error('Request timeout')), timeoutMs)
-        )
-      ]);
-
-      const rawResponse = response.toString();
-      logger.info('Raw MT4 response:', rawResponse);
-
-      let result;
+    // Retry loop
+    for (let attempt = 0; attempt <= ZMQ_MAX_RETRIES && !success; attempt++) {
       try {
-        result = JSON.parse(rawResponse);
-      } catch (parseError) {
-        logger.error('JSON parse error. Raw response:', rawResponse);
-        logger.error('Parse error details:', parseError.message);
-        reject(new Error('Invalid JSON from MT4: ' + parseError.message));
-        return;
-      }
+        if (attempt > 0) {
+          logger.warn(`Retry attempt ${attempt}/${ZMQ_MAX_RETRIES} for request ${request.id} (${request.command})`);
+          // Small delay before retry
+          await new Promise(r => setTimeout(r, 500 * attempt));
+        }
 
-      logger.debug('Parsed MT4 response:', result);
+        logger.debug('Processing MT4 request:', { id: request.id, command: request.command, attempt });
 
-      if (result.error) {
-        reject(new Error(result.error));
-      } else {
-        resolve(result.data);
+        await sock.send(JSON.stringify(request));
+
+        const response = await Promise.race([
+          sock.receive(),
+          new Promise((_, rej) =>
+            setTimeout(() => rej(new Error('Request timeout')), ZMQ_TIMEOUT_MS)
+          )
+        ]);
+
+        const rawResponse = response.toString();
+        logger.info('Raw MT4 response:', rawResponse);
+
+        let result;
+        try {
+          result = JSON.parse(rawResponse);
+        } catch (parseError) {
+          logger.error('JSON parse error. Raw response:', rawResponse);
+          logger.error('Parse error details:', parseError.message);
+          lastError = new Error('Invalid JSON from MT4: ' + parseError.message);
+          continue; // Retry on parse error
+        }
+
+        logger.debug('Parsed MT4 response:', result);
+
+        // Success! Update health tracking
+        lastSuccessfulRequest = Date.now();
+        consecutiveFailures = 0;
+        success = true;
+
+        if (result.error) {
+          // Return errors as structured response (don't reject to avoid HTTP 500)
+          resolve({ success: false, data: null, error: result.error, errorType: 'MT4_ERROR' });
+        } else {
+          // Wrap successful response with standardized format
+          resolve({ success: true, data: result.data, error: null });
+        }
+
+      } catch (error) {
+        lastError = error;
+        logger.warn(`MT4 request attempt ${attempt + 1}/${ZMQ_MAX_RETRIES + 1} failed:`, error.message);
+
+        // Track consecutive failures
+        consecutiveFailures++;
+
+        // Check if we need to reconnect
+        if (consecutiveFailures >= ZMQ_RECONNECT_THRESHOLD) {
+          logger.error(`${consecutiveFailures} consecutive failures - triggering ZMQ reconnection`);
+          await reconnectZMQ();
+        }
       }
-    } catch (error) {
-      logger.error('MT4 request failed:', error);
-      reject(error);
+    }
+
+    // If all retries failed, resolve with error (don't reject to avoid unhandled promise)
+    if (!success) {
+      logger.error(`MT4 request ${request.id} (${request.command}) failed after ${ZMQ_MAX_RETRIES + 1} attempts:`, lastError?.message);
+
+      const errorType = lastError?.message?.includes('timeout') ? 'TIMEOUT' : 'ZMQ_ERROR';
+      resolve({
+        success: false,
+        data: null,
+        error: lastError?.message || 'Unknown error after retries',
+        errorType: errorType,
+        retries: ZMQ_MAX_RETRIES + 1
+      });
     }
 
     // Small delay between requests
@@ -157,12 +223,32 @@ async function sendMT4Request(command, params = {}) {
 
 // API Routes
 
-// Health check
+// Health check (no auth - for quick status check)
 app.get('/api/v1/ping', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: Date.now(),
     zmq_connected: sock !== null
+  });
+});
+
+// Detailed health endpoint (with auth - for monitoring)
+app.get('/api/v1/health', authenticate, (req, res) => {
+  const timeSinceLastSuccess = Date.now() - lastSuccessfulRequest;
+  const healthy = timeSinceLastSuccess < 30000; // Healthy if success within 30s
+
+  res.json({
+    status: healthy ? 'healthy' : 'degraded',
+    zmq_connected: sock !== null,
+    last_success_ms: timeSinceLastSuccess,
+    last_success_ago: `${Math.round(timeSinceLastSuccess / 1000)}s ago`,
+    consecutive_failures: consecutiveFailures,
+    queue_depth: requestQueue.length,
+    config: {
+      timeout_ms: ZMQ_TIMEOUT_MS,
+      max_retries: ZMQ_MAX_RETRIES,
+      reconnect_threshold: ZMQ_RECONNECT_THRESHOLD
+    }
   });
 });
 
@@ -172,7 +258,7 @@ app.get('/api/v1/account/info', authenticate, async (req, res) => {
     const data = await sendMT4Request('GET_ACCOUNT_INFO');
     res.json(data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message, data: null });
   }
 });
 
@@ -182,7 +268,7 @@ app.get('/api/v1/symbols', authenticate, async (req, res) => {
     const data = await sendMT4Request('GET_SYMBOLS');
     res.json(data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message, data: null });
   }
 });
 
@@ -193,7 +279,7 @@ app.get('/api/v1/price/:symbol', authenticate, async (req, res) => {
     const data = await sendMT4Request('GET_PRICE', { symbol });
     res.json(data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message, data: null });
   }
 });
 
@@ -203,7 +289,7 @@ app.get('/api/v1/orders/open', authenticate, async (req, res) => {
     const data = await sendMT4Request('GET_OPEN_ORDERS');
     res.json(data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message, data: null });
   }
 });
 
@@ -214,7 +300,20 @@ app.get('/api/v1/orders/:ticket', authenticate, async (req, res) => {
     const data = await sendMT4Request('GET_ORDER', { ticket: parseInt(ticket) });
     res.json(data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message, data: null });
+  }
+});
+
+// Diagnostic endpoint - check trading permissions
+app.get('/api/v1/diagnose/:symbol?', authenticate, async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    logger.info('Running trading diagnostics' + (symbol ? ' for symbol: ' + symbol : ''));
+    const data = await sendMT4Request('DIAGNOSE', { symbol: symbol || '' });
+    res.json(data);
+  } catch (error) {
+    logger.error('Diagnostic request failed:', error);
+    res.status(500).json({ success: false, error: error.message, data: null });
   }
 });
 
@@ -224,7 +323,7 @@ app.post('/api/v1/orders', authenticate, async (req, res) => {
     const { symbol, side, volume, stopLoss, takeProfit, comment } = req.body;
 
     if (!symbol || !side || !volume) {
-      return res.status(400).json({ error: 'Missing required fields' });
+      return res.status(400).json({ success: false, error: 'Missing required fields', data: null });
     }
 
     const data = await sendMT4Request('CREATE_ORDER', {
@@ -238,7 +337,7 @@ app.post('/api/v1/orders', authenticate, async (req, res) => {
 
     res.json(data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message, data: null });
   }
 });
 
@@ -250,13 +349,13 @@ app.post('/api/v1/orders/close', authenticate, async (req, res) => {
 
     if (!ticket) {
       logger.error('Missing ticket number in request body');
-      return res.status(400).json({ error: 'Missing ticket number' });
+      return res.status(400).json({ success: false, error: 'Missing ticket number', data: null });
     }
 
     const ticketNum = parseInt(ticket);
     if (isNaN(ticketNum) || ticketNum <= 0) {
       logger.error('Invalid ticket number:', ticket);
-      return res.status(400).json({ error: 'Invalid ticket number. Must be a positive integer' });
+      return res.status(400).json({ success: false, error: 'Invalid ticket number. Must be a positive integer', data: null });
     }
 
     logger.info('Sending CLOSE_ORDER request to MT4 for ticket:', ticketNum);
@@ -268,7 +367,7 @@ app.post('/api/v1/orders/close', authenticate, async (req, res) => {
     res.json(data);
   } catch (error) {
     logger.error('Close order error:', error.message, error.stack);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message, data: null });
   }
 });
 
@@ -283,7 +382,7 @@ app.post('/api/v1/orders/close-all', authenticate, async (req, res) => {
 
     res.json(data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message, data: null });
   }
 });
 
@@ -301,7 +400,7 @@ app.put('/api/v1/orders/:ticket', authenticate, async (req, res) => {
 
     res.json(data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message, data: null });
   }
 });
 

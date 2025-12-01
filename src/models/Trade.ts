@@ -92,7 +92,7 @@ const TradeSchema = new Schema<TradeDocument>({
   },
   closeReason: {
     type: String,
-    enum: ['manual', 'sell-signal', 'market-drop', 'stop-loss', 'take-profit'],
+    enum: ['manual', 'sell-signal', 'market-drop', 'stop-loss', 'take-profit', 'early-exit-llm'],
   },
 }, {
   timestamps: true,

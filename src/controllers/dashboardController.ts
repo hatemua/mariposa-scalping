@@ -7,6 +7,7 @@ import { metricsCacheService } from '../services/metricsCacheService';
 import { exportService } from '../services/exportService';
 import { orderEvaluationService } from '../services/orderEvaluationService';
 import { signalBroadcastService } from '../services/signalBroadcastService';
+import { profitEstimationService } from '../services/profitEstimationService';
 
 /**
  * Get dashboard summary with all aggregated metrics
@@ -365,6 +366,46 @@ export const invalidateCache = async (req: AuthRequest, res: Response): Promise<
     res.status(500).json({
       success: false,
       error: 'Failed to invalidate cache',
+    } as ApiResponse);
+  }
+};
+
+/**
+ * Get profit estimation report
+ * Query params:
+ *   - budget (default: 5000)
+ *   - parallelOrders (default: 3)
+ *   - amountPerOrder (default: 900)
+ *   - days (historical lookback, default: 30)
+ */
+export const getProfitEstimation = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user._id.toString();
+
+    // Parse config from query params
+    const config = {
+      totalBudget: req.query.budget ? parseFloat(String(req.query.budget)) : 5000,
+      parallelOrders: req.query.parallelOrders ? parseInt(String(req.query.parallelOrders)) : 3,
+      amountPerOrder: req.query.amountPerOrder ? parseFloat(String(req.query.amountPerOrder)) : 900,
+      cryptoPipValue: req.query.pipValue ? parseFloat(String(req.query.pipValue)) : 10,
+    };
+
+    const days = req.query.days ? parseInt(String(req.query.days)) : 30;
+
+    const report = await profitEstimationService.generateProfitEstimation(userId, config, days);
+
+    // Log summary for debugging
+    console.log(profitEstimationService.formatReportSummary(report));
+
+    res.json({
+      success: true,
+      data: report,
+    } as ApiResponse);
+  } catch (error) {
+    console.error('Error getting profit estimation:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get profit estimation',
     } as ApiResponse);
   }
 };

@@ -169,13 +169,26 @@ export class SymbolMappingService {
 
   /**
    * Get symbol information
+   * Searches by universal format first, then by broker-specific formats
+   * This handles cases like BTCUSDT (Binance) → BTCUSD (universal)
    */
-  async getSymbolInfo(universalSymbol: string): Promise<SymbolMapping | null> {
+  async getSymbolInfo(inputSymbol: string): Promise<SymbolMapping | null> {
     try {
-      const mapping = this.STATIC_MAPPINGS.find(m => m.universal === universalSymbol);
+      // First try universal format
+      let mapping = this.STATIC_MAPPINGS.find(m => m.universal === inputSymbol);
+
+      // If not found, search all broker formats (handles BTCUSDT → BTCUSD)
+      if (!mapping) {
+        mapping = this.STATIC_MAPPINGS.find(m =>
+          m.okx === inputSymbol ||
+          m.mt4 === inputSymbol ||
+          m.binance === inputSymbol
+        );
+      }
+
       return mapping || null;
     } catch (error) {
-      console.error(`Error getting symbol info for ${universalSymbol}:`, error);
+      console.error(`Error getting symbol info for ${inputSymbol}:`, error);
       return null;
     }
   }

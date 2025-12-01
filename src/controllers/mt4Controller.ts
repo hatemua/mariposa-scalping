@@ -446,7 +446,7 @@ export const calculateMT4LotSize = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    const { symbol, usdtAmount } = req.body;
+    const { symbol, usdtAmount, stopLoss, entryPrice } = req.body;
 
     if (!symbol || !usdtAmount) {
       res.status(400).json({
@@ -456,13 +456,22 @@ export const calculateMT4LotSize = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    const lotSize = await mt4Service.calculateLotSize(userId, symbol, usdtAmount);
+    // Pass optional stopLoss and entryPrice for dynamic position sizing
+    const lotSize = await mt4Service.calculateLotSize(
+      userId,
+      symbol,
+      usdtAmount,
+      stopLoss,    // Optional: enables risk-based calculation
+      entryPrice   // Optional: entry price for accurate SL distance
+    );
 
     res.json({
       success: true,
       data: {
         symbol: symbol,
         usdtAmount: usdtAmount,
+        stopLoss: stopLoss,
+        entryPrice: entryPrice,
         lotSize: lotSize
       }
     } as ApiResponse);

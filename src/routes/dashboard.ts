@@ -13,6 +13,7 @@ import {
   getLLMPerformance,
   getValidatedSignals,
   invalidateCache,
+  getProfitEstimation,
 } from '../controllers/dashboardController';
 import { authenticate } from '../middleware/auth';
 
@@ -53,5 +54,8 @@ router.get('/signals', getValidatedSignals);
 
 // Cache management
 router.post('/cache/invalidate', invalidateCache);
+
+// Profit estimation
+router.get('/profit-estimation', getProfitEstimation);
 
 export default router;

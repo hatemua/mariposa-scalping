@@ -16,7 +16,13 @@ export interface MT4PositionData {
   profit?: number;
   openedAt: Date;
   closedAt?: Date;
-  closeReason?: 'manual' | 'sell-signal' | 'market-drop' | 'take-profit' | 'stop-loss';
+  closeReason?: 'manual' | 'sell-signal' | 'market-drop' | 'take-profit' | 'stop-loss' | 'mt4-already-closed' | 'trailing-stop' | 'break-even' | 'early-exit-llm';
+  // Break-even and trailing stop management
+  breakEvenActivated?: boolean;
+  breakEvenPrice?: number;
+  trailingStopActivated?: boolean;
+  highestProfitPrice?: number; // Highest price reached (for BUY) or lowest (for SELL)
+  originalStopLoss?: number; // Original SL for reference
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -99,7 +105,28 @@ const MT4PositionSchema = new Schema<MT4PositionDocument>({
   },
   closeReason: {
     type: String,
-    enum: ['manual', 'sell-signal', 'market-drop', 'take-profit', 'stop-loss'],
+    enum: ['manual', 'sell-signal', 'market-drop', 'take-profit', 'stop-loss', 'mt4-already-closed', 'trailing-stop', 'break-even', 'early-exit-llm'],
+  },
+  // Break-even and trailing stop management
+  breakEvenActivated: {
+    type: Boolean,
+    default: false,
+  },
+  breakEvenPrice: {
+    type: Number,
+    min: 0,
+  },
+  trailingStopActivated: {
+    type: Boolean,
+    default: false,
+  },
+  highestProfitPrice: {
+    type: Number,
+    min: 0,
+  },
+  originalStopLoss: {
+    type: Number,
+    min: 0,
   },
 }, {
   timestamps: true,

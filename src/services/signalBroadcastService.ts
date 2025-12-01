@@ -17,7 +17,17 @@ interface BroadcastSignal {
   category?: string;
   priority: number;
   timestamp: Date;
+  // NEW: Quality score from signal generation (bypass LLM validation)
+  qualityScore?: {
+    total: number;
+    grade: 'A' | 'B' | 'C' | 'D';
+    positionSizeMultiplier: number;
+  };
+  positionSizeMultiplier?: number; // Final multiplier including HTF adjustments
 }
+
+// Base position size for grade-based trading
+const BASE_POSITION_SIZE_USD = 800;
 
 interface ValidatedSignalForAgent {
   signalId: string;
@@ -36,12 +46,15 @@ interface ValidatedSignalForAgent {
   // Execution parameters from LLM validation
   positionSize: number;
   positionSizePercent: number;
+  riskLevel: 'SAFE' | 'MODERATE' | 'RISKY'; // Risk classification for position sizing
   stopLossPrice: number | null;
   takeProfitPrice: number | null;
   recommendedEntry: number | null;
-  maxRiskPercent: number;
   keyRisks: string[];
   keyOpportunities: string[];
+  // NEW: Quality score fields (for bypassing LLM validation)
+  qualityGrade?: 'A' | 'B' | 'C' | 'D';
+  llmConsensus?: any; // Pass through from original signal
 }
 
 export class SignalBroadcastService {
@@ -86,6 +99,8 @@ export class SignalBroadcastService {
 
       // FIRST PASS: Filter eligibility and log exclusions
       for (const agent of allAgents) {
+        console.log(`🔍 [DEBUG] Checking eligibility for agent: ${agent.name} (${agent.broker}) | Category: ${agent.category} | Active: ${agent.isActive} | Allowed categories: [${agent.allowedSignalCategories?.join(', ') || 'none'}]`);
+
         const exclusionReasons = await this.checkAgentEligibility(agent, signal);
 
         if (exclusionReasons.length > 0) {
@@ -107,9 +122,10 @@ export class SignalBroadcastService {
             processedAt: new Date()
           });
 
-          console.log(`Agent ${agent.name} excluded: ${exclusionReasons.join(', ')}`);
+          console.log(`❌ [DEBUG] Agent ${agent.name} EXCLUDED: ${exclusionReasons.join(', ')}`);
         } else {
           // Agent is ELIGIBLE
+          console.log(`✅ [DEBUG] Agent ${agent.name} ELIGIBLE for signal ${signal.id}`);
           eligibleAgents.push(agent);
         }
       }
@@ -117,124 +133,70 @@ export class SignalBroadcastService {
       const eligibleMT4Agents = eligibleAgents.filter(a => a.broker === 'MT4');
       console.log(`[DEBUG] Eligible agents: ${eligibleAgents.length} (${eligibleMT4Agents.length} MT4), Excluded: ${excludedCount}`);
 
-      // SECOND PASS: Validate signal for each eligible agent in BATCHES
-      // Batch validation to avoid overwhelming LLM API (prioritize Fibonacci scalping)
-      const batchSize = signal.category === 'FIBONACCI_SCALPING' ? 2 : 3; // Smaller batches for Fibonacci
-      const validationPromises: Promise<ValidatedSignalForAgent | null>[] = [];
+      // SECOND PASS: Validate signal for each eligible agent
+      // BYPASS LLM validation if qualityScore is present (signal already validated by 4 LLMs)
+      const bypassLLMValidation = !!(signal.category === 'FIBONACCI_SCALPING' && signal.qualityScore);
 
-      for (let i = 0; i < eligibleAgents.length; i += batchSize) {
-        const batch = eligibleAgents.slice(i, i + batchSize);
-        const batchPromises = batch.map(async (agent) => {
-        try {
-          // Create validation signal with agentId
-          const validationSignal = {
-            ...signal,
-            agentId: (agent._id as any).toString(),
-          };
+      // CRITICAL FIX: Process MT4 agents SEQUENTIALLY to prevent race conditions
+      // The RiskManager uses mutex locks, but sequential processing ensures
+      // position limits are enforced properly between checks
+      const mt4EligibleAgents = eligibleAgents.filter(a => a.broker === 'MT4');
+      const nonMT4EligibleAgents = eligibleAgents.filter(a => a.broker !== 'MT4');
 
-          const validationResult = await signalValidationService.validateSignalForAgent(
-            validationSignal,
-            (agent._id as any).toString()
-          );
+      if (bypassLLMValidation) {
+        console.log(`⚡ BYPASSING LLM validation - signal already validated by 4 LLMs (Grade ${signal.qualityScore?.grade})`);
+      }
 
-          const validatedSignal: ValidatedSignalForAgent = {
-            signalId: signal.id,
-            agentId: (agent._id as any).toString(),
-            agentName: agent.name,
-            symbol: signal.symbol,
-            recommendation: signal.recommendation,
-            isValid: validationResult.isValid,
-            llmValidationScore: validationResult.confidence * 100, // Convert confidence to score
-            winProbability: validationResult.confidence,
-            reasoning: validationResult.reasoning,
-            rejectionReasons: validationResult.isValid ? [] : [validationResult.reasoning],
-            riskRewardRatio: 0, // No longer calculated - LLM handles this
-            timestamp: new Date(),
-            category: signal.category, // NEW: Pass through signal category for priority routing
-            // CRITICAL: Include execution parameters from LLM validation
-            positionSize: validationResult.positionSize,
-            positionSizePercent: validationResult.positionSizePercent,
-            stopLossPrice: validationResult.stopLossPrice,
-            takeProfitPrice: validationResult.takeProfitPrice,
-            recommendedEntry: validationResult.stopLossPrice, // Use stop loss as entry fallback
-            maxRiskPercent: validationResult.maxRiskPercent,
-            keyRisks: validationResult.keyRisks,
-            keyOpportunities: validationResult.keyOpportunities,
-          };
+      // Process MT4 agents SEQUENTIALLY (prevents race conditions)
+      if (mt4EligibleAgents.length > 0) {
+        console.log(`🔒 Processing ${mt4EligibleAgents.length} MT4 agents SEQUENTIALLY to prevent race conditions`);
 
-          if (validationResult.isValid) {
-            validatedCount++;
-            validatedSignals.push(validatedSignal);
-
-            // MT4 signals: Execute immediately without queueing (ultra-low latency)
-            // Other brokers: Queue for execution (rate limiting, scheduling)
-            if (agent.broker === 'MT4') {
-              await this.executeMT4SignalDirectly(agent, validatedSignal, signal);
+        for (const agent of mt4EligibleAgents) {
+          const result = await this.processAgentSignal(agent, signal, bypassLLMValidation);
+          if (result) {
+            validatedSignals.push(result);
+            if (result.isValid) {
+              validatedCount++;
             } else {
-              await this.queueValidatedSignal(validatedSignal);
+              rejectedCount++;
             }
-          } else {
-            rejectedCount++;
-            console.log(
-              `Signal ${signal.id} rejected for agent ${agent.name}: ${validationResult.reasoning}`
-            );
           }
-
-          validatedSignals.push(validatedSignal);
-
-          // Log agent validation to database
-          await signalDatabaseLoggingService.logAgentValidation({
-            signalId: signal.id,
-            agentId: (agent._id as any).toString(),
-            agentName: agent.name,
-            agentCategory: agent.category || 'ALL',
-            agentRiskLevel: agent.riskLevel,
-            agentBudget: agent.budget,
-            agentStatus: agent.isActive ? 'RUNNING' : 'STOPPED',
-            symbol: signal.symbol,
-            recommendation: signal.recommendation,
-            signalCategory: signal.category,
-            isValid: validationResult.isValid,
-            llmValidationScore: validationResult.confidence * 100,
-            winProbability: validationResult.confidence,
-            reasoning: validationResult.reasoning,
-            rejectionReasons: validationResult.isValid ? [] : [validationResult.reasoning],
-            riskRewardRatio: 0,
-            marketConditions: validationResult.marketConditions,
-            positionSize: validationResult.positionSize,
-            availableBalance: validationResult.availableBalance,
-            processedAt: new Date(),
-            validatedAt: new Date()
-          });
-
-          // Publish to agent-specific channel
-          await redisService.publish(`signal:agent:${agent._id}`, {
-            type: 'signal_validated',
-            data: validatedSignal,
-          });
-
-          return validatedSignal;
-        } catch (error) {
-          console.error(`Error validating signal for agent ${agent._id}:`, error);
-          rejectedCount++;
-          return null;
-        }
-        });
-
-        // Process batch concurrently
-        const batchResults = await Promise.all(batchPromises);
-        validationPromises.push(...batchResults.map(r => Promise.resolve(r)));
-
-        // Small delay between batches to prevent LLM API rate limiting
-        // Skip delay for last batch
-        if (i + batchSize < eligibleAgents.length) {
-          await new Promise(resolve => setTimeout(resolve, 400)); // 400ms between batches
-          console.log(`  Processed batch ${Math.floor(i / batchSize) + 1}, waiting 400ms before next batch...`);
         }
       }
 
-      // Wait for all batches to complete (already resolved, just collecting)
-      await Promise.all(validationPromises);
+      // Process non-MT4 agents in batches (parallel is OK for other brokers)
+      if (nonMT4EligibleAgents.length > 0) {
+        console.log(`🔄 Processing ${nonMT4EligibleAgents.length} non-MT4 agents in parallel batches`);
+
+        const batchSize = bypassLLMValidation ? 5 : 3;
+
+        for (let i = 0; i < nonMT4EligibleAgents.length; i += batchSize) {
+          const batch = nonMT4EligibleAgents.slice(i, i + batchSize);
+          const batchPromises = batch.map(agent => this.processAgentSignal(agent, signal, bypassLLMValidation));
+
+          // Process batch concurrently
+          const batchResults = await Promise.all(batchPromises);
+
+          // Collect results
+          for (const result of batchResults) {
+            if (result) {
+              validatedSignals.push(result);
+              if (result.isValid) {
+                validatedCount++;
+              } else {
+                rejectedCount++;
+              }
+            }
+          }
+
+          // Small delay between batches to prevent LLM API rate limiting
+          // Skip delay for last batch
+          if (i + batchSize < nonMT4EligibleAgents.length) {
+            await new Promise(resolve => setTimeout(resolve, 400)); // 400ms between batches
+            console.log(`  Processed batch ${Math.floor(i / batchSize) + 1}, waiting 400ms before next batch...`);
+          }
+        }
+      }
 
       // Publish broadcast summary
       await redisService.publish(this.BROADCAST_CHANNEL, {
@@ -608,6 +570,143 @@ export class SignalBroadcastService {
     } catch (error) {
       console.error('Error getting open positions:', error);
       return 0;
+    }
+  }
+
+  /**
+   * Process a single agent's signal validation and execution
+   * Extracted to allow both sequential (MT4) and parallel (non-MT4) processing
+   */
+  private async processAgentSignal(
+    agent: any,
+    signal: BroadcastSignal,
+    bypassLLMValidation: boolean
+  ): Promise<ValidatedSignalForAgent | null> {
+    try {
+      let validatedSignal: ValidatedSignalForAgent;
+      let isValid = false;
+
+      if (bypassLLMValidation && signal.qualityScore) {
+        // FAST PATH: Bypass LLM validation, use quality score directly
+        // Calculate position size: $800 base * positionSizeMultiplier
+        const multiplier = signal.positionSizeMultiplier || signal.qualityScore.positionSizeMultiplier || 1.0;
+        const positionSize = BASE_POSITION_SIZE_USD * multiplier;
+
+        console.log(`⚡ [FAST] Grade ${signal.qualityScore.grade} signal for ${agent.name}: $${positionSize.toFixed(0)} (${(multiplier * 100).toFixed(0)}% of $${BASE_POSITION_SIZE_USD})`);
+
+        isValid = true;
+        validatedSignal = {
+          signalId: signal.id,
+          agentId: (agent._id as any).toString(),
+          agentName: agent.name,
+          symbol: signal.symbol,
+          recommendation: signal.recommendation,
+          isValid: true,
+          llmValidationScore: signal.qualityScore.total,
+          winProbability: signal.confidence,
+          reasoning: `Grade ${signal.qualityScore.grade} signal (score: ${signal.qualityScore.total}/100) - bypassed LLM validation`,
+          rejectionReasons: [],
+          riskRewardRatio: 0,
+          timestamp: new Date(),
+          category: signal.category,
+          positionSize: positionSize,
+          positionSizePercent: (multiplier * 100),
+          riskLevel: signal.qualityScore.grade === 'A' ? 'SAFE' : 'MODERATE',
+          stopLossPrice: signal.stopLoss || null,
+          takeProfitPrice: signal.targetPrice || null,
+          recommendedEntry: signal.entryPrice || null,
+          keyRisks: [],
+          keyOpportunities: [`Grade ${signal.qualityScore.grade} setup`],
+          qualityGrade: signal.qualityScore.grade,
+        };
+      } else {
+        // SLOW PATH: Use LLM validation service
+        const validationSignal = {
+          ...signal,
+          agentId: (agent._id as any).toString(),
+        };
+
+        const validationResult = await signalValidationService.validateSignalForAgent(
+          validationSignal,
+          (agent._id as any).toString()
+        );
+
+        isValid = validationResult.isValid;
+        validatedSignal = {
+          signalId: signal.id,
+          agentId: (agent._id as any).toString(),
+          agentName: agent.name,
+          symbol: signal.symbol,
+          recommendation: signal.recommendation,
+          isValid: validationResult.isValid,
+          llmValidationScore: validationResult.confidence * 100,
+          winProbability: validationResult.confidence,
+          reasoning: validationResult.reasoning,
+          rejectionReasons: validationResult.isValid ? [] : [validationResult.reasoning],
+          riskRewardRatio: 0,
+          timestamp: new Date(),
+          category: signal.category,
+          positionSize: validationResult.positionSize,
+          positionSizePercent: validationResult.positionSizePercent,
+          riskLevel: validationResult.riskLevel,
+          stopLossPrice: validationResult.stopLossPrice,
+          takeProfitPrice: validationResult.takeProfitPrice,
+          recommendedEntry: validationResult.stopLossPrice,
+          keyRisks: validationResult.keyRisks,
+          keyOpportunities: validationResult.keyOpportunities,
+        };
+      }
+
+      if (isValid) {
+        // MT4 signals: Execute immediately without queueing (ultra-low latency)
+        // Other brokers: Queue for execution (rate limiting, scheduling)
+        if (agent.broker === 'MT4') {
+          console.log(`🔍 [DEBUG] Validated MT4 signal for ${agent.name} (${agent.broker}): ${signal.symbol} ${signal.recommendation} | Category: ${signal.category} | Confidence: ${signal.confidence}`);
+          await this.executeMT4SignalDirectly(agent, validatedSignal, signal);
+        } else {
+          await this.queueValidatedSignal(validatedSignal);
+        }
+      } else {
+        console.log(
+          `Signal ${signal.id} rejected for agent ${agent.name}: ${validatedSignal.reasoning}`
+        );
+      }
+
+      // Log agent validation to database
+      await signalDatabaseLoggingService.logAgentValidation({
+        signalId: signal.id,
+        agentId: (agent._id as any).toString(),
+        agentName: agent.name,
+        agentCategory: agent.category || 'ALL',
+        agentRiskLevel: agent.riskLevel,
+        agentBudget: agent.budget,
+        agentStatus: agent.isActive ? 'RUNNING' : 'STOPPED',
+        symbol: signal.symbol,
+        recommendation: signal.recommendation,
+        signalCategory: signal.category,
+        isValid: validatedSignal.isValid,
+        llmValidationScore: validatedSignal.llmValidationScore,
+        winProbability: validatedSignal.winProbability,
+        reasoning: validatedSignal.reasoning,
+        rejectionReasons: validatedSignal.rejectionReasons,
+        riskRewardRatio: 0,
+        marketConditions: { liquidity: 'MEDIUM', spread: 0.1, volatility: 1.0 },
+        positionSize: validatedSignal.positionSize,
+        availableBalance: 0, // Not available in bypass mode
+        processedAt: new Date(),
+        validatedAt: new Date()
+      });
+
+      // Publish to agent-specific channel
+      await redisService.publish(`signal:agent:${agent._id}`, {
+        type: 'signal_validated',
+        data: validatedSignal,
+      });
+
+      return validatedSignal;
+    } catch (error) {
+      console.error(`Error validating signal for agent ${agent._id}:`, error);
+      return null;
     }
   }
 

@@ -70,6 +70,8 @@ export class MT4Service {
   private readonly bridgePassword = process.env.MT4_BRIDGE_PASSWORD || 'changeme123';
   private readonly orderPollingInterval = 2000; // 2 seconds
   private readonly orderCache = new Map<number, MT4Order>();
+  private readonly ORDER_CACHE_MAX_SIZE = 1000; // Prevent unbounded growth
+  private readonly orderCacheAccessTime = new Map<number, number>(); // Track access time for LRU
   private symbolInfoCache = new Map<string, { info: MT4SymbolInfo; timestamp: number }>();
   private readonly SYMBOL_CACHE_TTL = 300000; // 5 minutes
 
@@ -79,7 +81,7 @@ export class MT4Service {
 
     this.sharedClient = axios.create({
       baseURL: this.bridgeURL,
-      timeout: 30000,
+      timeout: 5000, // 5 seconds - optimized for scalping
       headers: {
         'Content-Type': 'application/json'
       }
@@ -158,20 +160,62 @@ export class MT4Service {
         takeProfit: takeProfit || 'none'
       });
 
-      const response = await client.post('/api/v1/orders', {
-        symbol: mt4Symbol,
-        side: side === 'buy' ? 'BUY' : 'SELL',
-        volume: volume,
-        stopLoss: stopLoss || 0,
-        takeProfit: takeProfit || 0,
-        slippage: 3 // pips
-      });
+      // Generate agent-specific magic number (use first 6 digits of userId hash)
+      const magicNumber = this.generateMagicNumber(userId);
 
-      // Debug: Log full response to verify structure
-      console.log('[DEBUG] MT4 Bridge create order response:', JSON.stringify(response.data, null, 2));
+      // Retry logic for order creation (handles requotes/slippage errors)
+      let response;
+      let lastError;
+      const maxRetries = 3;
+      const retryDelay = 500; // ms
 
-      if (!response.data.success) {
-        throw new Error(`MT4 order failed: ${response.data.error}`);
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          response = await client.post('/api/v1/orders', {
+            symbol: mt4Symbol,
+            side: side === 'buy' ? 'BUY' : 'SELL',
+            volume: volume,
+            stopLoss: stopLoss ?? 0,
+            takeProfit: takeProfit ?? 0,
+            magicNumber: magicNumber
+          });
+
+          // Debug: Log full response to verify structure
+          console.log(`[DEBUG] MT4 Bridge create order response (attempt ${attempt}):`, JSON.stringify(response.data, null, 2));
+
+          if (response.data.success) {
+            // Success! Break out of retry loop
+            break;
+          }
+
+          // Check if error is retryable
+          const error = response.data.error || '';
+          const isRetryable = error.includes('138') || // Requote
+                              error.includes('136') || // Off quotes
+                              error.includes('146');   // Trade context busy
+
+          if (!isRetryable || attempt === maxRetries) {
+            throw new Error(`MT4 order failed: ${error}`);
+          }
+
+          // Retryable error - wait and retry
+          console.warn(`⚠️  Retryable error (attempt ${attempt}/${maxRetries}): ${error}`);
+          console.log(`   Waiting ${retryDelay}ms before retry...`);
+          lastError = error;
+          await new Promise(resolve => setTimeout(resolve, retryDelay * attempt)); // Exponential backoff
+
+        } catch (error: any) {
+          if (attempt === maxRetries) {
+            throw error;
+          }
+          lastError = error.message;
+          console.warn(`⚠️  Request failed (attempt ${attempt}/${maxRetries}): ${error.message}`);
+          await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
+        }
+      }
+
+      if (!response || !response.data.success) {
+        throw new Error(`MT4 order failed after ${maxRetries} attempts: ${lastError}`);
       }
 
       // FIX: MT4 Bridge returns { success, data: {...}, error }
@@ -216,44 +260,129 @@ export class MT4Service {
         volume: volume || 'full position'
       });
 
-      const response = await client.post('/api/v1/orders/close', {
-        ticket: ticket,
-        volume: volume || 0 // 0 means close full position
-      });
+      // Pre-close validation: Verify position still exists in MT4
+      try {
+        const openPositions = await this.getOpenPositions(userId);
+        const positionExists = openPositions.some(p => p.ticket === ticket);
 
-      // Debug: Log full response
-      console.log('[DEBUG] MT4 Bridge close order response:', JSON.stringify(response.data, null, 2));
-
-      if (!response.data.success) {
-        throw new Error(`MT4 close order failed: ${response.data.error}`);
+        if (!positionExists) {
+          console.warn(`[MT4 Service] Position ${ticket} not found in MT4. It may already be closed.`);
+          const error = new Error(`Position ${ticket} already closed or does not exist`);
+          (error as any).code = 'ERR_4108';
+          (error as any).mt4ErrorCode = 4108;
+          throw error;
+        }
+      } catch (validationError: any) {
+        // If validation itself failed, log but continue (might be network issue)
+        if (validationError.code === 'ERR_4108' || validationError.mt4ErrorCode === 4108) {
+          throw validationError; // Re-throw 4108 errors
+        }
+        console.warn(`[MT4 Service] Could not validate position ${ticket} before closing:`, validationError.message);
       }
 
-      // FIX: MT4 Bridge returns { success, data: {...}, error }
-      const closedOrder = this.mapMT4OrderResponse(response.data.data);
+      // Retry logic for retryable errors (like 146 - trade context busy)
+      const maxRetries = 3;
+      const baseDelay = 500; // ms
+      let lastError: any = null;
 
-      // Log successful closure
-      console.log(`[MT4 Service] ✅ Position closed successfully:`, {
-        ticket: closedOrder.ticket,
-        symbol: closedOrder.symbol,
-        openPrice: closedOrder.openPrice,
-        closePrice: (closedOrder as any).closePrice,
-        profit: closedOrder.profit
-      });
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const response = await client.post('/api/v1/orders/close', {
+            ticket: ticket,
+            volume: volume || 0 // 0 means close full position
+          });
 
-      // Update cache
-      await this.cacheOrderData(closedOrder);
+          // Debug: Log full response
+          console.log('[DEBUG] MT4 Bridge close order response:', JSON.stringify(response.data, null, 2));
 
-      // Publish close event
-      await redisService.publish(`mt4_order:${userId}`, {
-        type: 'order_closed',
-        ticket: ticket,
-        profit: closedOrder.profit,
-        closeTime: closedOrder.closeTime
-      });
+          if (response.data.success) {
+            // Success - return the result
+            const closedOrder = this.mapMT4OrderResponse(response.data.data);
+            // Force status to 'closed' since MT4 bridge close response is minimal and doesn't include closeTime
+            closedOrder.status = 'closed';
 
-      console.log(`MT4 Position closed | Ticket: ${ticket} | Profit: ${closedOrder.profit}`);
+            // Log successful closure
+            console.log(`[MT4 Service] ✅ Position closed successfully:`, {
+              ticket: closedOrder.ticket,
+              symbol: closedOrder.symbol,
+              openPrice: closedOrder.openPrice,
+              closePrice: (closedOrder as any).closePrice,
+              profit: closedOrder.profit
+            });
 
-      return closedOrder;
+            // Update cache
+            await this.cacheOrderData(closedOrder);
+
+            // Publish close event
+            await redisService.publish(`mt4_order:${userId}`, {
+              type: 'order_closed',
+              ticket: ticket,
+              profit: closedOrder.profit,
+              closeTime: closedOrder.closeTime
+            });
+
+            console.log(`MT4 Position closed | Ticket: ${ticket} | Profit: ${closedOrder.profit}`);
+
+            return closedOrder;
+          }
+
+          // Error occurred - analyze if retryable
+          const errorMsg = response.data.error || '';
+          const mt4ErrorMatch = errorMsg.match(/error code:\s*(\d+)/i);
+          const mt4ErrorCode = mt4ErrorMatch ? parseInt(mt4ErrorMatch[1]) : null;
+
+          // Non-retryable errors (throw immediately)
+          if (mt4ErrorCode === 4108 || errorMsg.includes('invalid ticket')) {
+            // Invalid ticket - position doesn't exist
+            const error = new Error(`MT4 close order failed: ${errorMsg}`);
+            (error as any).mt4ErrorCode = mt4ErrorCode;
+            throw error;
+          }
+
+          // Retryable errors (e.g., 146 = trade context busy, 4 = trade server busy)
+          const retryableErrors = [4, 6, 8, 129, 136, 137, 146];
+          const isRetryable = mt4ErrorCode && retryableErrors.includes(mt4ErrorCode);
+
+          if (!isRetryable || attempt === maxRetries) {
+            // Not retryable or max retries reached
+            const error = new Error(`MT4 close order failed: ${errorMsg}`);
+            (error as any).mt4ErrorCode = mt4ErrorCode;
+            throw error;
+          }
+
+          // Log retry attempt
+          console.log(
+            `[MT4 Service] Retryable error (${mt4ErrorCode}) on attempt ${attempt}/${maxRetries}: ${errorMsg}. ` +
+            `Retrying in ${baseDelay * attempt}ms...`
+          );
+
+          lastError = new Error(`MT4 close order failed: ${errorMsg}`);
+          (lastError as any).mt4ErrorCode = mt4ErrorCode;
+
+          // Wait before retry with exponential backoff
+          await new Promise(resolve => setTimeout(resolve, baseDelay * attempt));
+
+        } catch (error: any) {
+          lastError = error;
+
+          // If it's a non-retryable error (like 4108), throw immediately
+          if (error.mt4ErrorCode === 4108 || error.message?.includes('already closed')) {
+            throw error;
+          }
+
+          // If max retries reached, throw
+          if (attempt === maxRetries) {
+            throw error;
+          }
+
+          // Otherwise wait and retry
+          console.log(`[MT4 Service] Request failed on attempt ${attempt}/${maxRetries}. Retrying...`);
+          await new Promise(resolve => setTimeout(resolve, baseDelay * attempt));
+        }
+      }
+
+      // If we get here, all retries failed
+      throw lastError || new Error('Failed to close position after multiple attempts');
 
     } catch (error) {
       console.error(`Error closing MT4 position ${ticket}:`, error);
@@ -287,9 +416,9 @@ export class MT4Service {
       }
 
       const result = {
-        closed: response.data.closed || 0,
-        failed: response.data.failed || 0,
-        totalProfit: response.data.totalProfit || 0
+        closed: response.data.data.closed || 0,
+        failed: response.data.data.failed || 0,
+        totalProfit: response.data.data.totalProfit || 0
       };
 
       console.log(`MT4 Close All | Closed: ${result.closed} | Failed: ${result.failed} | Profit: ${result.totalProfit}`);
@@ -298,6 +427,82 @@ export class MT4Service {
 
     } catch (error) {
       console.error('Error closing all MT4 positions:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Modify stop loss and/or take profit for an existing position
+   * Used for break-even and trailing stop functionality
+   */
+  async modifyStopLoss(
+    userId: string,
+    ticket: number,
+    newStopLoss?: number,
+    newTakeProfit?: number
+  ): Promise<MT4Order> {
+    try {
+      const client = await this.getClient(userId);
+
+      console.log(`[MT4 Service] Modifying position ${ticket}:`, {
+        userId: userId.substring(0, 8) + '...',
+        ticket,
+        newStopLoss: newStopLoss || 'unchanged',
+        newTakeProfit: newTakeProfit || 'unchanged'
+      });
+
+      // Retry logic for retryable errors
+      const maxRetries = 3;
+      const baseDelay = 500;
+      let lastError: any = null;
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const response = await client.put(`/api/v1/orders/${ticket}`, {
+            stopLoss: newStopLoss ?? null,
+            takeProfit: newTakeProfit ?? null
+          });
+
+          console.log('[DEBUG] MT4 Bridge modify order response:', JSON.stringify(response.data, null, 2));
+
+          if (response.data.success) {
+            const modifiedOrder = this.mapMT4OrderResponse(response.data.data);
+
+            // Update cache
+            await this.cacheOrderData(modifiedOrder);
+
+            console.log(`[MT4 Service] ✅ Position ${ticket} modified successfully:`, {
+              stopLoss: modifiedOrder.stopLoss,
+              takeProfit: modifiedOrder.takeProfit
+            });
+
+            return modifiedOrder;
+          }
+
+          // Check for retryable errors
+          const errorMsg = response.data.error || '';
+          const mt4ErrorCode = parseInt(errorMsg.match(/\d+/)?.[0] || '0');
+          const isRetryable = [138, 136, 146].includes(mt4ErrorCode);
+
+          if (!isRetryable || attempt === maxRetries) {
+            throw new Error(`MT4 modify order failed: ${errorMsg}`);
+          }
+
+          console.log(`[MT4 Service] Retryable error on attempt ${attempt}/${maxRetries}: ${errorMsg}`);
+          lastError = new Error(errorMsg);
+          await new Promise(resolve => setTimeout(resolve, baseDelay * attempt));
+
+        } catch (error: any) {
+          lastError = error;
+          if (attempt === maxRetries) throw error;
+          await new Promise(resolve => setTimeout(resolve, baseDelay * attempt));
+        }
+      }
+
+      throw lastError || new Error('Failed to modify position after multiple attempts');
+
+    } catch (error) {
+      console.error(`Error modifying MT4 position ${ticket}:`, error);
       throw error;
     }
   }
@@ -358,16 +563,21 @@ export class MT4Service {
         throw new Error(`MT4 get account failed: ${response.data.error}`);
       }
 
+      // MT4 EA returns data flat (not nested under 'account')
+      const data = response.data.data;
+      const margin = parseFloat(data.margin);
+      const equity = parseFloat(data.equity);
+
       const account: MT4AccountInfo = {
-        accountNumber: response.data.account.number,
-        broker: response.data.account.broker,
-        currency: response.data.account.currency,
-        balance: parseFloat(response.data.account.balance),
-        equity: parseFloat(response.data.account.equity),
-        margin: parseFloat(response.data.account.margin),
-        freeMargin: parseFloat(response.data.account.freeMargin),
-        marginLevel: parseFloat(response.data.account.marginLevel),
-        profit: parseFloat(response.data.account.profit)
+        accountNumber: 0, // Not returned by MT4 EA
+        broker: 'MT4', // Not returned by MT4 EA
+        currency: data.currency,
+        balance: parseFloat(data.balance),
+        equity: equity,
+        margin: margin,
+        freeMargin: parseFloat(data.freeMargin),
+        marginLevel: margin > 0 ? (equity / margin) * 100 : 0,
+        profit: parseFloat(data.profit)
       };
 
       // Cache account info
@@ -406,7 +616,7 @@ export class MT4Service {
         throw new Error(`MT4 get symbols failed: ${response.data.error}`);
       }
 
-      const symbols: MT4SymbolInfo[] = response.data.symbols.map((sym: any) => ({
+      const symbols: MT4SymbolInfo[] = response.data.data.symbols.map((sym: any) => ({
         symbol: sym.symbol,
         description: sym.description || sym.symbol,
         digits: parseInt(sym.digits),
@@ -447,9 +657,9 @@ export class MT4Service {
       }
 
       return {
-        bid: parseFloat(response.data.bid),
-        ask: parseFloat(response.data.ask),
-        spread: parseFloat(response.data.spread)
+        bid: parseFloat(response.data.data.bid),
+        ask: parseFloat(response.data.data.ask),
+        spread: parseFloat(response.data.data.spread)
       };
 
     } catch (error) {
@@ -518,54 +728,83 @@ export class MT4Service {
   }
 
   /**
-   * Calculate lot size based on USDT amount and price
-   * MT4 uses lots, not dollar amounts
+   * Calculate lot size for MT4 trading
+   *
+   * STRATEGY: Use FIXED LOT SIZE for predictable risk management
+   * This ensures consistent position sizing regardless of signal/LLM recommendations
+   *
+   * Config from .env:
+   * - MT4_DEFAULT_LOT_SIZE: Fixed lot size to use (default: 0.10)
+   * - MT4_MIN_LOT_SIZE: Minimum allowed (default: 0.01)
+   * - MT4_MAX_LOT_SIZE: Maximum allowed (default: 1.0)
+   *
+   * Why fixed lot size?
+   * - Predictable risk: 0.10 lot with 200 pt SL = ~$20 max loss
+   * - No complex calculations that could fail
+   * - Easy to adjust in .env without code changes
+   * - LLM position size recommendations were unreliable (varied wildly)
    */
   async calculateLotSize(
     userId: string,
     universalSymbol: string,
-    usdtAmount: number
+    usdtAmount: number,
+    stopLossPrice?: number,
+    entryPrice?: number
   ): Promise<number> {
     try {
-      const price = await this.getPrice(userId, universalSymbol);
+      // Get fixed lot size from environment
+      const defaultLotSize = parseFloat(process.env.MT4_DEFAULT_LOT_SIZE || '0.10');
+      const minLot = parseFloat(process.env.MT4_MIN_LOT_SIZE || '0.01');
+      const maxLot = parseFloat(process.env.MT4_MAX_LOT_SIZE || '1.0');
 
-      // Get symbol info to determine contract size
-      const mt4Symbol = await symbolMappingService.convertSymbol(universalSymbol, 'MT4');
+      console.log(`💰 [LOT SIZE] Using FIXED lot size strategy:`);
+      console.log(`   Default lot: ${defaultLotSize}`);
+      console.log(`   Min lot: ${minLot}`);
+      console.log(`   Max lot: ${maxLot}`);
+      console.log(`   (Input usdtAmount=${usdtAmount} ignored - using fixed sizing)`);
 
-      if (!mt4Symbol) {
-        throw new Error(`Symbol ${universalSymbol} not available at MT4`);
-      }
-
-      // Standard lot sizes:
-      // Forex: 1 lot = 100,000 units of base currency
-      // Gold/Silver: 1 lot = 100 oz
-      // Crypto: Varies by broker (typically 1 lot = 1 BTC, 1 ETH, etc.)
-
-      const symbolInfo = await symbolMappingService.getSymbolInfo(universalSymbol);
-
-      let contractSize = 100000; // Default for Forex
-
-      if (symbolInfo) {
-        if (symbolInfo.assetClass === 'COMMODITIES') {
-          contractSize = 100; // 100 oz for metals
-        } else if (symbolInfo.assetClass === 'CRYPTO') {
-          contractSize = 1; // 1 unit for crypto
-        }
-      }
-
-      // Calculate lot size
-      const lotSize = usdtAmount / (price.ask * contractSize);
+      // Apply limits
+      let lotSize = Math.max(minLot, Math.min(maxLot, defaultLotSize));
 
       // Round to 2 decimal places (standard for MT4)
-      const roundedLotSize = Math.round(lotSize * 100) / 100;
+      const finalLotSize = Math.floor(lotSize * 100) / 100;
 
-      // Ensure minimum lot size of 0.01
-      return Math.max(0.01, roundedLotSize);
+      console.log(`   Final lot size: ${finalLotSize}`);
+
+      // Log estimated risk for transparency
+      if (stopLossPrice && entryPrice) {
+        const slDistance = Math.abs(entryPrice - stopLossPrice);
+        const estimatedRisk = finalLotSize * slDistance;
+        console.log(`   Estimated risk: $${estimatedRisk.toFixed(2)} (SL distance: ${slDistance.toFixed(2)} pts)`);
+      }
+
+      return finalLotSize;
 
     } catch (error) {
       console.error(`Error calculating lot size for ${universalSymbol}:`, error);
-      throw error;
+      // Return default on error
+      const fallbackLot = parseFloat(process.env.MT4_DEFAULT_LOT_SIZE || '0.10');
+      console.warn(`   Using fallback lot size: ${fallbackLot}`);
+      return fallbackLot;
     }
+  }
+
+  /**
+   * Generate unique magic number based on userId
+   * Creates a 6-digit number from userId hash for tracking orders per agent
+   */
+  private generateMagicNumber(userId: string): number {
+    // Create a simple hash from userId
+    let hash = 0;
+    for (let i = 0; i < userId.length; i++) {
+      hash = ((hash << 5) - hash) + userId.charCodeAt(i);
+      hash = hash & hash; // Convert to 32bit integer
+    }
+
+    // Use absolute value and ensure it's 6 digits (100000-999999)
+    const magicNumber = 100000 + (Math.abs(hash) % 900000);
+
+    return magicNumber;
   }
 
   /**
@@ -600,8 +839,8 @@ export class MT4Service {
       volume: parseFloat(data.volume),
       openPrice: parseFloat(data.openPrice),
       currentPrice: data.currentPrice ? parseFloat(data.currentPrice) : undefined,
-      stopLoss: data.sl ? parseFloat(data.sl) : undefined,
-      takeProfit: data.tp ? parseFloat(data.tp) : undefined,
+      stopLoss: data.stopLoss ? parseFloat(data.stopLoss) : undefined,
+      takeProfit: data.takeProfit ? parseFloat(data.takeProfit) : undefined,
       profit: parseFloat(data.profit || '0'),
       swap: parseFloat(data.swap || '0'),
       commission: parseFloat(data.commission || '0'),
@@ -623,8 +862,28 @@ export class MT4Service {
       const symbolOrdersKey = `mt4_orders:${order.symbol}`;
       await redisService.zadd(symbolOrdersKey, Date.now(), order.ticket.toString());
 
-      // Add to memory cache
+      // Add to memory cache with LRU eviction
+      if (this.orderCache.size >= this.ORDER_CACHE_MAX_SIZE) {
+        // Find and remove least recently used entry
+        let oldestTicket: number | null = null;
+        let oldestTime = Date.now();
+
+        for (const [ticket, accessTime] of this.orderCacheAccessTime.entries()) {
+          if (accessTime < oldestTime) {
+            oldestTime = accessTime;
+            oldestTicket = ticket;
+          }
+        }
+
+        if (oldestTicket !== null) {
+          this.orderCache.delete(oldestTicket);
+          this.orderCacheAccessTime.delete(oldestTicket);
+          console.log(`🗑️  Evicted order ${oldestTicket} from cache (LRU)`);
+        }
+      }
+
       this.orderCache.set(order.ticket, order);
+      this.orderCacheAccessTime.set(order.ticket, Date.now());
 
     } catch (error) {
       console.error('Error caching MT4 order:', error);
@@ -645,8 +904,8 @@ export class MT4Service {
         const client = await this.getClient(userId);
         const response = await client.get(`/api/v1/orders/${ticket}`);
 
-        if (response.data.success && response.data.order) {
-          const order = this.mapMT4OrderResponse(response.data.order);
+        if (response.data.success && response.data.data.order) {
+          const order = this.mapMT4OrderResponse(response.data.data.order);
           await this.cacheOrderData(order);
 
           if (order.status === 'closed') {

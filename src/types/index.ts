@@ -141,7 +141,7 @@ export interface Trade {
   expectedWinProbability?: number;
   actualOutcome?: 'WIN' | 'LOSS' | 'BREAKEVEN';
   performanceNotes?: string;
-  closeReason?: 'manual' | 'sell-signal' | 'market-drop' | 'stop-loss' | 'take-profit';
+  closeReason?: 'manual' | 'sell-signal' | 'market-drop' | 'stop-loss' | 'take-profit' | 'mt4-already-closed' | 'early-exit-llm';
   createdAt: Date;
   updatedAt: Date;
 }
