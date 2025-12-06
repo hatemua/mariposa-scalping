@@ -10,30 +10,31 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "axios": "^1.6.2",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.0.0",
+    "framer-motion": "^10.18.0",
+    "lucide-react": "^0.294.0",
     "next": "14.0.4",
     "react": "18.2.0",
     "react-dom": "18.2.0",
-    "socket.io-client": "^4.7.4",
-    "axios": "^1.6.2",
-    "recharts": "^2.8.0",
-    "lucide-react": "^0.294.0",
-    "class-variance-authority": "^0.7.0",
-    "clsx": "^2.0.0",
-    "tailwind-merge": "^2.2.0",
     "react-hook-form": "^7.48.2",
-    "zustand": "^4.4.7",
+    "react-hot-toast": "^2.4.1",
     "react-query": "^3.39.3",
-    "react-hot-toast": "^2.4.1"
+    "recharts": "^2.8.0",
+    "socket.io-client": "^4.7.4",
+    "tailwind-merge": "^2.2.0",
+    "zustand": "^4.4.7"
   },
   "devDependencies": {
-    "typescript": "^5.3.3",
     "@types/node": "^20.10.4",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
-    "tailwindcss": "^3.3.6",
-    "postcss": "^8.4.32",
     "autoprefixer": "^10.4.16",
     "eslint": "^8.56.0",
-    "eslint-config-next": "14.0.4"
+    "eslint-config-next": "14.0.4",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.3.6",
+    "typescript": "^5.3.3"
   }
 }
