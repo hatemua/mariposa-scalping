@@ -33,7 +33,7 @@ interface TimeframeAnalysis {
 }
 
 interface MultiTimeframeAnalysis {
-  primary: TimeframeAnalysis; // 5m
+  primary: TimeframeAnalysis; // 15m
   supporting: TimeframeAnalysis[]; // 1m, 10m, 30m
   confluenceScore: number; // 0-100, how many timeframes agree
   overallRecommendation: 'BUY' | 'SELL' | 'HOLD';
@@ -59,15 +59,15 @@ interface BTCScalpingSignal {
 
   // Pattern details from all 4 LLM specialists
   fibonacciAnalysis: any;
-  chartPatternAnalysis: any;
-  candlestickAnalysis: any;
+  trendMomentumAnalysis: any;
+  volumePriceActionAnalysis: any;
   supportResistanceAnalysis: any;
 
   // Consensus from 4 LLMs
   llmConsensus: {
     fibonacciVote: 'BUY' | 'SELL' | 'HOLD';
-    chartPatternVote: 'BUY' | 'SELL' | 'HOLD';
-    candlestickVote: 'BUY' | 'SELL' | 'HOLD';
+    trendMomentumVote: 'BUY' | 'SELL' | 'HOLD';
+    volumePriceActionVote: 'BUY' | 'SELL' | 'HOLD';
     supportResistanceVote: 'BUY' | 'SELL' | 'HOLD';
     consensusAchieved: boolean; // 3/4 agreement
     votesFor: number;
@@ -96,8 +96,8 @@ interface ExitSignal {
   partialExitPercentage?: number; // If partial exit, what % to close
   llmRecommendations: {
     fibonacci: { exit: boolean; reason: string };
-    chartPattern: { exit: boolean; reason: string };
-    candlestick: { exit: boolean; reason: string };
+    trendMomentum: { exit: boolean; reason: string };
+    volumePriceAction: { exit: boolean; reason: string };
     supportResistance: { exit: boolean; reason: string };
   };
 }
@@ -213,7 +213,7 @@ const FILTER_CONFIG = {
     HIGH: { minConfidence: 80, minRR: 0.5 },     // lowered from 1.1
     MEDIUM: { minConfidence: 75, minRR: 0.55 },  // lowered from 1.15
     STANDARD: { minConfidence: 70, minRR: 0.75 },// lowered from 1.35
-    LOW: { minConfidence: 0, minRR: 1.0 }        // lowered from 1.6
+    LOW: { minConfidence: 0, minRR: 0.7 }        // lowered from 1.6
   },
 
   // NEW: Dynamic TP based on ATR (Priority 2)
@@ -228,12 +228,21 @@ const FILTER_CONFIG = {
     STANDARD: 3                       // RESTORED from 2 to 3 - require 75% agreement
   },
 
-  // Professional entry - MIDDLE GROUND
+  // Professional entry - Size modifier system (never rejects)
   PRO_SCORE: {
-    MIN_BASE: 0,                    // DISABLED: consensus + HTF alignment are sufficient filters
+    MIN_BASE: 40,                   // DEPRECATED - kept for reference only
     BONUS_HIGH_CONFIDENCE: 10,      // conf >= 80%
     BONUS_FULL_CONSENSUS: 10,       // 4/4 votes
-    BONUS_HTF_ALIGNED: 5
+    BONUS_HTF_ALIGNED: 5,
+    // Size multiplier tiers (never reject, always trade with adjusted size)
+    MULTIPLIERS: {
+      TIER_1_MIN: 60,   TIER_1_SIZE: 1.0,   // 60+ = 100%
+      TIER_2_MIN: 40,   TIER_2_SIZE: 0.75,  // 40-59 = 75%
+      TIER_3_MIN: 25,   TIER_3_SIZE: 0.5,   // 25-39 = 50%
+      TIER_4_MIN: 0,    TIER_4_SIZE: 0.35,  // 0-24 = 35%
+      WARNING_PENALTY: 0.1,                  // -10% per warning
+      MIN_WARNING_MULT: 0.5                  // Floor at 50%
+    }
   },
 
   // HTF proximity - MIDDLE GROUND (0.9% instead of 1.2%)
@@ -244,6 +253,14 @@ const FILTER_CONFIG = {
     COUNTER_TREND_MIN_CONFIDENCE: 70,  // Min confidence for counter-trend trades
     COUNTER_TREND_SIZE: 0.25,          // 25% position size for counter-trend
     NEUTRAL_SIZE: 0.50                 // 50% position size for neutral HTF
+  },
+
+  // HTF Signal Inversion - Trade WITH the trend instead of blocking
+  HTF_INVERSION: {
+    enabled: true,
+    invertAgainstTrend: true,      // Flip signals that go against HTF
+    requireMinConfidence: 55,      // Only invert if confidence >= 55%
+    logInversions: true
   },
 
   // Quality scoring - MIDDLE GROUND
@@ -262,20 +279,30 @@ const FILTER_CONFIG = {
 
 export class BTCMultiPatternScalpingService {
   private readonly SYMBOL = 'BTCUSDT';
-  private readonly PRIMARY_TIMEFRAME = '5m';
-  private readonly SUPPORTING_TIMEFRAMES = ['1m', '15m', '30m']; // Fixed: 10m → 15m (Binance supported)
+  private readonly PRIMARY_TIMEFRAME = '15m';
+  private readonly SUPPORTING_TIMEFRAMES = ['1m', '5m', '30m']; // 5m moved to supporting, 15m is now primary
   private readonly CONFIDENCE_THRESHOLD = 50; // Further lowered: consensus + HTF alignment are primary filters
 
   // Higher Timeframe (HTF) Analysis Configuration
   private readonly HTF_TIMEFRAMES = ['4h', '1d', '1w']; // 4H, Daily, Weekly for critical levels
   private readonly HTF_PROXIMITY_THRESHOLD = FILTER_CONFIG.HTF.PROXIMITY_THRESHOLD; // 0.6% proximity threshold
-  private readonly HTF_CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache for HTF data
+  private readonly HTF_CACHE_TTL = 1 * 60 * 60 * 1000; // 1 HOUR cache for HTF data (was 5 min - BUG FIX)
 
   // HTF Cache
   private htfCache: {
     data: HTFAnalysis | null;
     lastFetch: number;
   } = { data: null, lastFetch: 0 };
+
+  // HTF Trend Persistence State (BUG FIX: Prevent rapid trend flipping)
+  private htfTrendState: {
+    trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    confirmedAt: number;
+    consecutiveConfirmations: number;
+    pendingTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | null;
+  } = { trend: 'NEUTRAL', confirmedAt: 0, consecutiveConfirmations: 0, pendingTrend: null };
+
+  private readonly HTF_CONFIRMS_REQUIRED = 2; // Require 2 consecutive confirmations to flip trend
 
   // WebSocket integration
   private klineCache = new Map<string, Kline[]>();
@@ -407,7 +434,7 @@ export class BTCMultiPatternScalpingService {
       return;
     }
 
-    console.log('🔍 Primary timeframe (5m) candle closed - running multi-pattern analysis...');
+    console.log('🔍 Primary timeframe (15m) candle closed - running multi-pattern analysis...');
 
     try {
       const signal = await this.generateEntrySignal();
@@ -418,12 +445,12 @@ export class BTCMultiPatternScalpingService {
         console.log(`❌ Signal REJECTED: Recommendation is HOLD (no tradeable signal)`);
       } else {
         console.log(`🎯 Signal Generated: ${signal.recommendation}`);
-        console.log(`   Confidence: ${signal.confidence.toFixed(2)}%`);
-        console.log(`   Entry: $${signal.entryPrice.toFixed(2)}`);
+        console.log(`   Confidence: ${signal.confidence?.toFixed(2) ?? 'N/A'}%`);
+        console.log(`   Entry: $${signal.entryPrice?.toFixed(2) ?? 'N/A'}`);
         console.log(`   Stop Loss: $${signal.stopLossPrice?.toFixed(2) || 'None'}`);
         console.log(`   Take Profit: $${signal.takeProfitPrice?.toFixed(2) || 'None'}`);
-        console.log(`   R:R = 1:${signal.riskRewardRatio.toFixed(2)}`);
-        console.log(`   LLM Consensus: ${signal.llmConsensus.votesFor}/4 agree`);
+        console.log(`   R:R = 1:${signal.riskRewardRatio?.toFixed(2) ?? 'N/A'}`);
+        console.log(`   LLM Consensus: ${signal.llmConsensus?.votesFor ?? 0}/4 agree`);
 
         // Broadcast signal (handled by Agenda job that calls generateEntrySignal)
         this.lastSignalTime = now;
@@ -506,12 +533,12 @@ export class BTCMultiPatternScalpingService {
       // DEBUG: Show LLM analysis results
       console.log(`🤖 LLM Analysis Results:`);
       console.log(`   Fibonacci: ${primaryAnalysis.patterns.fibonacci.confidence.toFixed(1)}% (${primaryAnalysis.patterns.fibonacci.type}${primaryAnalysis.patterns.fibonacci.currentLevel ? ` @ ${primaryAnalysis.patterns.fibonacci.currentLevel}` : ''})`);
-      console.log(`   Chart Pattern: ${primaryAnalysis.patterns.chart.confidence.toFixed(1)}% (${primaryAnalysis.patterns.chart.type} - ${primaryAnalysis.patterns.chart.direction})`);
-      console.log(`   Candlestick: ${primaryAnalysis.patterns.candlestick.confidence.toFixed(1)}% (${primaryAnalysis.patterns.candlestick.strength} ${primaryAnalysis.patterns.candlestick.direction}${primaryAnalysis.patterns.candlestick.patterns.length > 0 ? `: ${primaryAnalysis.patterns.candlestick.patterns[0]}` : ''})`);
+      console.log(`   Trend/Momentum: ${primaryAnalysis.patterns.trendMomentum.confidence.toFixed(1)}% (${primaryAnalysis.patterns.trendMomentum.emaTrend} - ${primaryAnalysis.patterns.trendMomentum.momentum})`);
+      console.log(`   Volume/Price: ${primaryAnalysis.patterns.volumePriceAction.confidence.toFixed(1)}% (${primaryAnalysis.patterns.volumePriceAction.volumeSignal} ${primaryAnalysis.patterns.volumePriceAction.candleDirection})`);
       console.log(`   S/R: ${primaryAnalysis.patterns.supportResistance.confidence.toFixed(1)}% (${primaryAnalysis.patterns.supportResistance.currentZone})`);
       console.log(`   Consensus: ${primaryAnalysis.consensus.votesFor}/${primaryAnalysis.consensus.totalVotes} → ${primaryAnalysis.consensus.recommendation} (achieved: ${primaryAnalysis.consensus.consensusAchieved})`);
-      console.log(`📊 Multi-Timeframe Confluence: ${mtfAnalysis.confluenceScore.toFixed(1)}%`);
-      console.log(`📊 Overall Confidence: ${mtfAnalysis.overallConfidence.toFixed(2)}% (threshold: ${this.CONFIDENCE_THRESHOLD}%)`);
+      console.log(`📊 Multi-Timeframe Confluence: ${mtfAnalysis.confluenceScore?.toFixed(1) ?? 'N/A'}%`);
+      console.log(`📊 Overall Confidence: ${mtfAnalysis.overallConfidence?.toFixed(2) ?? 'N/A'}% (threshold: ${this.CONFIDENCE_THRESHOLD}%)`);
 
       // ==================== NEW FLEXIBLE FILTER SYSTEM ====================
 
@@ -543,11 +570,16 @@ export class BTCMultiPatternScalpingService {
       console.log(`✅ Confidence threshold met: ${mtfAnalysis.overallConfidence.toFixed(2)}%`);
 
       // Step 8: Calculate entry, SL, TP based on LLM analysis
-      const { entryPrice, stopLoss, takeProfit, riskReward } = this.calculateEntryParameters(
+      // Use let for stopLoss/takeProfit since they may be modified during HTF inversion
+      const entryParams = this.calculateEntryParameters(
         primaryData.currentPrice,
         primaryAnalysis,
         primaryData.indicators
       );
+      const entryPrice = entryParams.entryPrice;
+      let stopLoss = entryParams.stopLoss;
+      let takeProfit = entryParams.takeProfit;
+      const riskReward = entryParams.riskReward;
 
       // Step 9: DYNAMIC R:R CHECK based on confidence
       const minRR = this.getMinRiskRewardRatio(mtfAnalysis.overallConfidence);
@@ -559,28 +591,60 @@ export class BTCMultiPatternScalpingService {
       console.log(`✅ R:R met: 1:${riskReward.toFixed(2)} >= 1:${minRR} (dynamic for ${mtfAnalysis.overallConfidence.toFixed(0)}% conf)`);
 
       // ================================================================
-      // Step 10: SMARTER HTF HANDLING - graduated position sizing
-      // NEW: Instead of hard blocking counter-trend, allow with reduced size if high confidence
-      // - HTF aligned: 100% size
-      // - HTF neutral: 50% size
-      // - Counter-trend + high confidence (>=70%): 25% size
-      // - Counter-trend + low confidence: block
+      // Step 10: HTF SIGNAL INVERSION - Trade WITH the trend
+      // BUG FIX: Instead of blocking/reducing counter-trend signals, INVERT them
+      // - HTF aligned: Pass through unchanged
+      // - HTF neutral: 50% size (unchanged)
+      // - Counter-trend: INVERT signal direction (BUY→SELL, SELL→BUY)
       // ================================================================
       let positionSizeMultiplier = 1.0;
+      let signalDirection = mtfAnalysis.overallRecommendation;
+      let wasInverted = false;
+      let originalDirection = signalDirection;
 
       // Determine alignment status
       const isCounterTrend = !htfAligned && htfAnalysis.htfTrend !== 'NEUTRAL';
 
-      if (isCounterTrend) {
-        // Counter-trend with high confidence (>=70%): Allow at 25% size
+      if (isCounterTrend && FILTER_CONFIG.HTF_INVERSION?.enabled) {
+        // Counter-trend: INVERT the signal to trade WITH the trend
+        if (mtfAnalysis.overallConfidence >= (FILTER_CONFIG.HTF_INVERSION?.requireMinConfidence || 55)) {
+          // Calculate new SL/TP with inverted direction
+          const slDistance = Math.abs(entryPrice - (stopLoss || entryPrice));
+          const tpDistance = Math.abs((takeProfit || entryPrice) - entryPrice);
+
+          if (signalDirection === 'BUY') {
+            signalDirection = 'SELL';
+            stopLoss = entryPrice + slDistance;  // SL above for SELL
+            takeProfit = entryPrice - tpDistance; // TP below for SELL
+          } else if (signalDirection === 'SELL') {
+            signalDirection = 'BUY';
+            stopLoss = entryPrice - slDistance;  // SL below for BUY
+            takeProfit = entryPrice + tpDistance; // TP above for BUY
+          }
+
+          wasInverted = true;
+          positionSizeMultiplier = 1.0; // Full size when trading with trend
+
+          console.log(`🔄 SIGNAL INVERTED: ${originalDirection} → ${signalDirection}`);
+          console.log(`   Reason: Trading WITH HTF ${htfAnalysis.htfTrend} trend`);
+          console.log(`   Confidence: ${mtfAnalysis.overallConfidence.toFixed(0)}% >= ${FILTER_CONFIG.HTF_INVERSION?.requireMinConfidence}% threshold`);
+          console.log(`   New SL: $${stopLoss?.toFixed(2)}, New TP: $${takeProfit?.toFixed(2)}`);
+
+          // Update mtfAnalysis to reflect inverted direction
+          mtfAnalysis.overallRecommendation = signalDirection;
+        } else {
+          // Low confidence counter-trend: Reject (can't safely invert)
+          console.log(`❌ [HTF] Counter-trend signal REJECTED (confidence: ${mtfAnalysis.overallConfidence.toFixed(0)}% < ${FILTER_CONFIG.HTF_INVERSION?.requireMinConfidence}% for inversion)`);
+          console.log(`   Signal: ${signalDirection}, HTF trend: ${htfAnalysis.htfTrend}`);
+          return null;
+        }
+      } else if (isCounterTrend) {
+        // Fallback: Old behavior if inversion disabled
         if (mtfAnalysis.overallConfidence >= FILTER_CONFIG.HTF.COUNTER_TREND_MIN_CONFIDENCE) {
           positionSizeMultiplier = FILTER_CONFIG.HTF.COUNTER_TREND_SIZE || 0.25;
           console.log(`⚠️ [HTF] Counter-trend trade ALLOWED at ${(positionSizeMultiplier * 100).toFixed(0)}% size`);
-          console.log(`   Signal: ${mtfAnalysis.overallRecommendation}, HTF trend: ${htfAnalysis.htfTrend}, Confidence: ${mtfAnalysis.overallConfidence.toFixed(0)}% >= ${FILTER_CONFIG.HTF.COUNTER_TREND_MIN_CONFIDENCE}%`);
         } else {
-          // Counter-trend with low confidence: Block
-          console.log(`❌ [HTF] Counter-trend trade BLOCKED (confidence: ${mtfAnalysis.overallConfidence.toFixed(0)}% < ${FILTER_CONFIG.HTF.COUNTER_TREND_MIN_CONFIDENCE}% required)`);
-          console.log(`   Signal: ${mtfAnalysis.overallRecommendation}, HTF trend: ${htfAnalysis.htfTrend}`);
+          console.log(`❌ [HTF] Counter-trend trade BLOCKED`);
           return null;
         }
       } else if (htfNeutral) {
@@ -590,7 +654,7 @@ export class BTCMultiPatternScalpingService {
       } else {
         // HTF aligned: Full size
         positionSizeMultiplier = 1.0;
-        console.log(`✅ [HTF] Trend aligned: ${htfAnalysis.htfTrend} matches ${mtfAnalysis.overallRecommendation}`);
+        console.log(`✅ [HTF] Trend aligned: ${htfAnalysis.htfTrend} matches ${signalDirection}`);
       }
 
       // Apply additional critical level reduction on top (if near resistance for BUY, etc.)
@@ -603,10 +667,13 @@ export class BTCMultiPatternScalpingService {
         }
       }
 
-      // Step 11: PROFESSIONAL ENTRY with BONUS POINTS
+      // Step 11: PROFESSIONAL ENTRY with BONUS POINTS (Size Modifier System)
       let professionalEntryScore = 0;
+      let professionalEntry: ReturnType<typeof this.validateProfessionalEntry> | null = null;
+      let proScoreMultiplier = 1.0;
+
       if (mtfAnalysis.overallRecommendation !== 'HOLD') {
-        const professionalEntry = this.validateProfessionalEntry(
+        professionalEntry = this.validateProfessionalEntry(
           primaryData.klines,
           primaryData.currentPrice,
           mtfAnalysis.overallRecommendation as 'BUY' | 'SELL'
@@ -621,19 +688,19 @@ export class BTCMultiPatternScalpingService {
         const adjustedScore = professionalEntry.score + bonusPoints;
         professionalEntryScore = adjustedScore;
 
+        // Calculate pro score size modifier (never rejects - adjusts size instead)
+        const proScoreResult = this.calculateProScoreMultiplier(adjustedScore, professionalEntry.reasoning);
+        proScoreMultiplier = proScoreResult.multiplier;
+
         console.log(`🎓 Professional Entry Analysis:`);
         console.log(`   Base Score: ${professionalEntry.score}/100`);
         console.log(`   Bonus Points: +${bonusPoints} (conf≥80: ${mtfAnalysis.overallConfidence >= 80 ? '+10' : '0'}, 4/4: ${primaryAnalysis.consensus.votesFor === 4 ? '+10' : '0'}, HTF: ${htfAligned ? '+5' : '0'})`);
-        console.log(`   Adjusted Score: ${adjustedScore}/100 (min: ${FILTER_CONFIG.PRO_SCORE.MIN_BASE})`);
+        console.log(`   Adjusted Score: ${adjustedScore}/100`);
+        console.log(`   Warnings: ${proScoreResult.warningCount}`);
+        console.log(`   Size Modifier: ${(proScoreMultiplier * 100).toFixed(0)}%`);
         for (const reason of professionalEntry.reasoning) {
           console.log(`   ${reason}`);
         }
-
-        if (adjustedScore < FILTER_CONFIG.PRO_SCORE.MIN_BASE) {
-          console.log(`❌ Signal REJECTED: Adjusted pro score ${adjustedScore} < ${FILTER_CONFIG.PRO_SCORE.MIN_BASE}`);
-          return null;
-        }
-        console.log(`✅ Professional entry validated: ${adjustedScore}/100`);
       }
 
       // Step 12: CALCULATE TRADE QUALITY SCORE
@@ -649,9 +716,10 @@ export class BTCMultiPatternScalpingService {
       console.log(`📊 Trade Quality Score: ${qualityScore.total}/100 (Grade ${qualityScore.grade})`);
       console.log(`   Components: Consensus=${qualityScore.components.consensus}, Confidence=${qualityScore.components.confidence}, R:R=${qualityScore.components.riskReward}, HTF=${qualityScore.components.htfAlignment}, Pro=${qualityScore.components.proScore}`);
 
-      // Apply quality score multiplier to position size
-      const finalPositionMultiplier = positionSizeMultiplier * qualityScore.positionSizeMultiplier;
-      console.log(`✅ Trade Grade ${qualityScore.grade}: Position size = ${(finalPositionMultiplier * 100).toFixed(0)}% ($${(FILTER_CONFIG.POSITION.BASE_USD * finalPositionMultiplier).toFixed(0)})`);
+      // Apply ALL multipliers: HTF/consensus * qualityGrade * proScoreAdjustment
+      const finalPositionMultiplier = positionSizeMultiplier * qualityScore.positionSizeMultiplier * proScoreMultiplier;
+      console.log(`✅ Signal EXECUTING with ${(finalPositionMultiplier * 100).toFixed(0)}% size ($${(FILTER_CONFIG.POSITION.BASE_USD * finalPositionMultiplier).toFixed(0)})`);
+      console.log(`   Multipliers: HTF/Consensus=${(positionSizeMultiplier * 100).toFixed(0)}% x Grade=${(qualityScore.positionSizeMultiplier * 100).toFixed(0)}% x ProScore=${(proScoreMultiplier * 100).toFixed(0)}%`);
 
       // Step 14: Build comprehensive signal with quality score
       const signal: BTCScalpingSignal = {
@@ -667,8 +735,8 @@ export class BTCMultiPatternScalpingService {
         riskRewardRatio: riskReward,
         multiTimeframeAnalysis: mtfAnalysis,
         fibonacciAnalysis: primaryAnalysis.patterns.fibonacci,
-        chartPatternAnalysis: primaryAnalysis.patterns.chart,
-        candlestickAnalysis: primaryAnalysis.patterns.candlestick,
+        trendMomentumAnalysis: primaryAnalysis.patterns.trendMomentum,
+        volumePriceActionAnalysis: primaryAnalysis.patterns.volumePriceAction,
         supportResistanceAnalysis: primaryAnalysis.patterns.supportResistance,
         llmConsensus: primaryAnalysis.consensus,
         technicalIndicators: primaryData.indicators,
@@ -745,14 +813,14 @@ export class BTCMultiPatternScalpingService {
         currentPnLPercent
       );
 
-      const chartExit = this.shouldExitBasedOnChartPattern(
-        currentAnalysis.patterns.chart,
-        entrySignalData?.chartPatternAnalysis,
+      const trendExit = this.shouldExitBasedOnTrendMomentum(
+        currentAnalysis.patterns.trendMomentum,
+        entrySignalData?.trendMomentumAnalysis,
         currentPnLPercent
       );
 
-      const candlestickExit = this.shouldExitBasedOnCandlestick(
-        currentAnalysis.patterns.candlestick,
+      const volumeExit = this.shouldExitBasedOnVolumePriceAction(
+        currentAnalysis.patterns.volumePriceAction,
         currentPnLPercent
       );
 
@@ -764,7 +832,7 @@ export class BTCMultiPatternScalpingService {
       );
 
       // Count exit recommendations
-      const exitVotes = [fibExit.exit, chartExit.exit, candlestickExit.exit, srExit.exit].filter(Boolean).length;
+      const exitVotes = [fibExit.exit, trendExit.exit, volumeExit.exit, srExit.exit].filter(Boolean).length;
 
       // Check if pattern has reversed (3/4 LLMs now say opposite direction)
       const reversalDetected = this.detectReversal(currentAnalysis, entrySignalData);
@@ -798,8 +866,8 @@ export class BTCMultiPatternScalpingService {
         partialExitPercentage: exitType === 'PARTIAL' ? 50 : undefined,
         llmRecommendations: {
           fibonacci: fibExit,
-          chartPattern: chartExit,
-          candlestick: candlestickExit,
+          trendMomentum: trendExit,
+          volumePriceAction: volumeExit,
           supportResistance: srExit
         }
       };
@@ -812,8 +880,8 @@ export class BTCMultiPatternScalpingService {
         exitType: 'NONE',
         llmRecommendations: {
           fibonacci: { exit: false, reason: 'Error' },
-          chartPattern: { exit: false, reason: 'Error' },
-          candlestick: { exit: false, reason: 'Error' },
+          trendMomentum: { exit: false, reason: 'Error' },
+          volumePriceAction: { exit: false, reason: 'Error' },
           supportResistance: { exit: false, reason: 'Error' }
         }
       };
@@ -859,35 +927,36 @@ export class BTCMultiPatternScalpingService {
   ): Promise<any> {
     const input = { klines, indicators, currentPrice, timeframe };
 
-    // Run all 4 LLM specialists in parallel
-    const [fibonacci, chart, candlestick, supportResistance] = await Promise.all([
+    // All 4 experts now run in parallel (Volume/PA is standalone, no S/R dependency)
+    const [fibonacci, trendMomentum, volumePriceAction, supportResistance] = await Promise.all([
       llmPatternDetectionService.analyzeFibonacciPatterns(input),
-      llmPatternDetectionService.analyzeChartPatterns(input),
-      llmPatternDetectionService.analyzeCandlestickPatterns(input),
+      llmPatternDetectionService.analyzeTrendMomentum(input),
+      llmPatternDetectionService.analyzeVolumePriceAction(input),
       llmPatternDetectionService.analyzeSupportResistance(input)
     ]);
 
     // Extract votes from LLM recommendations (fallback to reasoning parsing if not available)
     const fibVote = fibonacci.recommendation || this.extractVoteFromReasoning(fibonacci.reasoning);
-    const chartVote = chart.recommendation || this.extractVoteFromReasoning(chart.reasoning);
-    const candlestickVote = candlestick.recommendation || this.extractVoteFromReasoning(candlestick.reasoning);
+    const trendVote = trendMomentum.recommendation || this.extractVoteFromReasoning(trendMomentum.reasoning);
+    const volVote = volumePriceAction.recommendation || this.extractVoteFromReasoning(volumePriceAction.reasoning);
     const srVote = supportResistance.recommendation || this.extractVoteFromReasoning(supportResistance.reasoning);
 
     // Calculate consensus using centralized RiskManager decision table
-    const votes = [fibVote, chartVote, candlestickVote, srVote];
+    const votes = [fibVote, trendVote, volVote, srVote];
     const buyVotes = votes.filter(v => v === 'BUY').length;
     const sellVotes = votes.filter(v => v === 'SELL').length;
     const holdVotes = votes.filter(v => v === 'HOLD').length;
 
     // Log individual LLM votes for monitoring BUY/SELL distribution
-    console.log(`🗳️  [${timeframe}] LLM Votes: FIB=${fibVote}, CHART=${chartVote}, CANDLE=${candlestickVote}, S/R=${srVote}`);
+    console.log(`🗳️  [${timeframe}] LLM Votes: FIB=${fibVote}, TREND=${trendVote}, VOL=${volVote}, S/R=${srVote}`);
 
     // Calculate preliminary confidence for 2-0-2 pattern validation
+    // Use null-coalescing to prevent NaN when an LLM expert fails
     const preliminaryConfidence = (
-      fibonacci.confidence * 0.30 +
-      chart.confidence * 0.30 +
-      candlestick.confidence * 0.20 +
-      supportResistance.confidence * 0.20
+      (fibonacci.confidence ?? 0) * 0.30 +
+      (trendMomentum.confidence ?? 0) * 0.30 +
+      (volumePriceAction.confidence ?? 0) * 0.20 +
+      (supportResistance.confidence ?? 0) * 0.20
     );
 
     // Use RiskManager's consensus decision table with explicit conflict detection
@@ -904,11 +973,12 @@ export class BTCMultiPatternScalpingService {
     const overallVote = consensusDecision.direction;
 
     // Calculate overall confidence (weighted average)
+    // Use null-coalescing to prevent NaN when an LLM expert fails
     const avgConfidence = (
-      fibonacci.confidence * 0.30 +
-      chart.confidence * 0.30 +
-      candlestick.confidence * 0.20 +
-      supportResistance.confidence * 0.20
+      (fibonacci.confidence ?? 0) * 0.30 +
+      (trendMomentum.confidence ?? 0) * 0.30 +
+      (volumePriceAction.confidence ?? 0) * 0.20 +
+      (supportResistance.confidence ?? 0) * 0.20
     );
 
     // Determine trend and momentum
@@ -929,14 +999,14 @@ export class BTCMultiPatternScalpingService {
       confidence: avgConfidence,
       patterns: {
         fibonacci,
-        chart,
-        candlestick,
+        trendMomentum,
+        volumePriceAction,
         supportResistance
       },
       consensus: {
         fibonacciVote: fibVote,
-        chartPatternVote: chartVote,
-        candlestickVote: candlestickVote,
+        trendMomentumVote: trendVote,
+        volumePriceActionVote: volVote,
         supportResistanceVote: srVote,
         consensusAchieved,
         recommendation: overallVote,
@@ -972,8 +1042,9 @@ export class BTCMultiPatternScalpingService {
     // Uses weighted blend where confluence amplifies confidence rather than reducing it
     const baseWeight = 0.7;
     const confluenceWeight = 0.3;
-    const overallConfidence = (primary.confidence * baseWeight) +
-                             (primary.confidence * (confluenceScore / 100) * confluenceWeight);
+    const primaryConfidence = primary.confidence ?? 0;
+    const overallConfidence = (primaryConfidence * baseWeight) +
+                             (primaryConfidence * (confluenceScore / 100) * confluenceWeight);
 
     return {
       primary,
@@ -1116,8 +1187,8 @@ export class BTCMultiPatternScalpingService {
 
     parts.push(`\n**Pattern Analysis:**`);
     parts.push(`• Fibonacci: ${analysis.patterns.fibonacci.reasoning}`);
-    parts.push(`• Chart Pattern: ${analysis.patterns.chart.reasoning}`);
-    parts.push(`• Candlestick: ${analysis.patterns.candlestick.reasoning}`);
+    parts.push(`• Trend/Momentum: ${analysis.patterns.trendMomentum.reasoning}`);
+    parts.push(`• Volume/Price: ${analysis.patterns.volumePriceAction.reasoning}`);
     parts.push(`• S/R: ${analysis.patterns.supportResistance.reasoning}`);
 
     parts.push(`\n**LLM Votes:** ${analysis.consensus.votesFor}/4 agree, ${analysis.consensus.votesAgainst} disagree, ${analysis.consensus.votesNeutral} neutral`);
@@ -1176,26 +1247,26 @@ export class BTCMultiPatternScalpingService {
   }
 
   /**
-   * Exit logic: Chart pattern analysis
+   * Exit logic: Trend/Momentum analysis
    */
-  private shouldExitBasedOnChartPattern(current: any, entry: any, pnl: number): { exit: boolean; reason: string } {
-    if (current.type !== 'NONE' && current.direction !== entry?.direction) {
-      return { exit: true, reason: `Chart pattern changed: ${current.type}` };
+  private shouldExitBasedOnTrendMomentum(current: any, entry: any, pnl: number): { exit: boolean; reason: string } {
+    if (current.emaTrend !== entry?.emaTrend && entry?.emaTrend) {
+      return { exit: true, reason: `Trend changed: ${current.emaTrend}` };
     }
-    if (current.invalidationLevel && entry?.invalidationLevel) {
-      return { exit: true, reason: 'Chart pattern invalidated' };
+    if (current.momentum === 'WEAK' && entry?.momentum === 'STRONG') {
+      return { exit: true, reason: 'Momentum weakening' };
     }
-    return { exit: false, reason: 'Chart pattern still valid' };
+    return { exit: false, reason: 'Trend/momentum still valid' };
   }
 
   /**
-   * Exit logic: Candlestick analysis
+   * Exit logic: Volume/Price Action analysis
    */
-  private shouldExitBasedOnCandlestick(current: any, pnl: number): { exit: boolean; reason: string } {
-    if (current.strength === 'STRONG' && current.direction === 'BEARISH' && pnl > 0) {
-      return { exit: true, reason: 'Strong bearish candlestick reversal detected' };
+  private shouldExitBasedOnVolumePriceAction(current: any, pnl: number): { exit: boolean; reason: string } {
+    if (current.candleQuality === 'STRONG_REVERSAL' && current.candleDirection === 'BEARISH' && pnl > 0) {
+      return { exit: true, reason: 'Strong bearish reversal candle detected' };
     }
-    return { exit: false, reason: 'No reversal candlestick pattern' };
+    return { exit: false, reason: 'No reversal pattern' };
   }
 
   /**
@@ -1286,11 +1357,13 @@ export class BTCMultiPatternScalpingService {
   /**
    * Analyze Higher Timeframes (4H, Daily, Weekly) for critical S/R levels
    * Includes both Swing High/Low detection AND Fibonacci Pivot Points
+   * BUG FIX: Now stores 4H klines for HH/HL trend detection
    */
   private async analyzeHTFLevels(currentPrice: number): Promise<HTFAnalysis> {
     const levels: HTFLevel[] = [];
     let swingCount = 0;
     let fibCount = 0;
+    let klines4H: Kline[] = []; // Store 4H klines for trend detection
 
     // Fetch klines for each HTF
     for (const tf of this.HTF_TIMEFRAMES) {
@@ -1298,6 +1371,11 @@ export class BTCMultiPatternScalpingService {
         const klines = await binanceService.getKlines(this.SYMBOL, tf, 100);
         const normalized = this.normalizeKlines(klines);
         const timeframe = tf as '4h' | '1d' | '1w';
+
+        // Store 4H klines for HH/HL trend detection
+        if (tf === '4h') {
+          klines4H = normalized;
+        }
 
         // 1. Find significant highs and lows (swing points)
         const swingLevels = this.findSwingLevels(normalized, timeframe);
@@ -1355,8 +1433,8 @@ export class BTCMultiPatternScalpingService {
     const isNearResistance = nearestResistance &&
       Math.abs(nearestResistance.price - currentPrice) / currentPrice < this.HTF_PROXIMITY_THRESHOLD;
 
-    // Determine HTF trend
-    const htfTrend = this.determineHTFTrend(uniqueLevels, currentPrice);
+    // Determine HTF trend using 4H candle structure (HH/HL or LH/LL)
+    const htfTrend = this.determineHTFTrend(uniqueLevels, currentPrice, klines4H);
 
     return {
       levels: uniqueLevels,
@@ -1497,17 +1575,94 @@ export class BTCMultiPatternScalpingService {
   }
 
   /**
-   * Determine overall HTF trend based on price position relative to levels
+   * Determine overall HTF trend using 4H candle structure (HH/HL or LH/LL)
+   * BUG FIX: Uses persistence to prevent rapid trend flipping
+   * - Analyzes last 5 candles for structural trend
+   * - Requires 2 consecutive confirmations to flip trend
+   * - Trend is locked for 1 hour after confirmation
    */
-  private determineHTFTrend(levels: HTFLevel[], currentPrice: number): 'BULLISH' | 'BEARISH' | 'NEUTRAL' {
+  private determineHTFTrend(levels: HTFLevel[], currentPrice: number, klines4H?: Kline[]): 'BULLISH' | 'BEARISH' | 'NEUTRAL' {
+    const now = Date.now();
+
+    // Return cached trend if still valid (within 1 hour of confirmation)
+    if (this.htfTrendState.trend !== 'NEUTRAL' &&
+        (now - this.htfTrendState.confirmedAt) < this.HTF_CACHE_TTL) {
+      const remainingMins = Math.round((this.HTF_CACHE_TTL - (now - this.htfTrendState.confirmedAt)) / 60000);
+      console.log(`🔒 HTF trend locked: ${this.htfTrendState.trend} (expires in ${remainingMins} minutes)`);
+      return this.htfTrendState.trend;
+    }
+
+    // If no 4H klines provided, use level-based analysis (fallback)
+    if (!klines4H || klines4H.length < 5) {
+      console.log(`⚠️ No 4H klines for HTF trend, using level-based fallback`);
+      return this.determineHTFTrendFromLevels(levels, currentPrice);
+    }
+
+    // Analyze last 5 candles on 4H for HH/HL or LH/LL structure
+    const last5Candles = klines4H.slice(-5);
+    let higherHighs = 0, lowerLows = 0, higherLows = 0, lowerHighs = 0;
+
+    for (let i = 1; i < last5Candles.length; i++) {
+      if (last5Candles[i].high > last5Candles[i-1].high) higherHighs++;
+      else lowerHighs++;
+      if (last5Candles[i].low > last5Candles[i-1].low) higherLows++;
+      else lowerLows++;
+    }
+
+    console.log(`📊 HTF 4H Structure: HH=${higherHighs} LH=${lowerHighs} HL=${higherLows} LL=${lowerLows}`);
+
+    // Determine detected trend (relaxed: 2+ out of 4 comparisons, majority wins)
+    let detectedTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+    // Relaxed thresholds: 2+ is enough, and must be majority (was 3+ and only 1 opposite)
+    if (higherHighs >= 2 && higherHighs > lowerHighs) detectedTrend = 'BULLISH';
+    if (lowerLows >= 2 && lowerLows > higherLows) detectedTrend = 'BEARISH';
+
+    // Handle trend confirmation logic with 2-confirmation requirement for trend flips
+    if (detectedTrend !== 'NEUTRAL' && detectedTrend !== this.htfTrendState.trend) {
+      // FIX: If currently NEUTRAL (initial state), accept first detected trend immediately
+      if (this.htfTrendState.trend === 'NEUTRAL') {
+        console.log(`🎯 HTF TREND INITIALIZED: NEUTRAL → ${detectedTrend} (first detection - no confirmation needed)`);
+        this.htfTrendState.trend = detectedTrend;
+        this.htfTrendState.confirmedAt = now;
+        this.htfTrendState.consecutiveConfirmations = 0;
+        this.htfTrendState.pendingTrend = null;
+      } else if (this.htfTrendState.pendingTrend === detectedTrend) {
+        // Existing logic for flipping between BULLISH <-> BEARISH (requires 2 confirmations)
+        this.htfTrendState.consecutiveConfirmations++;
+        console.log(`📊 HTF trend change pending: ${this.htfTrendState.trend} → ${detectedTrend} (${this.htfTrendState.consecutiveConfirmations}/${this.HTF_CONFIRMS_REQUIRED} confirms)`);
+
+        if (this.htfTrendState.consecutiveConfirmations >= this.HTF_CONFIRMS_REQUIRED) {
+          console.log(`🔄 HTF TREND FLIPPED: ${this.htfTrendState.trend} → ${detectedTrend} (confirmed after ${this.HTF_CONFIRMS_REQUIRED} confirmations)`);
+          this.htfTrendState.trend = detectedTrend;
+          this.htfTrendState.confirmedAt = now;
+          this.htfTrendState.consecutiveConfirmations = 0;
+          this.htfTrendState.pendingTrend = null;
+        }
+      } else {
+        // New pending trend, reset counter
+        this.htfTrendState.pendingTrend = detectedTrend;
+        this.htfTrendState.consecutiveConfirmations = 1;
+        console.log(`📊 HTF trend change detected: ${detectedTrend} (1/${this.HTF_CONFIRMS_REQUIRED} confirms needed)`);
+      }
+    } else if (detectedTrend === this.htfTrendState.trend && detectedTrend !== 'NEUTRAL') {
+      // Trend confirmed again, reset pending
+      this.htfTrendState.pendingTrend = null;
+      this.htfTrendState.consecutiveConfirmations = 0;
+    }
+
+    return this.htfTrendState.trend || 'NEUTRAL';
+  }
+
+  /**
+   * Fallback HTF trend detection using S/R level distances (original logic)
+   */
+  private determineHTFTrendFromLevels(levels: HTFLevel[], currentPrice: number): 'BULLISH' | 'BEARISH' | 'NEUTRAL' {
     const supports = levels.filter(l => l.type === 'SUPPORT' && l.price < currentPrice);
     const resistances = levels.filter(l => l.type === 'RESISTANCE' && l.price > currentPrice);
 
-    // Count strong levels
     const strongSupportsBelow = supports.filter(s => s.strength === 'STRONG').length;
     const strongResistancesAbove = resistances.filter(r => r.strength === 'STRONG').length;
 
-    // Calculate average distance to nearest levels
     const nearestSupport = supports[0];
     const nearestResistance = resistances[0];
 
@@ -1518,14 +1673,12 @@ export class BTCMultiPatternScalpingService {
     const distToSupport = nearestSupport ? (currentPrice - nearestSupport.price) / currentPrice : Infinity;
     const distToResistance = nearestResistance ? (nearestResistance.price - currentPrice) / currentPrice : Infinity;
 
-    // More room to upside = BULLISH, more room to downside = BEARISH
     if (distToResistance > distToSupport * 1.5) {
       return 'BULLISH';
     } else if (distToSupport > distToResistance * 1.5) {
       return 'BEARISH';
     }
 
-    // Check strong level distribution
     if (strongSupportsBelow > strongResistancesAbove) {
       return 'BULLISH';
     } else if (strongResistancesAbove > strongSupportsBelow) {
@@ -1928,6 +2081,33 @@ export class BTCMultiPatternScalpingService {
       grade,
       components,
       positionSizeMultiplier: grade === 'A' ? QUALITY.GRADE_A_SIZE_MULTIPLIER : QUALITY.GRADE_B_SIZE_MULTIPLIER
+    };
+  }
+
+  /**
+   * Calculate position size multiplier based on pro score and warnings
+   * Never rejects - always returns a multiplier between 0.175 and 1.0
+   */
+  private calculateProScoreMultiplier(
+    proScore: number,
+    reasoning: string[]
+  ): { multiplier: number; warningCount: number } {
+    const { MULTIPLIERS } = FILTER_CONFIG.PRO_SCORE;
+
+    // Base multiplier from score tier
+    let baseMultiplier: number;
+    if (proScore >= MULTIPLIERS.TIER_1_MIN) baseMultiplier = MULTIPLIERS.TIER_1_SIZE;
+    else if (proScore >= MULTIPLIERS.TIER_2_MIN) baseMultiplier = MULTIPLIERS.TIER_2_SIZE;
+    else if (proScore >= MULTIPLIERS.TIER_3_MIN) baseMultiplier = MULTIPLIERS.TIER_3_SIZE;
+    else baseMultiplier = MULTIPLIERS.TIER_4_SIZE;
+
+    // Count warnings (lines starting with warning emoji) and apply penalty
+    const warningCount = reasoning.filter(r => r.startsWith('⚠️')).length;
+    const warningMult = Math.max(MULTIPLIERS.MIN_WARNING_MULT, 1 - (warningCount * MULTIPLIERS.WARNING_PENALTY));
+
+    return {
+      multiplier: baseMultiplier * warningMult,
+      warningCount
     };
   }
 }

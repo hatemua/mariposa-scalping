@@ -23,6 +23,9 @@ export interface MT4PositionData {
   trailingStopActivated?: boolean;
   highestProfitPrice?: number; // Highest price reached (for BUY) or lowest (for SELL)
   originalStopLoss?: number; // Original SL for reference
+  oneToOneLocked?: boolean; // 1:1 R:R lock applied
+  profitLocked75?: boolean; // 75% lock applied
+  lastTrailingSLUpdate?: Date; // Timestamp of last SL modification
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -127,6 +130,17 @@ const MT4PositionSchema = new Schema<MT4PositionDocument>({
   originalStopLoss: {
     type: Number,
     min: 0,
+  },
+  oneToOneLocked: {
+    type: Boolean,
+    default: false,
+  },
+  profitLocked75: {
+    type: Boolean,
+    default: false,
+  },
+  lastTrailingSLUpdate: {
+    type: Date,
   },
 }, {
   timestamps: true,

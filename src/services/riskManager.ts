@@ -47,6 +47,7 @@ export const RISK_CONFIG = {
   TRAILING_BREAKEVEN_PCT: 0.50,      // Move to breakeven at 50% of TP distance
   TRAILING_LOCK_PCT: 0.75,           // Lock profits at 75% of TP distance
   TRAILING_LOCK_AMOUNT: 0.50,        // Lock 50% of current gains at 75%
+  TRAILING_CONTINUOUS_DISTANCE: 0.25, // Continue trailing with 25% of original risk as buffer
 
   // NEW: 1:1 R:R Lock (Priority 3)
   ONE_TO_ONE_LOCK_PROFIT_PCT: 0.50,  // Lock 50% of profit when 1:1 R:R achieved
@@ -68,7 +69,7 @@ export const RISK_CONFIG = {
   HTF_NEUTRAL_SIZE: 0.50,               // 50% position size for neutral HTF
 
   // Consensus
-  MIN_CONFIDENCE_FOR_WEAK_CONSENSUS: 70, // 2-0-2 pattern requires 70%+ confidence
+  MIN_CONFIDENCE_FOR_WEAK_CONSENSUS: 60, // 2-0-2 pattern requires 60%+ confidence (lowered from 70%)
 };
 
 // =============================================================================

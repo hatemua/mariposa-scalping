@@ -17,6 +17,17 @@ interface MonitoredPosition {
   mt4Ticket?: number;
 }
 
+// BUG FIX #2: Profit protection threshold - block LLM exits when trade is 40%+ of way to TP
+const PROFIT_PROTECTION_THRESHOLD = 0.40; // 40% progress to TP = let winner run
+const REQUIRE_UNANIMOUS_EXIT_FOR_WINNERS = true; // Require 4/4 LLM votes to exit profitable trades
+
+// BUG FIX #5: Stagnant loser exit configuration
+const STAGNANT_LOSER_CONFIG = {
+  MIN_TIME_MINUTES: 10,         // Exit losers after 10 minutes
+  SL_DISTANCE_THRESHOLD: 0.50,  // If price is 50%+ of the way to SL
+  ENABLED: true
+};
+
 export class PositionMonitorService {
   private monitoredPositions: Map<string, MonitoredPosition> = new Map();
 
@@ -158,6 +169,76 @@ export class PositionMonitorService {
       position.currentPrice = currentPrice;
       position.lastCheckTime = new Date();
 
+      // IMPORTANT: Block LLM exits when trailing stop is active
+      // This lets winners run to TP instead of being cut short by LLM signals
+      if (mt4Position?.trailingStopActivated || mt4Position?.breakEvenActivated) {
+        console.log(`⏳ Position ${position.tradeId}: Trailing stop active (breakeven: ${mt4Position?.breakEvenActivated}, trailing: ${mt4Position?.trailingStopActivated}) - LLM exit blocked, letting winner run to TP`);
+        console.log(`   Current: $${currentPrice.toFixed(2)}, P&L: $${currentPnL.toFixed(2)}, SL: ${mt4Position?.stopLoss?.toFixed(2) || 'N/A'}`);
+        return; // Skip LLM exit evaluation - let MT4 SL/TP handle the exit
+      }
+
+      // BUG FIX #2: Block LLM exits when trade is 40%+ of the way to TP
+      // This prevents premature exits that cut winning trades short
+      const entryPrice = mt4Position?.entryPrice || position.entryPrice;
+      const takeProfit = mt4Position?.takeProfit;
+      const stopLoss = mt4Position?.stopLoss;
+      let progressToTP = 0;
+      let isInProfit = currentPnL > 0;
+
+      if (takeProfit && entryPrice) {
+        const direction = mt4Position?.side === 'buy' ? 1 : -1;
+        const tpDistance = Math.abs(takeProfit - entryPrice);
+        const currentProgress = (currentPrice - entryPrice) * direction;
+        progressToTP = tpDistance > 0 ? currentProgress / tpDistance : 0;
+
+        if (progressToTP >= PROFIT_PROTECTION_THRESHOLD) {
+          console.log(`🛡️ Position ${position.tradeId}: Profit protection active - ${(progressToTP * 100).toFixed(1)}% to TP (threshold: ${PROFIT_PROTECTION_THRESHOLD * 100}%)`);
+          console.log(`   Entry: $${entryPrice.toFixed(2)}, Current: $${currentPrice.toFixed(2)}, TP: $${takeProfit.toFixed(2)}, P&L: $${currentPnL.toFixed(2)}`);
+          console.log(`   LLM exit BLOCKED - letting winner run to TP`);
+          return; // Skip LLM exit evaluation - let the winner run
+        }
+      }
+
+      // BUG FIX #5: Stagnant loser exit - exit losing positions that aren't recovering
+      // Conditions: 10+ minutes open AND price is 50%+ of the way to SL
+      if (STAGNANT_LOSER_CONFIG.ENABLED && stopLoss && entryPrice && !isInProfit) {
+        const openTime = position.entryTime ? new Date(position.entryTime).getTime() : Date.now();
+        const minutesOpen = (Date.now() - openTime) / 60000;
+
+        if (minutesOpen >= STAGNANT_LOSER_CONFIG.MIN_TIME_MINUTES) {
+          const direction = mt4Position?.side === 'buy' ? 1 : -1;
+          const slDistance = Math.abs(entryPrice - stopLoss);
+          const currentDrawdown = (entryPrice - currentPrice) * direction; // Positive when losing
+
+          const progressToSL = slDistance > 0 ? currentDrawdown / slDistance : 0;
+
+          if (progressToSL >= STAGNANT_LOSER_CONFIG.SL_DISTANCE_THRESHOLD) {
+            console.log(`⏰ STAGNANT LOSER EXIT: Position ${position.tradeId}`);
+            console.log(`   Open for ${minutesOpen.toFixed(1)} min (threshold: ${STAGNANT_LOSER_CONFIG.MIN_TIME_MINUTES} min)`);
+            console.log(`   Progress to SL: ${(progressToSL * 100).toFixed(1)}% (threshold: ${STAGNANT_LOSER_CONFIG.SL_DISTANCE_THRESHOLD * 100}%)`);
+            console.log(`   Entry: $${entryPrice.toFixed(2)}, Current: $${currentPrice.toFixed(2)}, SL: $${stopLoss.toFixed(2)}`);
+            console.log(`   Closing to avoid full SL hit - stagnant loser not recovering`);
+
+            // Execute exit immediately
+            const stagnantExitSignal = {
+              shouldExit: true,
+              exitType: 'FULL',
+              confidence: 80,
+              reason: `Stagnant loser: ${minutesOpen.toFixed(0)}min open, ${(progressToSL * 100).toFixed(0)}% to SL`,
+              llmRecommendations: {
+                fibonacci: { recommendation: 'EXIT', reason: 'Stagnant loser auto-exit' },
+                chartPattern: { recommendation: 'EXIT', reason: 'Stagnant loser auto-exit' },
+                candlestick: { recommendation: 'EXIT', reason: 'Stagnant loser auto-exit' },
+                supportResistance: { recommendation: 'EXIT', reason: 'Stagnant loser auto-exit' }
+              }
+            };
+
+            await this.executeExit(position, stagnantExitSignal, mt4Position);
+            return; // Exit executed, stop monitoring
+          }
+        }
+      }
+
       // Generate exit signal based on current market conditions
       const exitSignal = await btcMultiPatternScalpingService.generateExitSignal(
         position.entryPrice,
@@ -169,6 +250,26 @@ export class PositionMonitorService {
 
       // Act on exit signal
       if (exitSignal.shouldExit) {
+        // BUG FIX #2: For profitable trades, require 4/4 unanimous LLM vote to exit
+        if (REQUIRE_UNANIMOUS_EXIT_FOR_WINNERS && isInProfit && exitSignal.llmRecommendations) {
+          const recommendations = exitSignal.llmRecommendations;
+          const exitVotes = [
+            recommendations.fibonacci?.exit === true,
+            recommendations.trendMomentum?.exit === true,
+            recommendations.volumePriceAction?.exit === true,
+            recommendations.supportResistance?.exit === true
+          ];
+          const exitVoteCount = exitVotes.filter(Boolean).length;
+
+          if (exitVoteCount < 4) {
+            console.log(`🛡️ Position ${position.tradeId}: Profitable trade requires 4/4 unanimous exit vote, got ${exitVoteCount}/4`);
+            console.log(`   Votes: Fib=${recommendations.fibonacci?.exit ? 'EXIT' : 'HOLD'}, Trend=${recommendations.trendMomentum?.exit ? 'EXIT' : 'HOLD'}, Vol=${recommendations.volumePriceAction?.exit ? 'EXIT' : 'HOLD'}, SR=${recommendations.supportResistance?.exit ? 'EXIT' : 'HOLD'}`);
+            console.log(`   LLM exit BLOCKED - holding profitable position`);
+            return; // Don't exit - not unanimous
+          }
+          console.log(`✅ Position ${position.tradeId}: Got 4/4 unanimous exit vote for profitable trade - proceeding with exit`);
+        }
+
         await this.executeExit(position, exitSignal, mt4Position);
       }
     } catch (error: any) {

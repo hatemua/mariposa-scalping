@@ -40,6 +40,8 @@ interface TechnicalIndicators {
     lower: number;
   };
   volumeRatio: number; // Current volume vs average
+  ema9: number;   // For Trend & Momentum expert
+  ema21: number;  // For Trend & Momentum expert
   ema20: number;
   ema50: number;
   sma200: number;
@@ -58,28 +60,27 @@ interface FibonacciPattern {
   reasoning: string;
 }
 
-interface ChartPattern {
-  type: 'HEAD_SHOULDERS' | 'TRIANGLE' | 'FLAG' | 'WEDGE' | 'DOUBLE_TOP' | 'DOUBLE_BOTTOM' | 'NONE';
-  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-  completionPercentage: number;
-  breakoutTarget: number | null;
-  invalidationLevel: number | null;
+interface TrendMomentumPattern {
+  emaTrend: 'BULLISH' | 'BEARISH' | 'FLAT';
+  rsiZone: 'OVERSOLD' | 'NEUTRAL' | 'OVERBOUGHT';
+  momentum: 'STRONG' | 'MODERATE' | 'WEAK';
+  ema9: number;
+  ema21: number;
+  last5Direction: string;
   confidence: number;
-  recommendation?: 'BUY' | 'SELL' | 'HOLD'; // Direct recommendation from LLM
+  recommendation?: 'BUY' | 'SELL' | 'HOLD';
   reasoning: string;
 }
 
-interface CandlestickPattern {
-  patterns: string[]; // e.g., ['BULLISH_ENGULFING', 'HAMMER']
-  strength: 'WEAK' | 'MODERATE' | 'STRONG';
-  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-  recentPatterns: Array<{
-    name: string;
-    candles: number; // How many candles ago
-    significance: number;
-  }>;
+interface VolumePriceActionPattern {
+  volumeSignal: 'STRONG' | 'MODERATE' | 'WEAK' | 'NONE';
+  candleQuality: 'STRONG' | 'MODERATE' | 'WEAK' | 'INDECISION';
+  volumeRatio: number;
+  bodyPercent: number;
+  candleDirection: 'BULLISH' | 'BEARISH';
+  confirmation: boolean;
   confidence: number;
-  recommendation?: 'BUY' | 'SELL' | 'HOLD'; // Direct recommendation from LLM
+  recommendation?: 'BUY' | 'SELL' | 'HOLD';
   reasoning: string;
 }
 
@@ -204,7 +205,14 @@ export class LLMPatternDetectionService {
     });
     const bb = bbValues[bbValues.length - 1] || { upper: 0, middle: 0, lower: 0 };
 
-    // EMAs
+    // EMAs for Trend & Momentum expert
+    const ema9Values = EMA.calculate({ values: closes, period: 9 });
+    const ema9 = ema9Values[ema9Values.length - 1] || closes[closes.length - 1];
+
+    const ema21Values = EMA.calculate({ values: closes, period: 21 });
+    const ema21 = ema21Values[ema21Values.length - 1] || closes[closes.length - 1];
+
+    // EMAs for general use
     const ema20Values = EMA.calculate({ values: closes, period: 20 });
     const ema20 = ema20Values[ema20Values.length - 1] || closes[closes.length - 1];
 
@@ -227,6 +235,8 @@ export class LLMPatternDetectionService {
       adx,
       bollingerBands: bb,
       volumeRatio,
+      ema9,
+      ema21,
       ema20,
       ema50,
       sma200
@@ -335,6 +345,9 @@ Respond ONLY with valid JSON (no markdown):
       const response = await this.callLLM(this.FIBONACCI_MODEL, prompt);
       const analysis = this.parseJSONResponse(response);
 
+      // Validate required fields
+      this.validateLLMResponse(analysis, ['confidence'], 'Fibonacci analysis');
+
       // Always extract vote from reasoning as backup
       const reasoningVote = this.extractVoteFromReasoning(analysis.reasoning || '');
 
@@ -374,65 +387,69 @@ Respond ONLY with valid JSON (no markdown):
   }
 
   /**
-   * Specialist 2: Chart Pattern Detection
+   * Specialist 2: Trend & Momentum Analysis
+   * Replaces Chart Pattern expert - uses EMA crossovers and RSI for reliable signals on any timeframe
    */
-  async analyzeChartPatterns(input: PatternAnalysisInput): Promise<ChartPattern> {
+  async analyzeTrendMomentum(input: PatternAnalysisInput): Promise<TrendMomentumPattern> {
     const { klines, indicators, currentPrice, timeframe } = input;
 
-    const recentKlines = klines.slice(-50).map((k, i) => ({
-      index: i,
-      open: k.open.toFixed(2),
-      high: k.high.toFixed(2),
-      low: k.low.toFixed(2),
-      close: k.close.toFixed(2),
-      volume: k.volume.toFixed(2)
-    }));
+    // Calculate last 5 candles direction
+    const last5 = klines.slice(-5);
+    const last5Direction = last5.map(c => c.close > c.open ? 'up' : 'down').join(', ');
+    const greenCandles = last5.filter(c => c.close > c.open).length;
+    const redCandles = last5.filter(c => c.close < c.open).length;
 
-    const prompt = `You are a chart pattern recognition specialist analyzing BTC/USDT on ${timeframe} timeframe.
+    // Calculate price change over last 5 candles
+    const priceChange5 = ((currentPrice - klines[klines.length - 6].close) / klines[klines.length - 6].close * 100).toFixed(2);
 
-CURRENT PRICE: $${currentPrice.toFixed(2)}
+    // EMA proximity check (are EMAs within 0.1% of each other = flat)
+    const emaProximity = Math.abs(indicators.ema9 - indicators.ema21) / indicators.ema21 * 100;
+    const emasFlat = emaProximity < 0.1;
 
-TECHNICAL INDICATORS:
-- RSI: ${indicators.rsi.toFixed(2)}
-- ADX (Trend Strength): ${indicators.adx.toFixed(2)}
-- EMA20: ${indicators.ema20.toFixed(2)}, EMA50: ${indicators.ema50.toFixed(2)}
-- Bollinger Upper: ${indicators.bollingerBands.upper.toFixed(2)}, Lower: ${indicators.bollingerBands.lower.toFixed(2)}
+    const prompt = `You are a professional BTC scalper analyzing trend direction. Your job is to give CLEAR DIRECTION signals.
 
-RECENT PRICE ACTION (last 50 candles):
-${JSON.stringify(recentKlines.slice(-15), null, 2)}
+MARKET DATA:
+- Current Price: $${currentPrice.toFixed(2)}
+- EMA 9: $${indicators.ema9.toFixed(2)}
+- EMA 21: $${indicators.ema21.toFixed(2)}
+- EMA 50: $${indicators.ema50.toFixed(2)}
+- RSI (14): ${indicators.rsi.toFixed(2)}
+- Last 5 candles: ${last5Direction}
+- Green candles: ${greenCandles}, Red candles: ${redCandles}
+- EMA 9/21 gap: ${emaProximity.toFixed(3)}%
 
-TASK:
-Identify chart patterns. Be EQUALLY attentive to BEARISH and BULLISH patterns.
+═══════════════════════════════════════════════════════════
+CRITICAL: YOU MUST VOTE BUY OR SELL. HOLD IS EXTREMELY RARE.
+═══════════════════════════════════════════════════════════
 
-BULLISH PATTERNS (signal BUY):
-- Inverse Head and Shoulders (bottom reversal)
-- Ascending Triangle (breakout up)
-- Bull Flag / Bullish Pennant
-- Falling Wedge (reversal up)
-- Double Bottom / Triple Bottom
-- Cup and Handle
+VOTE BUY (65-85% confidence) when ANY ONE of these is true:
+✓ EMA 9 > EMA 21 (even by 0.01%)
+✓ Price is above EMA 21
+✓ RSI > 50
+✓ More green candles than red in last 5
 
-BEARISH PATTERNS (signal SELL):
-- Head and Shoulders Top (major reversal signal)
-- Descending Triangle (breakdown)
-- Bear Flag / Bearish Pennant
-- Rising Wedge (reversal down)
-- Double Top / Triple Top
-- Failed Breakout at resistance (price rejected after attempted breakout)
+VOTE SELL (65-85% confidence) when ANY ONE of these is true:
+✓ EMA 9 < EMA 21 (even by 0.01%)
+✓ Price is below EMA 21
+✓ RSI < 50
+✓ More red candles than green in last 5
 
-IMPORTANT: If you detect a BEARISH pattern, you MUST recommend SELL.
-Analyze pattern completion percentage, breakout direction, and invalidation levels.
+VOTE HOLD (50%) ONLY when ALL of these are true:
+✗ EMA 9 and EMA 21 within 0.02% (truly flat)
+✗ RSI between 48-52
+✗ Equal green and red candles (2-3 or 3-2)
 
-Respond ONLY with valid JSON (no markdown):
+CONFIDENCE:
+- Clear EMA separation (>0.05%): 75-85%
+- Small EMA separation (0.02-0.05%): 65-75%
+- Flat EMAs (<0.02%): 50% HOLD only
+
+Respond with JSON only:
 {
-  "type": "HEAD_SHOULDERS" | "TRIANGLE" | "FLAG" | "WEDGE" | "DOUBLE_TOP" | "DOUBLE_BOTTOM" | "NONE",
-  "direction": "BULLISH" | "BEARISH" | "NEUTRAL",
-  "completionPercentage": number (0-100),
-  "breakoutTarget": number | null,
-  "invalidationLevel": number | null,
-  "recommendation": "BUY" | "SELL" | "HOLD",
-  "confidence": number (0-100),
-  "reasoning": "Brief explanation of detected pattern"
+  "vote": "BUY" | "SELL" | "HOLD",
+  "confidence": <number 50-85>,
+  "reasoning": "<brief>",
+  "ema_trend": "BULLISH" | "BEARISH" | "FLAT"
 }`;
 
     try {
@@ -442,30 +459,33 @@ Respond ONLY with valid JSON (no markdown):
       // Always extract vote from reasoning as backup
       const reasoningVote = this.extractVoteFromReasoning(analysis.reasoning || '');
 
-      // If LLM returned HOLD or nothing, prefer reasoning extraction
-      if (!analysis.recommendation || analysis.recommendation === 'HOLD') {
-        console.warn(`⚠️  Chart Pattern LLM returned ${analysis.recommendation || 'missing'}, using reasoning extraction: ${reasoningVote}`);
-        analysis.recommendation = reasoningVote;
+      // Map LLM vote field to recommendation
+      let recommendation = analysis.vote || analysis.recommendation;
+      if (!recommendation || recommendation === 'HOLD') {
+        console.warn(`⚠️  Trend/Momentum LLM returned ${recommendation || 'missing'}, using reasoning extraction: ${reasoningVote}`);
+        recommendation = reasoningVote;
       }
 
       return {
-        type: analysis.type,
-        direction: analysis.direction,
-        completionPercentage: analysis.completionPercentage,
-        breakoutTarget: analysis.breakoutTarget,
-        invalidationLevel: analysis.invalidationLevel,
-        confidence: analysis.confidence,
-        recommendation: analysis.recommendation, // Extract LLM recommendation
-        reasoning: analysis.reasoning
+        emaTrend: analysis.ema_trend || 'FLAT',
+        rsiZone: analysis.rsi_zone || 'NEUTRAL',
+        momentum: analysis.momentum || 'WEAK',
+        ema9: indicators.ema9,
+        ema21: indicators.ema21,
+        last5Direction,
+        confidence: analysis.confidence || 50,
+        recommendation,
+        reasoning: analysis.reasoning || 'No reasoning provided'
       };
     } catch (error: any) {
-      console.error('Chart pattern analysis error:', error.message);
+      console.error('Trend/Momentum analysis error:', error.message);
       return {
-        type: 'NONE',
-        direction: 'NEUTRAL',
-        completionPercentage: 0,
-        breakoutTarget: null,
-        invalidationLevel: null,
+        emaTrend: 'FLAT',
+        rsiZone: 'NEUTRAL',
+        momentum: 'WEAK',
+        ema9: indicators.ema9,
+        ema21: indicators.ema21,
+        last5Direction,
         confidence: 0,
         recommendation: 'HOLD',
         reasoning: 'Analysis failed'
@@ -474,71 +494,78 @@ Respond ONLY with valid JSON (no markdown):
   }
 
   /**
-   * Specialist 3: Candlestick Pattern Detection
+   * Specialist 3: Volume & Price Action Analysis
+   * Replaces Candlestick expert - focuses on volume confirmation and candle quality
+   * STANDALONE expert - does not need S/R levels, analyzes pure volume/price action
    */
-  async analyzeCandlestickPatterns(input: PatternAnalysisInput): Promise<CandlestickPattern> {
+  async analyzeVolumePriceAction(input: PatternAnalysisInput): Promise<VolumePriceActionPattern> {
     const { klines, indicators, currentPrice, timeframe } = input;
 
-    const recentKlines = klines.slice(-30).map((k, i) => ({
-      index: i,
-      open: k.open.toFixed(2),
-      high: k.high.toFixed(2),
-      low: k.low.toFixed(2),
-      close: k.close.toFixed(2),
-      bodySize: Math.abs(k.close - k.open).toFixed(2),
-      upperWick: (k.high - Math.max(k.open, k.close)).toFixed(2),
-      lowerWick: (Math.min(k.open, k.close) - k.low).toFixed(2),
-      bullish: k.close > k.open
-    }));
+    // Get current candle data
+    const current = klines[klines.length - 1];
+    const range = current.high - current.low;
+    const body = Math.abs(current.close - current.open);
+    const upperWick = current.high - Math.max(current.open, current.close);
+    const lowerWick = Math.min(current.open, current.close) - current.low;
 
-    const prompt = `You are a Japanese candlestick pattern specialist analyzing BTC/USDT on ${timeframe} timeframe.
+    // Calculate percentages (avoid division by zero)
+    const bodyPercent = range > 0 ? (body / range) * 100 : 0;
+    const upperWickPercent = range > 0 ? (upperWick / range) * 100 : 0;
+    const lowerWickPercent = range > 0 ? (lowerWick / range) * 100 : 0;
 
-CURRENT PRICE: $${currentPrice.toFixed(2)}
+    // Volume data
+    const volumes = klines.slice(-20).map(k => k.volume);
+    const avgVolume = volumes.reduce((a, b) => a + b, 0) / volumes.length;
+    const volumeRatio = current.volume / avgVolume;
 
-TECHNICAL INDICATORS:
-- RSI: ${indicators.rsi.toFixed(2)}
-- Stochastic K: ${indicators.stochastic.k.toFixed(2)}, D: ${indicators.stochastic.d.toFixed(2)}
-- Volume Ratio: ${indicators.volumeRatio.toFixed(2)}x
+    const candleDirection = current.close > current.open ? 'BULLISH' : 'BEARISH';
 
-RECENT CANDLESTICKS (last 30 candles):
-${JSON.stringify(recentKlines.slice(-10), null, 2)}
+    const prompt = `You are a professional BTC scalper analyzing volume and price action.
 
-TASK:
-Identify candlestick patterns. Be EQUALLY attentive to BEARISH and BULLISH patterns.
+MARKET DATA:
+- Current Price: $${currentPrice.toFixed(2)}
+- Candle: O=$${current.open.toFixed(2)} H=$${current.high.toFixed(2)} L=$${current.low.toFixed(2)} C=$${current.close.toFixed(2)}
+- Volume: ${current.volume.toFixed(2)} (${volumeRatio.toFixed(2)}x avg)
+- Body: ${bodyPercent.toFixed(1)}% of range
+- Direction: ${candleDirection}
+- Wicks: Upper=${upperWickPercent.toFixed(1)}%, Lower=${lowerWickPercent.toFixed(1)}%
 
-BULLISH PATTERNS (signal BUY):
-- Bullish Engulfing (especially at support)
-- Hammer (long lower wick, at support)
-- Inverted Hammer (at bottom)
-- Morning Star (3-candle reversal)
-- Piercing Line
-- Three White Soldiers
-- Tweezer Bottom
+═══════════════════════════════════════════════════════════
+CRITICAL: NORMAL VOLUME IS TRADEABLE. DON'T REQUIRE SPIKES.
+═══════════════════════════════════════════════════════════
 
-BEARISH PATTERNS (signal SELL):
-- Bearish Engulfing (ESPECIALLY at resistance - strong SELL signal)
-- Shooting Star (long upper wick, at resistance)
-- Hanging Man (at top)
-- Evening Star (3-candle reversal - SELL)
-- Dark Cloud Cover
-- Three Black Crows
-- Tweezer Top
-- Gravestone Doji (at resistance)
+VOTE BUY (65-85% confidence) when:
+✓ Candle is BULLISH (that's the main signal!)
+✓ Volume >= 0.7x average (normal volume is fine)
+✓ Body >= 35% of range (not a doji)
 
-CRITICAL: If price is at/near resistance AND you see bearish patterns, you MUST recommend SELL.
-Focus on recent patterns (last 5-10 candles) and their significance.
+VOTE SELL (65-85% confidence) when:
+✓ Candle is BEARISH (that's the main signal!)
+✓ Volume >= 0.7x average
+✓ Body >= 35% of range
 
-Respond ONLY with valid JSON (no markdown):
+VOTE HOLD (50%) ONLY when:
+✗ Volume < 0.5x average (dead market)
+✗ Body < 25% of range (doji)
+✗ Both wicks > 35% (double rejection)
+
+CONFIDENCE:
+- High volume (>1.5x) + strong body: 80-85%
+- Normal volume (0.8-1.5x) + decent body: 70-75%
+- Low-normal volume (0.7-0.8x): 65-70%
+- Very low (<0.5x) or doji: 50% HOLD
+
+THE KEY RULE:
+- BULLISH candle with normal volume = VOTE BUY
+- BEARISH candle with normal volume = VOTE SELL
+- Only dojis or dead volume = HOLD
+
+Respond with JSON only:
 {
-  "patterns": ["PATTERN_NAME_1", "PATTERN_NAME_2"],
-  "strength": "WEAK" | "MODERATE" | "STRONG",
-  "direction": "BULLISH" | "BEARISH" | "NEUTRAL",
-  "recentPatterns": [
-    {"name": "PATTERN_NAME", "candles": number, "significance": number (0-100)}
-  ],
-  "recommendation": "BUY" | "SELL" | "HOLD",
-  "confidence": number (0-100),
-  "reasoning": "Brief explanation of candlestick patterns"
+  "vote": "BUY" | "SELL" | "HOLD",
+  "confidence": <number 50-85>,
+  "reasoning": "<brief>",
+  "volume_signal": "HIGH" | "NORMAL" | "LOW"
 }`;
 
     try {
@@ -548,28 +575,37 @@ Respond ONLY with valid JSON (no markdown):
       // Always extract vote from reasoning as backup
       const reasoningVote = this.extractVoteFromReasoning(analysis.reasoning || '');
 
-      // If LLM returned HOLD or nothing, prefer reasoning extraction
-      if (!analysis.recommendation || analysis.recommendation === 'HOLD') {
-        console.warn(`⚠️  Candlestick LLM returned ${analysis.recommendation || 'missing'}, using reasoning extraction: ${reasoningVote}`);
-        analysis.recommendation = reasoningVote;
+      // Map LLM vote field to recommendation
+      let recommendation = analysis.vote || analysis.recommendation;
+      if (!recommendation) {
+        // Only warn when vote is completely missing (not when HOLD)
+        console.warn(`⚠️  Volume/PA LLM returned no vote, using reasoning extraction: ${reasoningVote}`);
+        recommendation = reasoningVote;
+      } else if (recommendation === 'HOLD' && reasoningVote !== 'HOLD') {
+        // Override HOLD with reasoning-based vote if reasoning suggests otherwise
+        recommendation = reasoningVote;
       }
 
       return {
-        patterns: analysis.patterns || [],
-        strength: analysis.strength,
-        direction: analysis.direction,
-        recentPatterns: analysis.recentPatterns || [],
-        confidence: analysis.confidence,
-        recommendation: analysis.recommendation, // Extract LLM recommendation
-        reasoning: analysis.reasoning
+        volumeSignal: analysis.volume_signal || 'NONE',
+        candleQuality: analysis.candle_quality || 'INDECISION',
+        volumeRatio: volumeRatio,
+        bodyPercent: bodyPercent,
+        candleDirection: candleDirection,
+        confirmation: analysis.confirmation || false,
+        confidence: analysis.confidence || 50,
+        recommendation,
+        reasoning: analysis.reasoning || 'No reasoning provided'
       };
     } catch (error: any) {
-      console.error('Candlestick pattern analysis error:', error.message);
+      console.error('Volume/Price Action analysis error:', error.message);
       return {
-        patterns: [],
-        strength: 'WEAK',
-        direction: 'NEUTRAL',
-        recentPatterns: [],
+        volumeSignal: 'NONE',
+        candleQuality: 'INDECISION',
+        volumeRatio: volumeRatio,
+        bodyPercent: bodyPercent,
+        candleDirection: candleDirection,
+        confirmation: false,
         confidence: 0,
         recommendation: 'HOLD',
         reasoning: 'Analysis failed'
@@ -655,6 +691,9 @@ Respond ONLY with valid JSON (no markdown):
       const response = await this.callLLM(this.SR_MODEL, prompt);
       const analysis = this.parseJSONResponse(response);
 
+      // Validate required fields
+      this.validateLLMResponse(analysis, ['confidence'], 'S/R analysis');
+
       // Always extract vote from reasoning as backup
       const reasoningVote = this.extractVoteFromReasoning(analysis.reasoning || '');
 
@@ -730,46 +769,132 @@ Respond ONLY with valid JSON (no markdown):
   }
 
   /**
-   * Call LLM with retry logic
+   * Retry helper with exponential backoff for transient errors
    */
-  private async callLLM(model: string, prompt: string): Promise<string> {
-    const response = await this.httpClient.post('/v1/chat/completions', {
-      model,
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a professional cryptocurrency technical analysis expert. Always respond with valid JSON only, no markdown formatting.'
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      temperature: 0.3,
-      max_tokens: 1000,
-      top_p: 0.9
-    });
+  private async retryWithBackoff<T>(
+    operation: () => Promise<T>,
+    maxRetries: number = 3,
+    baseDelay: number = 1000,
+    context: string = 'LLM call'
+  ): Promise<T> {
+    let lastError: any;
 
-    return response.data.choices[0].message.content;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error: any) {
+        lastError = error;
+
+        // Check if error is retriable (5xx, 429, network errors)
+        const isRetriableError =
+          error.code === 'ECONNRESET' ||
+          error.code === 'ETIMEDOUT' ||
+          error.code === 'ENOTFOUND' ||
+          error.code === 'ECONNABORTED' ||
+          (error.response?.status >= 500 && error.response?.status < 600) ||
+          error.response?.status === 429;
+
+        if (!isRetriableError || attempt === maxRetries) {
+          break;
+        }
+
+        // Exponential backoff with jitter
+        const delay = baseDelay * Math.pow(2, attempt - 1) + Math.random() * 500;
+        console.log(`⚠️ ${context} attempt ${attempt}/${maxRetries} failed (${error.response?.status || error.code || error.message}), retrying in ${Math.round(delay)}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+
+    throw lastError;
   }
 
   /**
-   * Parse JSON response from LLM, handling markdown code blocks
+   * Call LLM with retry logic
+   */
+  private async callLLM(model: string, prompt: string): Promise<string> {
+    return this.retryWithBackoff(async () => {
+      const response = await this.httpClient.post('/v1/chat/completions', {
+        model,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a professional cryptocurrency technical analysis expert. Always respond with valid JSON only, no markdown formatting.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 1000,
+        top_p: 0.9
+      });
+
+      return response.data.choices[0].message.content;
+    }, 3, 1000, `LLM call (${model.split('/').pop()})`);
+  }
+
+  /**
+   * Parse JSON response from LLM, handling markdown code blocks and edge cases
    */
   private parseJSONResponse(response: string): any {
     try {
-      // Remove markdown code blocks if present
       let cleaned = response.trim();
+
+      // Remove markdown code blocks if present (handles various formats)
       if (cleaned.startsWith('```json')) {
         cleaned = cleaned.replace(/^```json\s*/, '').replace(/\s*```$/, '');
       } else if (cleaned.startsWith('```')) {
         cleaned = cleaned.replace(/^```\s*/, '').replace(/\s*```$/, '');
       }
 
+      // Handle case where LLM adds trailing text after JSON
+      // Try to extract just the JSON object
+      const jsonStartIdx = cleaned.indexOf('{');
+      if (jsonStartIdx > 0) {
+        cleaned = cleaned.substring(jsonStartIdx);
+      }
+
+      // Find matching closing brace for nested objects
+      if (cleaned.startsWith('{')) {
+        let braceCount = 0;
+        let endIdx = -1;
+        for (let i = 0; i < cleaned.length; i++) {
+          if (cleaned[i] === '{') braceCount++;
+          else if (cleaned[i] === '}') braceCount--;
+          if (braceCount === 0) {
+            endIdx = i;
+            break;
+          }
+        }
+        if (endIdx > 0 && endIdx < cleaned.length - 1) {
+          cleaned = cleaned.substring(0, endIdx + 1);
+        }
+      }
+
       return JSON.parse(cleaned);
     } catch (error) {
-      console.error('Failed to parse LLM JSON response:', response);
+      // Log truncated response to avoid flooding logs
+      console.error('Failed to parse LLM JSON response:', response.substring(0, 200) + (response.length > 200 ? '...' : ''));
       throw new Error('Invalid JSON response from LLM');
+    }
+  }
+
+  /**
+   * Validate required fields in LLM response
+   * Throws error if critical fields are missing
+   */
+  private validateLLMResponse(analysis: any, requiredFields: string[], context: string): void {
+    for (const field of requiredFields) {
+      if (analysis[field] === undefined || analysis[field] === null) {
+        throw new Error(`LLM response missing required field '${field}' in ${context}`);
+      }
+    }
+    // Validate confidence is a number between 0-100
+    if (requiredFields.includes('confidence')) {
+      if (typeof analysis.confidence !== 'number' || analysis.confidence < 0 || analysis.confidence > 100) {
+        throw new Error(`Invalid confidence value '${analysis.confidence}' in ${context} - expected number 0-100`);
+      }
     }
   }
 }

@@ -455,6 +455,12 @@ export class MT4TradeManager extends EventEmitter {
           );
           position.stopLoss = breakEvenSL;
           position.breakEvenActivated = true;
+          position.trailingStopActivated = true;
+          position.lastTrailingSLUpdate = new Date();
+          // Store original SL if not already saved
+          if (!position.originalStopLoss) {
+            position.originalStopLoss = stopLoss;
+          }
           await position.save();
         } catch (error) {
           console.error(`Failed to set breakeven for ${ticket}:`, error);
@@ -483,9 +489,55 @@ export class MT4TradeManager extends EventEmitter {
           );
           position.stopLoss = lockSL;
           position.profitLocked75 = true;
+          position.trailingStopActivated = true;
+          position.lastTrailingSLUpdate = new Date();
           await position.save();
         } catch (error) {
           console.error(`Failed to lock profit at 75% for ${ticket}:`, error);
+        }
+      }
+    }
+
+    // CONTINUOUS TRAILING: After 75% lock, keep trailing SL behind price
+    if (position.profitLocked75 && currentProgress > RISK_CONFIG.TRAILING_LOCK_PCT) {
+      const originalRisk = position.originalStopLoss
+        ? Math.abs(entryPrice - position.originalStopLoss)
+        : Math.abs(entryPrice - stopLoss);
+      const trailingBuffer = originalRisk * RISK_CONFIG.TRAILING_CONTINUOUS_DISTANCE;
+
+      // Calculate ideal trailing SL: current price minus buffer
+      const idealTrailingSL = direction === 'BUY'
+        ? currentPrice - trailingBuffer
+        : currentPrice + trailingBuffer;
+
+      // Only move SL if new level is better (more profit locked)
+      const isBetterSL = direction === 'BUY'
+        ? idealTrailingSL > currentSL
+        : idealTrailingSL < currentSL;
+
+      // Ensure we're not moving SL beyond current price (invalid)
+      const isValidSL = direction === 'BUY'
+        ? idealTrailingSL < currentPrice
+        : idealTrailingSL > currentPrice;
+
+      if (isBetterSL && isValidSL) {
+        const profitLocked = direction === 'BUY'
+          ? idealTrailingSL - entryPrice
+          : entryPrice - idealTrailingSL;
+
+        console.log(`📈 [TRAILING] Position ${ticket}: ${(currentProgress * 100).toFixed(0)}% to TP - Trailing SL to lock +${profitLocked.toFixed(0)} pts (SL: ${currentSL?.toFixed(2)} → ${idealTrailingSL.toFixed(2)})`);
+        try {
+          await mt4Service.modifyStopLoss(
+            userId._id?.toString() || userId.toString(),
+            ticket,
+            idealTrailingSL
+          );
+          position.stopLoss = idealTrailingSL;
+          position.highestProfitPrice = currentPrice;
+          position.lastTrailingSLUpdate = new Date();
+          await position.save();
+        } catch (error) {
+          console.error(`Failed to update trailing SL for ${ticket}:`, error);
         }
       }
     }
