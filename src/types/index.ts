@@ -68,7 +68,7 @@ export interface ScalpingAgent {
   name: string;
 
   // Broker selection
-  broker: 'OKX' | 'MT4' | 'BINANCE';
+  broker: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX';
 
   // Simplified intelligent configuration
   category: 'SCALPING' | 'SWING' | 'DAY_TRADING' | 'LONG_TERM' | 'ARBITRAGE' | 'ALL';

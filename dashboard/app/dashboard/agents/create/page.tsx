@@ -10,7 +10,7 @@ import ErrorBoundary from '@/components/ErrorBoundary';
 import MT4AccountInfo from '@/components/mt4/MT4AccountInfo';
 
 type AgentCategory = 'SCALPING' | 'SWING' | 'DAY_TRADING' | 'LONG_TERM' | 'ARBITRAGE' | 'ALL';
-type BrokerType = 'OKX' | 'MT4' | 'BINANCE';
+type BrokerType = 'OKX' | 'MT4' | 'BINANCE' | 'WEEX';
 
 interface BrokerInfo {
   label: string;
@@ -86,6 +86,12 @@ const BROKER_INFO: Record<BrokerType, BrokerInfo> = {
     icon: '⚡',
     minBudget: 50,
     disabled: true
+  },
+  WEEX: {
+    label: 'WEEX',
+    description: 'Crypto futures - BTC scalping',
+    icon: '💎',
+    minBudget: 1000
   }
 };
 

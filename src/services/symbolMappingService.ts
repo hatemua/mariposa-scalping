@@ -70,7 +70,7 @@ export class SymbolMappingService {
    */
   async convertSymbol(
     inputSymbol: string,
-    targetBroker: 'OKX' | 'MT4' | 'BINANCE'
+    targetBroker: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX'
   ): Promise<string | null> {
     try {
       // Check cache first
@@ -129,7 +129,7 @@ export class SymbolMappingService {
    */
   async convertToUniversal(
     brokerSymbol: string,
-    sourceBroker: 'OKX' | 'MT4' | 'BINANCE'
+    sourceBroker: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX'
   ): Promise<string | null> {
     try {
       // Check cache first
@@ -198,7 +198,7 @@ export class SymbolMappingService {
    */
   async isSymbolAvailable(
     universalSymbol: string,
-    broker: 'OKX' | 'MT4' | 'BINANCE'
+    broker: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX'
   ): Promise<boolean> {
     const brokerSymbol = await this.convertSymbol(universalSymbol, broker);
     return brokerSymbol !== null;
@@ -207,7 +207,7 @@ export class SymbolMappingService {
   /**
    * Get all symbols available at broker
    */
-  async getAvailableSymbols(broker: 'OKX' | 'MT4' | 'BINANCE'): Promise<string[]> {
+  async getAvailableSymbols(broker: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX'): Promise<string[]> {
     try {
       const symbols: string[] = [];
 
@@ -230,7 +230,7 @@ export class SymbolMappingService {
    */
   async getSymbolsByAssetClass(
     assetClass: 'FOREX' | 'COMMODITIES' | 'CRYPTO' | 'INDICES',
-    broker?: 'OKX' | 'MT4' | 'BINANCE'
+    broker?: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX'
   ): Promise<string[]> {
     try {
       let symbols = this.STATIC_MAPPINGS

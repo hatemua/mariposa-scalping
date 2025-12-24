@@ -14,7 +14,7 @@ import { symbolMappingService } from './symbolMappingService';
 import { redisService } from './redisService';
 
 interface BrokerCapabilities {
-  broker: 'OKX' | 'MT4' | 'BINANCE';
+  broker: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX';
   availableSymbols: string[];
   supportedAssetClasses: Array<'FOREX' | 'COMMODITIES' | 'CRYPTO' | 'INDICES'>;
   lastUpdated: Date;
@@ -36,7 +36,7 @@ export class BrokerFilterService {
    */
   async canExecuteSignal(
     universalSymbol: string,
-    userBroker: 'OKX' | 'MT4' | 'BINANCE',
+    userBroker: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX',
     agentCategory?: string
   ): Promise<SignalFilterResult> {
     try {
@@ -118,7 +118,7 @@ export class BrokerFilterService {
    */
   async filterBTCOnlyForMT4(
     signals: Array<{ symbol: string; [key: string]: any }>,
-    agentBroker: 'OKX' | 'MT4' | 'BINANCE',
+    agentBroker: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX',
     agentCategory?: string
   ): Promise<Array<{ signal: any; brokerSymbol: string }>> {
     if (agentBroker !== 'MT4' || agentCategory !== 'SCALPING') {
@@ -150,7 +150,7 @@ export class BrokerFilterService {
   /**
    * Get broker capabilities (available symbols, asset classes)
    */
-  async getBrokerCapabilities(broker: 'OKX' | 'MT4' | 'BINANCE'): Promise<BrokerCapabilities> {
+  async getBrokerCapabilities(broker: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX'): Promise<BrokerCapabilities> {
     try {
       // Check cache first
       const cacheKey = `${this.CACHE_PREFIX}${broker}`;
@@ -198,7 +198,7 @@ export class BrokerFilterService {
    */
   async filterSignalsForAgent(
     signals: Array<{ symbol: string; [key: string]: any }>,
-    agentBroker: 'OKX' | 'MT4' | 'BINANCE'
+    agentBroker: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX'
   ): Promise<Array<{ signal: any; brokerSymbol: string }>> {
     try {
       const filteredSignals: Array<{ signal: any; brokerSymbol: string }> = [];
@@ -231,7 +231,7 @@ export class BrokerFilterService {
    * Check if broker supports specific asset class
    */
   async supportsAssetClass(
-    broker: 'OKX' | 'MT4' | 'BINANCE',
+    broker: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX',
     assetClass: 'FOREX' | 'COMMODITIES' | 'CRYPTO' | 'INDICES'
   ): Promise<boolean> {
     try {
@@ -247,7 +247,7 @@ export class BrokerFilterService {
    * Get symbols by asset class that are available at broker
    */
   async getSymbolsByAssetClass(
-    broker: 'OKX' | 'MT4' | 'BINANCE',
+    broker: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX',
     assetClass: 'FOREX' | 'COMMODITIES' | 'CRYPTO' | 'INDICES'
   ): Promise<string[]> {
     try {
@@ -262,7 +262,7 @@ export class BrokerFilterService {
    * Get recommended symbols for agent based on broker and strategy
    */
   async getRecommendedSymbols(
-    broker: 'OKX' | 'MT4' | 'BINANCE',
+    broker: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX',
     agentCategory: 'SCALPING' | 'SWING' | 'DAY_TRADING' | 'LONG_TERM' | 'ARBITRAGE'
   ): Promise<string[]> {
     try {
@@ -316,7 +316,7 @@ export class BrokerFilterService {
    * Validate agent configuration against broker capabilities
    */
   async validateAgentConfiguration(
-    broker: 'OKX' | 'MT4' | 'BINANCE',
+    broker: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX',
     agentConfig: {
       category?: string;
       symbols?: string[];
@@ -378,7 +378,7 @@ export class BrokerFilterService {
   /**
    * Clear broker capabilities cache
    */
-  async clearCache(broker?: 'OKX' | 'MT4' | 'BINANCE'): Promise<void> {
+  async clearCache(broker?: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX'): Promise<void> {
     try {
       if (broker) {
         const cacheKey = `${this.CACHE_PREFIX}${broker}`;

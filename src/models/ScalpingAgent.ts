@@ -83,7 +83,7 @@ const ScalpingAgentSchema = new Schema<ScalpingAgentDocument>({
   // Broker selection
   broker: {
     type: String,
-    enum: ['OKX', 'MT4', 'BINANCE'],
+    enum: ['OKX', 'MT4', 'BINANCE', 'WEEX'],
     required: true,
     default: 'OKX',
   },
