@@ -92,7 +92,7 @@ export const agentApi = {
   createAgent: async (data: {
     name: string;
     // Broker selection
-    broker?: 'OKX' | 'MT4' | 'BINANCE';
+    broker?: 'OKX' | 'MT4' | 'BINANCE' | 'WEEX';
     // Intelligent agent fields (new)
     category?: 'SCALPING' | 'SWING' | 'DAY_TRADING' | 'LONG_TERM' | 'ARBITRAGE' | 'ALL';
     riskLevel?: 1 | 2 | 3 | 4 | 5;
