@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import { ScalpingAgent, Trade } from '../models';
+import { ScalpingAgent, Trade, User } from '../models';
 import { agendaService } from '../services/agendaService';
 import { okxService } from '../services/okxService';
 import { technicalAnalysisService } from '../services/technicalAnalysisService';
@@ -401,14 +401,38 @@ export const startAgent = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    try {
-      await okxService.getBalance(userId);
-    } catch (error) {
-      res.status(400).json({
-        success: false,
-        error: 'Invalid OKX API credentials. Please update your API keys.'
-      } as ApiResponse);
-      return;
+    // Validate broker-specific credentials before starting agent
+    const broker = agent.broker || 'OKX';
+
+    if (broker === 'OKX') {
+      // Validate OKX credentials
+      try {
+        await okxService.getBalance(userId);
+      } catch (error) {
+        res.status(400).json({
+          success: false,
+          error: 'Invalid OKX API credentials. Please update your API keys in settings.'
+        } as ApiResponse);
+        return;
+      }
+    } else if (broker === 'MT4') {
+      // Validate MT4 credentials
+      const user = await User.findById(userId);
+      if (!user || !user.mt4ServerUrl || !user.mt4AccountNumber || !user.mt4Password) {
+        res.status(400).json({
+          success: false,
+          error: 'Invalid MT4 credentials. Please configure your MT4 connection in settings.'
+        } as ApiResponse);
+        return;
+      }
+    } else if (broker === 'BINANCE') {
+      // Binance uses global credentials from environment
+      // No user-specific validation needed at this time
+      console.log('Starting Binance agent - using global credentials');
+    } else if (broker === 'WEEX') {
+      // WEEX uses global credentials from environment
+      // No user-specific validation needed at this time
+      console.log('Starting WEEX agent - using global credentials');
     }
 
     if (agent.isActive) {
