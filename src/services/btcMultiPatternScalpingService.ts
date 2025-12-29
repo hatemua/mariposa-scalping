@@ -6,6 +6,7 @@ import {
 import { signalBroadcastService } from './signalBroadcastService';
 import { v4 as uuidv4 } from 'uuid';
 import { riskManager } from './riskManager';
+import { weexAiLogService } from './weex/weexAiLogService';
 
 interface Kline {
   openTime: number;
@@ -277,6 +278,89 @@ const FILTER_CONFIG = {
   }
 };
 
+// ==================== V3 HTF DIRECTION FILTER CONFIGURATION ====================
+
+const HTF_DIRECTION_CONFIG = {
+  CACHE_4H_MINUTES: 15,        // Reduced from 30 to 15 - detect trend changes faster
+  CACHE_1H_MINUTES: 5,         // Reduced from 10 to 5 - detect trend changes faster
+  CANDLES_TO_ANALYZE: 10,      // Last 10 candles for trend structure
+  MIN_STRUCTURE_SCORE: 5,      // Minimum score to confirm trend
+  EMA_FAST: 9,
+  EMA_SLOW: 21,
+  PRICE_CHANGE_REFRESH_PCT: 0.5  // Force refresh if price moves 0.5%+ since last cache
+};
+
+// V3 HTF Direction Cache Interface
+interface HTFDirectionCache {
+  trend4H: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  trend1H: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  lastUpdate4H: number;
+  lastUpdate1H: number;
+  lastPrice4H: number;   // Track price when 4H was cached for price-based invalidation
+  lastPrice1H: number;   // Track price when 1H was cached for price-based invalidation
+}
+
+// V3 HTF Direction Decision Interface
+interface HTFDirectionDecision {
+  allowedDirection: 'BUY' | 'SELL' | 'BOTH' | 'WAIT';
+  maxSizeMultiplier: number;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  reason: string;
+  trend4H: string;
+  trend1H: string;
+}
+
+// V3 Trade Signal Result Interface
+interface V3TradeSignalResult {
+  direction: 'BUY' | 'SELL';
+  entryPrice: number;
+  stopLoss: number;
+  takeProfit: number;
+  sizeMultiplier: number;
+  sizePercent: number;
+  grade: 'A' | 'B' | 'C';
+  riskReward: string;
+  metadata: {
+    htfConfidence: string;
+    htf4H: string;
+    htf1H: string;
+    timingScore: number;
+    levelScore: number;
+    atrPercent: number;
+    trendConfirm: boolean;
+    volumeConfirm: boolean;
+    fibConfirm: boolean;
+    srConfirm: boolean;
+  };
+}
+
+// V3 Timeframe Confirmation Result
+interface V3ConfirmationResult {
+  timingScore: number;
+  levelScore: number;
+  avgConfidence: number;
+  details: {
+    trendConfirm: boolean;
+    trendConfidence: number;
+    volumeConfirm: boolean;
+    volumeConfidence: number;
+    fibConfirm: boolean;
+    fibConfidence: number;
+    srConfirm: boolean;
+    srConfidence: number;
+  };
+}
+
+// Module-level V3 HTF Direction Cache
+let htfDirectionCache: HTFDirectionCache = {
+  trend4H: 'NEUTRAL',
+  trend1H: 'NEUTRAL',
+  lastUpdate4H: 0,
+  lastUpdate1H: 0,
+  lastPrice4H: 0,
+  lastPrice1H: 0
+};
+
 export class BTCMultiPatternScalpingService {
   private readonly SYMBOL = 'BTCUSDT';
   private readonly PRIMARY_TIMEFRAME = '15m';
@@ -306,9 +390,21 @@ export class BTCMultiPatternScalpingService {
 
   // WebSocket integration
   private klineCache = new Map<string, Kline[]>();
+
+  // Fresh ticker price cache (short TTL to avoid API spam while ensuring fresh prices)
+  private tickerPriceCache: { price: number; timestamp: number } = { price: 0, timestamp: 0 };
+  private readonly TICKER_CACHE_TTL_MS = 5000; // 5 seconds max staleness
+
   private isRunning = false;
   private lastSignalTime: number = 0;
   private readonly MIN_SIGNAL_INTERVAL = 60000; // 1 minute minimum between signals
+
+  // Consecutive loss protection (circuit breaker)
+  private consecutiveLosses: number = 0;
+  private lastTradeResult: 'WIN' | 'LOSS' | null = null;
+  private tradingPausedUntil: number = 0;
+  private readonly MAX_CONSECUTIVE_LOSSES: number = 3;
+  private readonly PAUSE_DURATION_MINUTES: number = 30;
 
   /**
    * Start WebSocket-based real-time signal generation
@@ -434,10 +530,11 @@ export class BTCMultiPatternScalpingService {
       return;
     }
 
-    console.log('🔍 Primary timeframe (15m) candle closed - running multi-pattern analysis...');
+    console.log('🔍 Primary timeframe (15m) candle closed - running V3 3-phase analysis...');
 
     try {
-      const signal = await this.generateEntrySignal();
+      // V3: Use new 3-phase entry system (HTF direction filter + YES/NO confirmation)
+      const signal = await this.generateEntrySignalV3();
 
       if (!signal) {
         console.log('ℹ️  No signal generated (rejected by confidence/consensus checks)');
@@ -891,20 +988,38 @@ export class BTCMultiPatternScalpingService {
   /**
    * Fetch klines and calculate indicators for a timeframe
    * Uses WebSocket cache first, falls back to REST API if cache unavailable
+   * FIXED: Always fetches fresh ticker price instead of using stale candle close
    */
   private async fetchTimeframeData(timeframe: string) {
     const cacheKey = `${this.SYMBOL}:${timeframe}`;
     const cachedKlines = this.klineCache.get(cacheKey);
 
+    // Helper to get fresh ticker price with short-term caching to avoid API spam
+    const getFreshPrice = async (fallbackPrice: number): Promise<number> => {
+      const now = Date.now();
+      if ((now - this.tickerPriceCache.timestamp) < this.TICKER_CACHE_TTL_MS && this.tickerPriceCache.price > 0) {
+        return this.tickerPriceCache.price;
+      }
+      try {
+        const price = await binanceService.getTickerPrice(this.SYMBOL);
+        this.tickerPriceCache = { price, timestamp: now };
+        return price;
+      } catch (error) {
+        console.warn(`[FRESH-PRICE] Ticker API failed, using fallback: $${fallbackPrice.toFixed(2)}`);
+        return fallbackPrice;
+      }
+    };
+
     // Use cache if available and sufficient (at least 50 candles)
     if (cachedKlines && cachedKlines.length >= 50) {
       const indicators = llmPatternDetectionService.calculateIndicators(cachedKlines);
-      const currentPrice = cachedKlines[cachedKlines.length - 1].close;
+      const candleClose = cachedKlines[cachedKlines.length - 1].close;
+      const currentPrice = await getFreshPrice(candleClose);
       return { klines: cachedKlines, indicators, currentPrice };
     }
 
     // Fallback to REST API if cache miss or insufficient data
-    console.log(`⚠️  Cache miss for ${timeframe}, fetching from Binance API...`);
+    console.log(`  Cache miss for ${timeframe}, fetching from Binance API...`);
     const klines = await binanceService.getKlines(this.SYMBOL, timeframe, 100);
     const normalized = this.normalizeKlines(klines);
 
@@ -912,7 +1027,8 @@ export class BTCMultiPatternScalpingService {
     this.klineCache.set(cacheKey, normalized);
 
     const indicators = llmPatternDetectionService.calculateIndicators(normalized);
-    const currentPrice = normalized[normalized.length - 1].close;
+    const candleClose = normalized[normalized.length - 1].close;
+    const currentPrice = await getFreshPrice(candleClose);
     return { klines: normalized, indicators, currentPrice };
   }
 
@@ -2109,6 +2225,1027 @@ export class BTCMultiPatternScalpingService {
       multiplier: baseMultiplier * warningMult,
       warningCount
     };
+  }
+
+  // ==================== V3: 3-PHASE ENTRY SYSTEM ====================
+
+  /**
+   * V3: Simple EMA calculation for HTF trend analysis
+   */
+  private calculateSimpleEMA(closes: number[], period: number): number {
+    if (closes.length < period) return closes[closes.length - 1];
+    const multiplier = 2 / (period + 1);
+    let ema = closes.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    for (let i = period; i < closes.length; i++) {
+      ema = (closes[i] - ema) * multiplier + ema;
+    }
+    return ema;
+  }
+
+  /**
+   * Record trade result for circuit breaker
+   * Called when a trade closes (TP/SL/manual)
+   */
+  recordTradeResult(profit: number): void {
+    if (profit < 0) {
+      this.consecutiveLosses++;
+      this.lastTradeResult = 'LOSS';
+      console.log(`📉 [LOSS TRACKER] Consecutive losses: ${this.consecutiveLosses}`);
+
+      if (this.consecutiveLosses >= this.MAX_CONSECUTIVE_LOSSES) {
+        this.tradingPausedUntil = Date.now() + (this.PAUSE_DURATION_MINUTES * 60 * 1000);
+        console.log(`🛑 [CIRCUIT BREAKER] ${this.consecutiveLosses} consecutive losses - pausing until ${new Date(this.tradingPausedUntil).toISOString()}`);
+      }
+    } else {
+      this.consecutiveLosses = 0;
+      this.lastTradeResult = 'WIN';
+      console.log(`📈 [LOSS TRACKER] Win! Consecutive losses reset to 0`);
+    }
+  }
+
+  /**
+   * Check if trading is allowed (circuit breaker)
+   */
+  canOpenNewTrade(): boolean {
+    if (Date.now() < this.tradingPausedUntil) {
+      const remainingMinutes = Math.ceil((this.tradingPausedUntil - Date.now()) / 1000 / 60);
+      console.log(`🛑 [CIRCUIT BREAKER] Trading paused. ${remainingMinutes} minutes remaining.`);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Check real-time price direction over multiple timeframes
+   * Returns direction (BULLISH/BEARISH/NEUTRAL) based on price momentum
+   * This prevents trading against obvious short-term trends
+   */
+  private async checkRealTimePriceDirection(): Promise<{
+    direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    strength: number;
+    hourlyChange: number;
+    thirtyMinChange: number;
+    fifteenMinChange: number;
+    details: string;
+  }> {
+    try {
+      // Get LIVE ticker price
+      const currentPrice = await binanceService.getTickerPrice(this.SYMBOL);
+
+      // Get recent candles for comparison
+      const candles1H = await binanceService.getKlines(this.SYMBOL, '1h', 3);
+      const candles30m = await binanceService.getKlines(this.SYMBOL, '30m', 3);
+      const candles15m = await binanceService.getKlines(this.SYMBOL, '15m', 3);
+
+      // Normalize candles
+      const normalized1H = this.normalizeKlines(candles1H);
+      const normalized30m = this.normalizeKlines(candles30m);
+      const normalized15m = this.normalizeKlines(candles15m);
+
+      // Use previous completed candle (index 1), not current incomplete (index 0)
+      const price1HourAgo = normalized1H[1]?.close || currentPrice;
+      const price30MinAgo = normalized30m[1]?.close || currentPrice;
+      const price15MinAgo = normalized15m[1]?.close || currentPrice;
+
+      const hourlyChange = ((currentPrice - price1HourAgo) / price1HourAgo) * 100;
+      const thirtyMinChange = ((currentPrice - price30MinAgo) / price30MinAgo) * 100;
+      const fifteenMinChange = ((currentPrice - price15MinAgo) / price15MinAgo) * 100;
+
+      let bullishCount = 0;
+      let bearishCount = 0;
+
+      // Thresholds for determining direction
+      if (hourlyChange > 0.2) bullishCount++;
+      if (hourlyChange < -0.2) bearishCount++;
+
+      if (thirtyMinChange > 0.15) bullishCount++;
+      if (thirtyMinChange < -0.15) bearishCount++;
+
+      if (fifteenMinChange > 0.1) bullishCount++;
+      if (fifteenMinChange < -0.1) bearishCount++;
+
+      let direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+      let strength = 0;
+
+      // Require 2+ timeframes agreeing with no opposition
+      if (bullishCount >= 2 && bearishCount === 0) {
+        direction = 'BULLISH';
+        strength = bullishCount;
+      } else if (bearishCount >= 2 && bullishCount === 0) {
+        direction = 'BEARISH';
+        strength = bearishCount;
+      }
+
+      const details = `1H: ${hourlyChange > 0 ? '+' : ''}${hourlyChange.toFixed(2)}% | 30m: ${thirtyMinChange > 0 ? '+' : ''}${thirtyMinChange.toFixed(2)}% | 15m: ${fifteenMinChange > 0 ? '+' : ''}${fifteenMinChange.toFixed(2)}%`;
+
+      console.log(`📊 [PRICE DIRECTION] ${direction} (strength: ${strength}/3) | ${details}`);
+
+      return { direction, strength, hourlyChange, thirtyMinChange, fifteenMinChange, details };
+    } catch (error) {
+      console.error('❌ [PRICE DIRECTION] Error:', error);
+      return { direction: 'NEUTRAL', strength: 0, hourlyChange: 0, thirtyMinChange: 0, fifteenMinChange: 0, details: 'ERROR' };
+    }
+  }
+
+  /**
+   * V3: Analyze HTF trend structure using HH/HL vs LH/LL pattern + EMA
+   * Now includes breakout detection and recent structure analysis
+   */
+  private analyzeHTFTrendStructure(candles: Kline[]): 'BULLISH' | 'BEARISH' | 'NEUTRAL' {
+    if (candles.length < HTF_DIRECTION_CONFIG.CANDLES_TO_ANALYZE) return 'NEUTRAL';
+
+    const last10 = candles.slice(-HTF_DIRECTION_CONFIG.CANDLES_TO_ANALYZE);
+    const currentCandle = last10[last10.length - 1];
+    const previousCandles = last10.slice(0, -1); // All except the current candle
+
+    let bullScore = 0;
+    let bearScore = 0;
+
+    // Count HH/HL vs LH/LL
+    for (let i = 1; i < last10.length; i++) {
+      // Higher high
+      if (last10[i].high > last10[i - 1].high) bullScore++;
+      // Higher low
+      if (last10[i].low > last10[i - 1].low) bullScore++;
+      // Lower high
+      if (last10[i].high < last10[i - 1].high) bearScore++;
+      // Lower low
+      if (last10[i].low < last10[i - 1].low) bearScore++;
+    }
+
+    // EMA analysis
+    const closes = candles.map(c => c.close);
+    const ema9 = this.calculateSimpleEMA(closes, HTF_DIRECTION_CONFIG.EMA_FAST);
+    const ema21 = this.calculateSimpleEMA(closes, HTF_DIRECTION_CONFIG.EMA_SLOW);
+    const currentPrice = currentCandle.close;
+
+    // EMA alignment bonus
+    if (ema9 > ema21) bullScore += 3;
+    if (ema9 < ema21) bearScore += 3;
+
+    // Price vs EMA21 bonus
+    if (currentPrice > ema21) bullScore += 2;
+    if (currentPrice < ema21) bearScore += 2;
+
+    // ========== NEW: BREAKOUT DETECTION ==========
+    // Check if current price breaks above/below all recent swing points
+    const recentHighs = previousCandles.map(c => c.high);
+    const recentLows = previousCandles.map(c => c.low);
+    const highestRecentHigh = Math.max(...recentHighs);
+    const lowestRecentLow = Math.min(...recentLows);
+
+    // Bullish breakout: Current candle closes above all recent highs
+    if (currentCandle.close > highestRecentHigh) {
+      console.log(`📊 [HTF] BULLISH BREAKOUT detected: ${currentCandle.close.toFixed(2)} > recent high ${highestRecentHigh.toFixed(2)}`);
+      bullScore += 5; // Strong bullish signal
+    }
+
+    // Bearish breakout: Current candle closes below all recent lows
+    if (currentCandle.close < lowestRecentLow) {
+      console.log(`📊 [HTF] BEARISH BREAKOUT detected: ${currentCandle.close.toFixed(2)} < recent low ${lowestRecentLow.toFixed(2)}`);
+      bearScore += 5; // Strong bearish signal
+    }
+
+    // ========== NEW: RECENT 3-CANDLE STRUCTURE ==========
+    // Check if last 3 candles are making consistent structure
+    if (last10.length >= 3) {
+      const last3 = last10.slice(-3);
+      const makingHigherHighs = last3[2].high > last3[1].high && last3[1].high > last3[0].high;
+      const makingHigherLows = last3[2].low > last3[1].low && last3[1].low > last3[0].low;
+      const makingLowerHighs = last3[2].high < last3[1].high && last3[1].high < last3[0].high;
+      const makingLowerLows = last3[2].low < last3[1].low && last3[1].low < last3[0].low;
+
+      if (makingHigherHighs && makingHigherLows) {
+        console.log(`📊 [HTF] Recent structure: Higher Highs + Higher Lows (BULLISH)`);
+        bullScore += 4;
+      }
+
+      if (makingLowerHighs && makingLowerLows) {
+        console.log(`📊 [HTF] Recent structure: Lower Highs + Lower Lows (BEARISH)`);
+        bearScore += 4;
+      }
+    }
+
+    console.log(`📊 [HTF] Scores: BULL=${bullScore}, BEAR=${bearScore}, Diff=${Math.abs(bullScore - bearScore)}`);
+
+    // Need clear dominance (score >= 5 AND difference >= 5)
+    if (bullScore >= HTF_DIRECTION_CONFIG.MIN_STRUCTURE_SCORE && bullScore - bearScore >= 5) {
+      return 'BULLISH';
+    }
+    if (bearScore >= HTF_DIRECTION_CONFIG.MIN_STRUCTURE_SCORE && bearScore - bullScore >= 5) {
+      return 'BEARISH';
+    }
+    return 'NEUTRAL';
+  }
+
+  /**
+   * V3: Get HTF direction decision with caching
+   * Returns allowed direction, size multiplier, and confidence
+   * Now includes price-based cache invalidation to detect trend changes faster
+   */
+  private async getHTFDirectionDecision(): Promise<HTFDirectionDecision> {
+    const now = Date.now();
+
+    // ========== FETCH FRESH CURRENT PRICE FOR CACHE INVALIDATION ==========
+    let currentPrice = 0;
+    try {
+      const freshData = await this.fetchTimeframeData('15m');
+      currentPrice = freshData.currentPrice;
+    } catch (error) {
+      console.error('Failed to fetch current price for HTF cache check:', error);
+    }
+
+    // ========== SMART CACHE INVALIDATION - TIME + PRICE BASED ==========
+
+    // Calculate price change since last cache updates
+    const priceChange4H = htfDirectionCache.lastPrice4H > 0
+      ? Math.abs((currentPrice - htfDirectionCache.lastPrice4H) / htfDirectionCache.lastPrice4H) * 100
+      : 999; // Force refresh if no previous price
+
+    const priceChange1H = htfDirectionCache.lastPrice1H > 0
+      ? Math.abs((currentPrice - htfDirectionCache.lastPrice1H) / htfDirectionCache.lastPrice1H) * 100
+      : 999; // Force refresh if no previous price
+
+    // Time-based expiry checks
+    const cache4HExpired = (now - htfDirectionCache.lastUpdate4H) > HTF_DIRECTION_CONFIG.CACHE_4H_MINUTES * 60 * 1000;
+    const cache1HExpired = (now - htfDirectionCache.lastUpdate1H) > HTF_DIRECTION_CONFIG.CACHE_1H_MINUTES * 60 * 1000;
+
+    // Price-based invalidation checks
+    const price4HChanged = priceChange4H >= HTF_DIRECTION_CONFIG.PRICE_CHANGE_REFRESH_PCT;
+    const price1HChanged = priceChange1H >= HTF_DIRECTION_CONFIG.PRICE_CHANGE_REFRESH_PCT;
+
+    // Update 4H trend if stale OR price moved significantly
+    if (cache4HExpired || price4HChanged) {
+      try {
+        if (price4HChanged && !cache4HExpired) {
+          console.log(`📊 V3 HTF 4H Cache INVALIDATED: Price moved ${priceChange4H.toFixed(2)}% since last check (${htfDirectionCache.lastPrice4H.toFixed(2)} → ${currentPrice.toFixed(2)})`);
+        }
+        const candles4H = await this.fetchTimeframeData('4h');
+        htfDirectionCache.trend4H = this.analyzeHTFTrendStructure(candles4H.klines);
+        htfDirectionCache.lastUpdate4H = now;
+        htfDirectionCache.lastPrice4H = currentPrice;
+        console.log(`📊 V3 HTF 4H Trend Updated: ${htfDirectionCache.trend4H} (Price: ${currentPrice.toFixed(2)})`);
+      } catch (error) {
+        console.error('Failed to fetch 4H data for HTF direction:', error);
+      }
+    }
+
+    // Update 1H trend if stale OR price moved significantly
+    if (cache1HExpired || price1HChanged) {
+      try {
+        if (price1HChanged && !cache1HExpired) {
+          console.log(`📊 V3 HTF 1H Cache INVALIDATED: Price moved ${priceChange1H.toFixed(2)}% since last check (${htfDirectionCache.lastPrice1H.toFixed(2)} → ${currentPrice.toFixed(2)})`);
+        }
+        const candles1H = await this.fetchTimeframeData('1h');
+        htfDirectionCache.trend1H = this.analyzeHTFTrendStructure(candles1H.klines);
+        htfDirectionCache.lastUpdate1H = now;
+        htfDirectionCache.lastPrice1H = currentPrice;
+        console.log(`📊 V3 HTF 1H Trend Updated: ${htfDirectionCache.trend1H} (Price: ${currentPrice.toFixed(2)})`);
+      } catch (error) {
+        console.error('Failed to fetch 1H data for HTF direction:', error);
+      }
+    }
+
+    const { trend4H, trend1H } = htfDirectionCache;
+
+    // ========== HTF DECISION MATRIX ==========
+
+    // STRONG BEARISH: Both 4H and 1H bearish
+    if (trend4H === 'BEARISH' && trend1H === 'BEARISH') {
+      return {
+        allowedDirection: 'SELL',
+        maxSizeMultiplier: 1.0,
+        confidence: 'HIGH',
+        reason: '4H + 1H both BEARISH - SELL only with full size',
+        trend4H,
+        trend1H
+      };
+    }
+
+    // STRONG BULLISH: Both 4H and 1H bullish
+    if (trend4H === 'BULLISH' && trend1H === 'BULLISH') {
+      return {
+        allowedDirection: 'BUY',
+        maxSizeMultiplier: 1.0,
+        confidence: 'HIGH',
+        reason: '4H + 1H both BULLISH - BUY only with full size',
+        trend4H,
+        trend1H
+      };
+    }
+
+    // BEARISH with neutral 1H: 4H bearish, 1H consolidating
+    if (trend4H === 'BEARISH' && trend1H === 'NEUTRAL') {
+      return {
+        allowedDirection: 'SELL',
+        maxSizeMultiplier: 0.75,
+        confidence: 'MEDIUM',
+        reason: '4H BEARISH, 1H consolidating - SELL with 75% size',
+        trend4H,
+        trend1H
+      };
+    }
+
+    // BULLISH with neutral 1H: 4H bullish, 1H consolidating
+    if (trend4H === 'BULLISH' && trend1H === 'NEUTRAL') {
+      return {
+        allowedDirection: 'BUY',
+        maxSizeMultiplier: 0.75,
+        confidence: 'MEDIUM',
+        reason: '4H BULLISH, 1H consolidating - BUY with 75% size',
+        trend4H,
+        trend1H
+      };
+    }
+
+    // CONFLICT: 4H bearish but 1H bullish (pullback/bounce)
+    if (trend4H === 'BEARISH' && trend1H === 'BULLISH') {
+      return {
+        allowedDirection: 'WAIT',
+        maxSizeMultiplier: 0,
+        confidence: 'LOW',
+        reason: '4H BEARISH but 1H bouncing - WAIT for alignment',
+        trend4H,
+        trend1H
+      };
+    }
+
+    // CONFLICT: 4H bullish but 1H bearish (pullback)
+    if (trend4H === 'BULLISH' && trend1H === 'BEARISH') {
+      return {
+        allowedDirection: 'WAIT',
+        maxSizeMultiplier: 0,
+        confidence: 'LOW',
+        reason: '4H BULLISH but 1H pulling back - WAIT for alignment',
+        trend4H,
+        trend1H
+      };
+    }
+
+    // NEUTRAL 4H: No clear trend
+    if (trend4H === 'NEUTRAL') {
+      return {
+        allowedDirection: 'BOTH',
+        maxSizeMultiplier: 0.5,
+        confidence: 'LOW',
+        reason: '4H NEUTRAL - Either direction OK with 50% size',
+        trend4H,
+        trend1H
+      };
+    }
+
+    // Fallback
+    return {
+      allowedDirection: 'WAIT',
+      maxSizeMultiplier: 0,
+      confidence: 'LOW',
+      reason: 'Unclear HTF conditions - WAIT',
+      trend4H,
+      trend1H
+    };
+  }
+
+  /**
+   * V3: Determine trend direction from 15m data (for BOTH case)
+   */
+  private determineTrendDirection(data: { klines: Kline[]; indicators: any }): 'BUY' | 'SELL' | 'WAIT' {
+    const closes = data.klines.map(c => c.close);
+    const ema9 = this.calculateSimpleEMA(closes, 9);
+    const ema21 = this.calculateSimpleEMA(closes, 21);
+
+    if (ema9 > ema21 * 1.001) return 'BUY';
+    if (ema9 < ema21 * 0.999) return 'SELL';
+    return 'WAIT';
+  }
+
+  // ============================================================================
+  // V3: MOVE EXHAUSTION FILTER - Prevents entering at end of big moves
+  // ============================================================================
+
+  /**
+   * V3: Check if the move is exhausted (price already moved significantly)
+   * Prevents entering at the bottom of a dump or top of a pump
+   * NOW FETCHES FRESH DATA INTERNALLY to avoid stale price issues
+   */
+  private async checkMoveExhaustion(
+    direction: 'BUY' | 'SELL'
+  ): Promise<{ isExhausted: boolean; reason: string; movePercent: number; recommendation: string }> {
+
+    // ========== FETCH FRESH DATA - DO NOT USE CACHED ==========
+    console.log('📊 [EXHAUSTION] Fetching FRESH candle data...');
+
+    let candles1H: Kline[];
+    try {
+      const freshData = await this.fetchTimeframeData('1h');
+      candles1H = freshData.klines;
+    } catch (error) {
+      console.error('📊 [EXHAUSTION] Failed to fetch fresh 1H data:', error);
+      return { isExhausted: false, reason: 'Failed to fetch fresh data', movePercent: 0, recommendation: 'ENTER' };
+    }
+
+    // Get thresholds from env or use defaults
+    const EXHAUSTION_THRESHOLD = parseFloat(process.env.V3_EXHAUSTION_THRESHOLD_PCT || '2.0');
+    const STRONG_EXHAUSTION = parseFloat(process.env.V3_STRONG_EXHAUSTION_PCT || '2.5');
+    const EXTREME_EXHAUSTION = parseFloat(process.env.V3_EXTREME_EXHAUSTION_PCT || '3.0');
+
+    // ========== 4-HOUR LOOKBACK (from 1H candles) ==========
+    const last4Hours = candles1H.slice(-4);
+
+    if (last4Hours.length < 4) {
+      return { isExhausted: false, reason: 'Insufficient data', movePercent: 0, recommendation: 'ENTER' };
+    }
+
+    const highestHigh4H = Math.max(...last4Hours.map(c => c.high));
+    const lowestLow4H = Math.min(...last4Hours.map(c => c.low));
+
+    // Fetch LIVE ticker price instead of stale candle close
+    let currentPrice: number;
+    let priceSource: string;
+    try {
+      currentPrice = await binanceService.getTickerPrice(this.SYMBOL);
+      priceSource = 'TICKER';
+    } catch (error) {
+      // Fallback to last candle close if ticker fails
+      currentPrice = last4Hours[last4Hours.length - 1].close;
+      priceSource = '1H_CANDLE_FALLBACK';
+      console.warn('⚠️ [EXHAUSTION] Ticker fetch failed, using candle close fallback');
+    }
+
+    const totalRange4H = highestHigh4H - lowestLow4H;
+
+    // ========== CHECK FOR SELL DIRECTION ==========
+    if (direction === 'SELL') {
+      // How far has price already dropped from recent high?
+      const dropFromHigh = ((highestHigh4H - currentPrice) / highestHigh4H) * 100;
+
+      // Where is price within the range? (0% = at low, 100% = at high)
+      const positionInRange = totalRange4H > 0 ? ((currentPrice - lowestLow4H) / totalRange4H) * 100 : 50;
+
+      console.log(`📊 [EXHAUSTION] SELL Check (${priceSource}):`);
+      console.log(`   4H High: ${highestHigh4H.toFixed(2)} | 4H Low: ${lowestLow4H.toFixed(2)}`);
+      console.log(`   Current: ${currentPrice.toFixed(2)} (${priceSource}) | Drop from high: ${dropFromHigh.toFixed(2)}%`);
+      console.log(`   Position in range: ${positionInRange.toFixed(1)}% (0%=bottom, 100%=top)`);
+
+      // EXTREME: Don't sell after 3%+ drop
+      if (dropFromHigh >= EXTREME_EXHAUSTION) {
+        return {
+          isExhausted: true,
+          reason: `EXTREME: Price dropped ${dropFromHigh.toFixed(2)}% in 4H - bounce likely`,
+          movePercent: dropFromHigh,
+          recommendation: 'WAIT'
+        };
+      }
+
+      // STRONG: Caution after 2.5%+ drop
+      if (dropFromHigh >= STRONG_EXHAUSTION) {
+        return {
+          isExhausted: true,
+          reason: `STRONG: Price dropped ${dropFromHigh.toFixed(2)}% - wait for pullback to sell`,
+          movePercent: dropFromHigh,
+          recommendation: 'WAIT_FOR_PULLBACK'
+        };
+      }
+
+      // MODERATE: Caution if already dropped 2%+ AND near bottom of range
+      if (dropFromHigh >= EXHAUSTION_THRESHOLD && positionInRange < 25) {
+        return {
+          isExhausted: true,
+          reason: `Price dropped ${dropFromHigh.toFixed(2)}% and at bottom ${positionInRange.toFixed(0)}% of range`,
+          movePercent: dropFromHigh,
+          recommendation: 'WAIT_FOR_PULLBACK'
+        };
+      }
+
+      // OK to sell
+      return {
+        isExhausted: false,
+        reason: `Drop ${dropFromHigh.toFixed(2)}% is acceptable, position ${positionInRange.toFixed(0)}% in range`,
+        movePercent: dropFromHigh,
+        recommendation: 'ENTER'
+      };
+    }
+
+    // ========== CHECK FOR BUY DIRECTION ==========
+    if (direction === 'BUY') {
+      // How far has price already risen from recent low?
+      const riseFromLow = ((currentPrice - lowestLow4H) / lowestLow4H) * 100;
+
+      // Where is price within the range?
+      const positionInRange = totalRange4H > 0 ? ((currentPrice - lowestLow4H) / totalRange4H) * 100 : 50;
+
+      console.log(`📊 [EXHAUSTION] BUY Check (${priceSource}):`);
+      console.log(`   4H High: ${highestHigh4H.toFixed(2)} | 4H Low: ${lowestLow4H.toFixed(2)}`);
+      console.log(`   Current: ${currentPrice.toFixed(2)} (${priceSource}) | Rise from low: ${riseFromLow.toFixed(2)}%`);
+      console.log(`   Position in range: ${positionInRange.toFixed(1)}% (0%=bottom, 100%=top)`);
+
+      // EXTREME: Don't buy after 3%+ rise
+      if (riseFromLow >= EXTREME_EXHAUSTION) {
+        return {
+          isExhausted: true,
+          reason: `EXTREME: Price rose ${riseFromLow.toFixed(2)}% in 4H - pullback likely`,
+          movePercent: riseFromLow,
+          recommendation: 'WAIT'
+        };
+      }
+
+      // STRONG: Caution after 2.5%+ rise
+      if (riseFromLow >= STRONG_EXHAUSTION) {
+        return {
+          isExhausted: true,
+          reason: `STRONG: Price rose ${riseFromLow.toFixed(2)}% - wait for pullback to buy`,
+          movePercent: riseFromLow,
+          recommendation: 'WAIT_FOR_PULLBACK'
+        };
+      }
+
+      // MODERATE: Caution if already risen 2%+ AND near top of range
+      if (riseFromLow >= EXHAUSTION_THRESHOLD && positionInRange > 75) {
+        return {
+          isExhausted: true,
+          reason: `Price rose ${riseFromLow.toFixed(2)}% and at top ${positionInRange.toFixed(0)}% of range`,
+          movePercent: riseFromLow,
+          recommendation: 'WAIT_FOR_PULLBACK'
+        };
+      }
+
+      // OK to buy
+      return {
+        isExhausted: false,
+        reason: `Rise ${riseFromLow.toFixed(2)}% is acceptable, position ${positionInRange.toFixed(0)}% in range`,
+        movePercent: riseFromLow,
+        recommendation: 'ENTER'
+      };
+    }
+
+    // Default
+    return { isExhausted: false, reason: 'Unknown direction', movePercent: 0, recommendation: 'ENTER' };
+  }
+
+  /**
+   * V3: Analyze timeframe with predetermined direction (YES/NO confirmation)
+   */
+  private async analyzeTimeframeWithDirection(
+    klines: Kline[],
+    indicators: any,
+    currentPrice: number,
+    timeframe: string,
+    direction: 'BUY' | 'SELL'
+  ): Promise<V3ConfirmationResult> {
+    const input = { klines, indicators, currentPrice, timeframe };
+
+    // Call all 4 confirmation methods in parallel
+    const [trendResult, volumeResult, fibResult, srResult] = await Promise.all([
+      llmPatternDetectionService.analyzeTrendTimingConfirmation(input, direction),
+      llmPatternDetectionService.analyzeVolumeTimingConfirmation(input, direction),
+      llmPatternDetectionService.analyzeFibLevelConfirmation(input, direction),
+      llmPatternDetectionService.analyzeSRLevelConfirmation(input, direction)
+    ]);
+
+    // Parse YES/NO responses
+    const trendConfirm = trendResult.confirm === 'YES';
+    const volumeConfirm = volumeResult.confirm === 'YES';
+    const fibConfirm = fibResult.confirm === 'YES';
+    const srConfirm = srResult.confirm === 'YES';
+
+    // Calculate scores
+    const timingScore = (trendConfirm ? 1 : 0) + (volumeConfirm ? 1 : 0);
+    const levelScore = (fibConfirm ? 1 : 0) + (srConfirm ? 1 : 0);
+
+    // Calculate average confidence
+    const avgConfidence = (
+      trendResult.confidence +
+      volumeResult.confidence +
+      fibResult.confidence +
+      srResult.confidence
+    ) / 4;
+
+    console.log(`\n   PHASE 1 - TIMING:`);
+    console.log(`     TREND:  ${trendConfirm ? '✅ YES' : '❌ NO'} (${trendResult.confidence}%)`);
+    console.log(`     VOLUME: ${volumeConfirm ? '✅ YES' : '❌ NO'} (${volumeResult.confidence}%)`);
+    console.log(`     Score:  ${timingScore}/2`);
+
+    console.log(`\n   PHASE 2 - LEVEL:`);
+    console.log(`     FIB:    ${fibConfirm ? '✅ YES' : '❌ NO'} (${fibResult.confidence}%)`);
+    console.log(`     S/R:    ${srConfirm ? '✅ YES' : '❌ NO'} (${srResult.confidence}%)`);
+    console.log(`     Score:  ${levelScore}/2`);
+
+    return {
+      timingScore,
+      levelScore,
+      avgConfidence,
+      details: {
+        trendConfirm,
+        trendConfidence: trendResult.confidence,
+        volumeConfirm,
+        volumeConfidence: volumeResult.confidence,
+        fibConfirm,
+        fibConfidence: fibResult.confidence,
+        srConfirm,
+        srConfidence: srResult.confidence
+      }
+    };
+  }
+
+  /**
+   * V3: Calculate final trade signal with size, SL/TP, and grade
+   */
+  private calculateV3TradeSignal(
+    htfDecision: HTFDirectionDecision,
+    timingScore: number,
+    levelScore: number,
+    currentPrice: number,
+    atr: number,
+    direction: 'BUY' | 'SELL',
+    confirmationDetails: V3ConfirmationResult['details']
+  ): V3TradeSignalResult | null {
+
+    // ========== GATE CHECKS ==========
+
+    // Gate 1: HTF must allow trading
+    if (htfDecision.allowedDirection === 'WAIT') {
+      console.log('❌ V3 BLOCKED: HTF says WAIT');
+      return null;
+    }
+
+    // Gate 2: At least 1/2 timing confirmation
+    if (timingScore === 0) {
+      console.log('❌ V3 BLOCKED: Timing 0/2 - Bad entry timing');
+      return null;
+    }
+
+    // Gate 3: At least 1/2 level confirmation
+    if (levelScore === 0) {
+      console.log('❌ V3 BLOCKED: Level 0/2 - Bad price level');
+      return null;
+    }
+
+    // ========== SIZE CALCULATION ==========
+
+    let sizeMultiplier = htfDecision.maxSizeMultiplier; // Start with HTF max
+    console.log(`📊 V3 Base size from HTF: ${(sizeMultiplier * 100).toFixed(0)}%`);
+
+    // Timing adjustment
+    if (timingScore === 2) {
+      console.log(`   Timing: 2/2 → ×1.0 (perfect)`);
+    } else {
+      sizeMultiplier *= 0.75;
+      console.log(`   Timing: 1/2 → ×0.75`);
+    }
+
+    // Level adjustment
+    if (levelScore === 2) {
+      sizeMultiplier *= 1.10;
+      console.log(`   Level: 2/2 → ×1.10 (bonus)`);
+    } else {
+      console.log(`   Level: 1/2 → ×1.0`);
+    }
+
+    // Volatility adjustment
+    const atrPercent = atr / currentPrice;
+    if (atrPercent > 0.006) { // ATR > 0.6%
+      sizeMultiplier *= 0.7;
+      console.log(`   High volatility (ATR ${(atrPercent * 100).toFixed(2)}%) → ×0.7`);
+    } else if (atrPercent > 0.004) { // ATR > 0.4%
+      sizeMultiplier *= 0.85;
+      console.log(`   Medium volatility (ATR ${(atrPercent * 100).toFixed(2)}%) → ×0.85`);
+    }
+
+    // Cap between 10% and 100%
+    sizeMultiplier = Math.max(0.10, Math.min(1.0, sizeMultiplier));
+
+    // ========== SL/TP CALCULATION ==========
+
+    const slDistance = atr * 1.5; // SL = 1.5x ATR
+    const tpDistance = atr * 2.5; // TP = 2.5x ATR (R:R = 1:1.67)
+
+    let stopLoss: number;
+    let takeProfit: number;
+
+    if (direction === 'BUY') {
+      stopLoss = currentPrice - slDistance;
+      takeProfit = currentPrice + tpDistance;
+    } else {
+      stopLoss = currentPrice + slDistance;
+      takeProfit = currentPrice - tpDistance;
+    }
+
+    // ========== TRADE GRADE ==========
+
+    const totalScore = timingScore + levelScore; // 2-4
+    let grade: 'A' | 'B' | 'C';
+
+    if (htfDecision.confidence === 'HIGH' && totalScore === 4) {
+      grade = 'A';
+    } else if (htfDecision.confidence === 'HIGH' && totalScore >= 3) {
+      grade = 'B';
+    } else if (htfDecision.confidence === 'MEDIUM' && totalScore >= 3) {
+      grade = 'B';
+    } else {
+      grade = 'C';
+    }
+
+    // ========== BUILD SIGNAL ==========
+
+    const signal: V3TradeSignalResult = {
+      direction,
+      entryPrice: currentPrice,
+      stopLoss: Math.round(stopLoss * 100) / 100,
+      takeProfit: Math.round(takeProfit * 100) / 100,
+      sizeMultiplier: Math.round(sizeMultiplier * 100) / 100,
+      sizePercent: Math.round(sizeMultiplier * 100),
+      grade,
+      riskReward: (tpDistance / slDistance).toFixed(2),
+      metadata: {
+        htfConfidence: htfDecision.confidence,
+        htf4H: htfDecision.trend4H,
+        htf1H: htfDecision.trend1H,
+        timingScore,
+        levelScore,
+        atrPercent,
+        trendConfirm: confirmationDetails.trendConfirm,
+        volumeConfirm: confirmationDetails.volumeConfirm,
+        fibConfirm: confirmationDetails.fibConfirm,
+        srConfirm: confirmationDetails.srConfirm
+      }
+    };
+
+    console.log(`✅ V3 SIGNAL: ${signal.direction} @ ${signal.entryPrice}`);
+    console.log(`   Size: ${signal.sizePercent}% | Grade: ${signal.grade}`);
+    console.log(`   SL: ${signal.stopLoss} | TP: ${signal.takeProfit} | R:R: 1:${signal.riskReward}`);
+
+    return signal;
+  }
+
+  /**
+   * V3: Generate entry signal using 3-phase system
+   * Phase 0: HTF Direction (math-only)
+   * Phase 1+2: LLM Confirmation (parallel YES/NO)
+   * Phase 3: Size Calculation (math-only)
+   */
+  async generateEntrySignalV3(): Promise<BTCScalpingSignal | null> {
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('🚀 V3 SIGNAL GENERATION - 3-PHASE SYSTEM');
+    console.log('═══════════════════════════════════════════════════════════════');
+
+    // Circuit breaker check - block trading after consecutive losses
+    if (!this.canOpenNewTrade()) {
+      console.log('❌ V3 SIGNAL BLOCKED: Circuit breaker active - consecutive loss protection');
+      console.log('═══════════════════════════════════════════════════════════════\n');
+      return null;
+    }
+
+    try {
+      // Fetch 15m data
+      const primaryData = await this.fetchTimeframeData(this.PRIMARY_TIMEFRAME);
+
+      // ========== PHASE 0: HTF DIRECTION (INSTANT) ==========
+      console.log('\n📊 PHASE 0: HTF Direction Filter');
+      console.log('────────────────────────────────────────────────────────────────');
+
+      const htfDecision = await this.getHTFDirectionDecision();
+
+      console.log(`   4H Trend: ${htfDecision.trend4H}`);
+      console.log(`   1H Trend: ${htfDecision.trend1H}`);
+      console.log(`   Decision: ${htfDecision.allowedDirection} (${htfDecision.confidence})`);
+      console.log(`   Max Size: ${(htfDecision.maxSizeMultiplier * 100).toFixed(0)}%`);
+      console.log(`   Reason: ${htfDecision.reason}`);
+
+      // Log HTF analysis to WEEX AI Log API (fire-and-forget)
+      weexAiLogService.logHTFAnalysis({
+        trend4H: htfDecision.trend4H as 'BULLISH' | 'BEARISH' | 'NEUTRAL',
+        trend1H: htfDecision.trend1H as 'BULLISH' | 'BEARISH' | 'NEUTRAL',
+        decision: htfDecision.allowedDirection,
+        confidence: htfDecision.confidence,
+        currentPrice: primaryData.currentPrice,
+      });
+
+      // Exit early if HTF says WAIT
+      if (htfDecision.allowedDirection === 'WAIT') {
+        console.log('\n❌ V3 SIGNAL BLOCKED: HTF conflict - waiting for alignment');
+        console.log('═══════════════════════════════════════════════════════════════\n');
+        return null;
+      }
+
+      // Determine direction
+      let direction: 'BUY' | 'SELL';
+      if (htfDecision.allowedDirection === 'BOTH') {
+        const trendDirection = this.determineTrendDirection(primaryData);
+        if (trendDirection === 'WAIT') {
+          console.log('\n❌ V3 SIGNAL BLOCKED: Could not determine direction from 15m trend');
+          console.log('═══════════════════════════════════════════════════════════════\n');
+          return null;
+        }
+        direction = trendDirection;
+        console.log(`   Using 15m trend direction: ${direction}`);
+      } else {
+        direction = htfDecision.allowedDirection;
+      }
+
+      // ========== PHASE 0.3: REAL-TIME DIRECTION SAFEGUARD ==========
+      console.log('\n📊 PHASE 0.3: Real-Time Price Direction Check');
+      console.log('────────────────────────────────────────────────────────────────');
+
+      const priceDirection = await this.checkRealTimePriceDirection();
+
+      // Block trades against obvious momentum
+      if (direction === 'SELL' && priceDirection.direction === 'BULLISH') {
+        console.log(`🚫 [DIRECTION BLOCK] SELL signal BLOCKED - Price momentum is BULLISH`);
+        console.log(`   ${priceDirection.details}`);
+        console.log('   Waiting for price momentum to align with SELL direction');
+        console.log('═══════════════════════════════════════════════════════════════\n');
+        return null;
+      }
+
+      if (direction === 'BUY' && priceDirection.direction === 'BEARISH') {
+        console.log(`🚫 [DIRECTION BLOCK] BUY signal BLOCKED - Price momentum is BEARISH`);
+        console.log(`   ${priceDirection.details}`);
+        console.log('   Waiting for price momentum to align with BUY direction');
+        console.log('═══════════════════════════════════════════════════════════════\n');
+        return null;
+      }
+
+      // Log alignment or neutral state
+      if ((direction === 'SELL' && priceDirection.direction === 'BEARISH') ||
+          (direction === 'BUY' && priceDirection.direction === 'BULLISH')) {
+        console.log(`✅ [DIRECTION ALIGNED] ${direction} signal CONFIRMED by ${priceDirection.direction} momentum`);
+      } else {
+        console.log(`⚡ [DIRECTION NEUTRAL] ${direction} signal allowed - no strong momentum either way`);
+      }
+
+      // ========== PHASE 0.5: MOVE EXHAUSTION CHECK ==========
+      console.log('\n📊 PHASE 0.5: Move Exhaustion Check');
+      console.log('────────────────────────────────────────────────────────────────');
+
+      // Exhaustion check now fetches fresh data internally to avoid stale price issues
+      const exhaustionResult = await this.checkMoveExhaustion(direction);
+
+      console.log(`   Direction: ${direction}`);
+      console.log(`   Move %: ${exhaustionResult.movePercent.toFixed(2)}%`);
+      console.log(`   Exhausted: ${exhaustionResult.isExhausted ? '⚠️ YES' : '✅ NO'}`);
+      console.log(`   Reason: ${exhaustionResult.reason}`);
+      console.log(`   Recommendation: ${exhaustionResult.recommendation}`);
+
+      // Log exhaustion check to WEEX AI Log API (fire-and-forget)
+      weexAiLogService.logExhaustionCheck({
+        direction,
+        currentPrice: primaryData.currentPrice,
+        highestHigh4H: 0, // Calculated inside checkMoveExhaustion
+        lowestLow4H: 0,   // Calculated inside checkMoveExhaustion
+        positionInRange: 0, // Calculated inside checkMoveExhaustion
+        movePercent: exhaustionResult.movePercent,
+        isExhausted: exhaustionResult.isExhausted,
+        recommendation: exhaustionResult.recommendation as 'ENTER' | 'WAIT' | 'WAIT_FOR_PULLBACK',
+      });
+
+      if (exhaustionResult.isExhausted) {
+        console.log(`\n❌ V3 SIGNAL BLOCKED: Move exhaustion - ${exhaustionResult.reason}`);
+        console.log('   → Wait for price to retrace before entering');
+        console.log('═══════════════════════════════════════════════════════════════\n');
+        return null;
+      }
+
+      // ========== PHASE 1 + 2: LLM CONFIRMATION (PARALLEL) ==========
+      console.log('\n🤖 PHASE 1 + 2: LLM Confirmation (Parallel)');
+      console.log('────────────────────────────────────────────────────────────────');
+      console.log(`   Direction to confirm: ${direction}`);
+
+      const confirmation = await this.analyzeTimeframeWithDirection(
+        primaryData.klines,
+        primaryData.indicators,
+        primaryData.currentPrice,
+        this.PRIMARY_TIMEFRAME,
+        direction
+      );
+
+      // ========== PHASE 3: SIZE CALCULATION ==========
+      console.log('\n📐 PHASE 3: Size Calculation');
+      console.log('────────────────────────────────────────────────────────────────');
+
+      const v3Signal = this.calculateV3TradeSignal(
+        htfDecision,
+        confirmation.timingScore,
+        confirmation.levelScore,
+        primaryData.currentPrice,
+        primaryData.indicators.atr,
+        direction,
+        confirmation.details
+      );
+
+      if (!v3Signal) {
+        console.log('\n❌ V3 SIGNAL BLOCKED: Failed phase checks');
+        console.log('═══════════════════════════════════════════════════════════════\n');
+        return null;
+      }
+
+      // ========== BUILD BTCSCALPINGSIGNAL ==========
+      console.log('\n═══════════════════════════════════════════════════════════════');
+      console.log(`✅ V3 SIGNAL GENERATED: ${v3Signal.direction}`);
+      console.log('═══════════════════════════════════════════════════════════════');
+      console.log(`   Entry:    $${v3Signal.entryPrice}`);
+      console.log(`   Stop:     $${v3Signal.stopLoss}`);
+      console.log(`   Target:   $${v3Signal.takeProfit}`);
+      console.log(`   Size:     ${v3Signal.sizePercent}%`);
+      console.log(`   Grade:    ${v3Signal.grade}`);
+      console.log(`   R:R:      1:${v3Signal.riskReward}`);
+      console.log('═══════════════════════════════════════════════════════════════\n');
+
+      // Build the BTCScalpingSignal format for compatibility with existing system
+      const signal: BTCScalpingSignal = {
+        id: uuidv4(),
+        symbol: 'BTCUSDT',
+        category: 'FIBONACCI_SCALPING',
+        recommendation: v3Signal.direction,
+        confidence: confirmation.avgConfidence,
+        timestamp: new Date(),
+        entryPrice: v3Signal.entryPrice,
+        stopLossPrice: v3Signal.stopLoss,
+        takeProfitPrice: v3Signal.takeProfit,
+        riskRewardRatio: parseFloat(v3Signal.riskReward),
+        multiTimeframeAnalysis: {
+          primary: {
+            timeframe: this.PRIMARY_TIMEFRAME,
+            trend: htfDecision.trend4H === 'BULLISH' ? 'BULLISH' : htfDecision.trend4H === 'BEARISH' ? 'BEARISH' : 'NEUTRAL',
+            momentum: 'MODERATE',
+            strength: confirmation.avgConfidence,
+            recommendation: v3Signal.direction,
+            confidence: confirmation.avgConfidence,
+            patterns: {
+              fibonacci: { recommendation: v3Signal.direction, confidence: confirmation.details.fibConfidence },
+              chart: {},
+              candlestick: {},
+              supportResistance: { recommendation: v3Signal.direction, confidence: confirmation.details.srConfidence }
+            }
+          },
+          supporting: [],
+          confluenceScore: (confirmation.timingScore + confirmation.levelScore) * 25,
+          overallRecommendation: v3Signal.direction,
+          overallConfidence: confirmation.avgConfidence
+        },
+        fibonacciAnalysis: { confirm: confirmation.details.fibConfirm, confidence: confirmation.details.fibConfidence },
+        trendMomentumAnalysis: { confirm: confirmation.details.trendConfirm, confidence: confirmation.details.trendConfidence },
+        volumePriceActionAnalysis: { confirm: confirmation.details.volumeConfirm, confidence: confirmation.details.volumeConfidence },
+        supportResistanceAnalysis: { confirm: confirmation.details.srConfirm, confidence: confirmation.details.srConfidence },
+        llmConsensus: {
+          fibonacciVote: confirmation.details.fibConfirm ? v3Signal.direction : 'HOLD',
+          trendMomentumVote: confirmation.details.trendConfirm ? v3Signal.direction : 'HOLD',
+          volumePriceActionVote: confirmation.details.volumeConfirm ? v3Signal.direction : 'HOLD',
+          supportResistanceVote: confirmation.details.srConfirm ? v3Signal.direction : 'HOLD',
+          consensusAchieved: true,
+          votesFor: confirmation.timingScore + confirmation.levelScore,
+          votesAgainst: 0,
+          votesNeutral: 4 - (confirmation.timingScore + confirmation.levelScore)
+        },
+        technicalIndicators: primaryData.indicators,
+        reasoning: `V3 3-Phase System: HTF ${htfDecision.confidence} (${htfDecision.trend4H}/${htfDecision.trend1H}), Timing ${confirmation.timingScore}/2, Level ${confirmation.levelScore}/2, Grade ${v3Signal.grade}`,
+        qualityScore: {
+          total: (confirmation.timingScore + confirmation.levelScore) * 25,
+          grade: v3Signal.grade,
+          components: {
+            consensus: (confirmation.timingScore + confirmation.levelScore) * 6,
+            confidence: Math.round(confirmation.avgConfidence * 0.25),
+            riskReward: Math.round(parseFloat(v3Signal.riskReward) * 10),
+            htfAlignment: htfDecision.confidence === 'HIGH' ? 15 : htfDecision.confidence === 'MEDIUM' ? 10 : 5,
+            proScore: 10
+          },
+          positionSizeMultiplier: v3Signal.sizeMultiplier
+        },
+        positionSizeMultiplier: v3Signal.sizeMultiplier
+      };
+
+      // Broadcast signal to all eligible agents for validation and execution
+      try {
+        await signalBroadcastService.broadcastSignal({
+          id: signal.id,
+          symbol: signal.symbol,
+          category: signal.category,
+          recommendation: signal.recommendation,
+          confidence: signal.confidence / 100, // Convert to 0-1 scale
+          reasoning: signal.reasoning,
+          entryPrice: signal.entryPrice,
+          stopLoss: signal.stopLossPrice || undefined,
+          targetPrice: signal.takeProfitPrice || undefined,
+          timestamp: new Date(),
+          priority: Math.floor(signal.confidence), // Use confidence as priority
+          qualityScore: signal.qualityScore ? {
+            total: signal.qualityScore.total,
+            grade: signal.qualityScore.grade,
+            positionSizeMultiplier: signal.qualityScore.positionSizeMultiplier
+          } : undefined,
+          positionSizeMultiplier: signal.positionSizeMultiplier
+        });
+
+        console.log(`📢 V3 Signal ${signal.id} broadcasted to agents (Grade ${v3Signal.grade}, Size ${v3Signal.sizePercent}%)`);
+      } catch (error) {
+        console.error(`Failed to broadcast V3 signal ${signal.id}:`, error);
+      }
+
+      return signal;
+
+    } catch (error: any) {
+      console.error('❌ V3 Signal generation error:', error.message);
+      console.log('═══════════════════════════════════════════════════════════════\n');
+      return null;
+    }
   }
 }
 

@@ -16,6 +16,8 @@ export interface WeexExecutionResult {
   success: boolean;
   orderId?: string;
   clientOrderId?: string;
+  tpOrderId?: string;            // Take Profit order ID from exchange
+  slOrderId?: string;            // Stop Loss order ID from exchange
   executionPrice?: number;
   positionSizeUSD?: number;
   positionSizeBTC?: number;
@@ -32,6 +34,8 @@ export interface WeexOrderResult {
   success: boolean;
   orderId?: number;
   clientOrderId?: string;
+  tpOrderId?: number;          // Take Profit order ID (preset TP/SL)
+  slOrderId?: number;          // Stop Loss order ID (preset TP/SL)
   status?: string;
   filledQty?: string;
   avgPrice?: number;
@@ -50,6 +54,8 @@ export interface WeexMonitoredPosition {
   id: string;                    // Unique monitor ID
   setupId: string;               // V6 setup ID that created this position
   orderId: string;               // WEEX order ID
+  tpOrderId?: string;            // WEEX Take Profit order ID (for modification)
+  slOrderId?: string;            // WEEX Stop Loss order ID (for modification)
 
   // Position details
   symbol: string;                // e.g., 'cmt_btcusdt'
@@ -80,6 +86,10 @@ export interface WeexMonitoredPosition {
   breakevenActivated: boolean;
   trailingActivated: boolean;
   currentStopLoss: number;       // May differ from original after breakeven/trailing
+  currentTakeProfit?: number;    // May differ from original after TP adjustment
+  lastSlUpdate?: Date;           // Track last SL modification on exchange (throttling)
+  lastTpUpdate?: Date;           // Track last TP modification on exchange (throttling)
+  tpAdjusted?: boolean;          // Flag to prevent repeated TP adjustments
 
   // Status
   status: WeexPositionStatus;

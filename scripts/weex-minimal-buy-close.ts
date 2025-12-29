@@ -3,6 +3,9 @@ import { weexService } from '../src/services/weexService';
 const COMMANDS: Record<string, string> = {
   positions: 'Get all open positions',
   assets: 'Get contract account assets',
+  balance: 'Get spot account balance',
+  order: 'Get order status by ID (usage: order <orderId>)',
+  history: 'Get order history',
   close: 'Close all positions for symbol',
   all: 'Run all tests',
   help: 'Show this help menu',
@@ -19,8 +22,10 @@ function showHelp() {
   console.log('\nExamples:');
   console.log('  npx ts-node scripts/weex-minimal-buy-close.ts positions');
   console.log('  npx ts-node scripts/weex-minimal-buy-close.ts assets');
+  console.log('  npx ts-node scripts/weex-minimal-buy-close.ts balance');
+  console.log('  npx ts-node scripts/weex-minimal-buy-close.ts order 123456789');
+  console.log('  npx ts-node scripts/weex-minimal-buy-close.ts history');
   console.log('  npx ts-node scripts/weex-minimal-buy-close.ts close');
-  console.log('  npx ts-node scripts/weex-minimal-buy-close.ts all');
 }
 
 async function main() {
@@ -37,6 +42,29 @@ async function main() {
       console.log('Getting contract assets...');
       const assets = await weexService.getContractAssets();
       console.log('Assets:', JSON.stringify(assets, null, 2));
+      break;
+
+    case 'balance':
+      console.log('Getting spot balance...');
+      const balance = await weexService.getBalance();
+      console.log('Balance:', JSON.stringify(balance, null, 2));
+      break;
+
+    case 'order':
+      const orderId = process.argv[3];
+      if (!orderId) {
+        console.log('Usage: npx ts-node scripts/weex-minimal-buy-close.ts order <orderId>');
+        break;
+      }
+      console.log(`Getting order ${orderId}...`);
+      const order = await weexService.getOrderStatus(orderId);
+      console.log('Order:', JSON.stringify(order, null, 2));
+      break;
+
+    case 'history':
+      console.log('Getting order history...');
+      const history = await weexService.getOrderHistory();
+      console.log('Order History:', JSON.stringify(history, null, 2));
       break;
 
     case 'close':

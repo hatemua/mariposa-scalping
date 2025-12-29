@@ -191,7 +191,12 @@ async function startWeexV6Worker() {
     await zoneMonitorService.start(onSetupConfirmed);
     console.log('[WEEX-V6-WORKER] Zone monitor service started');
 
-    // Step 7: Start WEEX Position Monitor
+    // Step 7: Load open positions from database (restart recovery)
+    console.log('[WEEX-V6-WORKER] Loading open positions from database...');
+    await weexPositionMonitor.loadOpenPositionsFromDb();
+    console.log('[WEEX-V6-WORKER] Open positions loaded');
+
+    // Step 8: Start WEEX Position Monitor
     console.log('[WEEX-V6-WORKER] Starting WEEX position monitor...');
     weexPositionMonitor.start();
     console.log('[WEEX-V6-WORKER] WEEX position monitor started');

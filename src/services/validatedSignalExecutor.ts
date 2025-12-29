@@ -634,15 +634,17 @@ export class ValidatedSignalExecutor {
       }
     }
 
-    // ============================================================
-    // CRITICAL: CAP STOP LOSS AND CALCULATE REALISTIC TAKE PROFIT
-    // ============================================================
-    // Problem: LLM generates SL 394-566 points (too wide) and TP 1300+ points (unrealistic)
-    // Solution: Cap SL at MAX_SL_POINTS and set TP = SL × RR_RATIO
+    // ============================================================================
+    // V3 SL/TP MANAGEMENT - ATR-BASED WITH SAFETY LIMITS
+    // ============================================================================
+    // V3 Mode: Trust the ATR-based SL from signal generator, only apply safety limits
+    // This allows proper risk management based on market volatility
 
-    const MAX_SL_POINTS = parseFloat(process.env.MT4_MAX_SL_POINTS || '200');
-    const DEFAULT_SL_POINTS = parseFloat(process.env.MT4_DEFAULT_SL_POINTS || '150');
-    const RR_RATIO = parseFloat(process.env.MT4_RR_RATIO || '1.5');
+    const MAX_SL_POINTS = parseFloat(process.env.MT4_MAX_SL_POINTS || '600');
+    const MIN_SL_POINTS = parseFloat(process.env.MT4_MIN_SL_POINTS || '100');
+    const DEFAULT_SL_POINTS = parseFloat(process.env.MT4_DEFAULT_SL_POINTS || '300');
+    const RR_RATIO = parseFloat(process.env.MT4_RR_RATIO || '1.67');
+    const USE_V3_SL = process.env.MT4_USE_V3_SL === 'true';
 
     let stopLoss: number | undefined = validatedSignal.stopLossPrice;
     let takeProfit: number | undefined = validatedSignal.takeProfitPrice;
@@ -651,47 +653,65 @@ export class ValidatedSignalExecutor {
     const isBuy = recommendation.toLowerCase() === 'buy';
 
     if (stopLoss && executionPrice) {
-      const slDistancePoints = Math.abs(executionPrice - stopLoss);
+      const originalSlDistance = Math.abs(executionPrice - stopLoss);
 
-      console.log(`📊 [SL/TP] Original SL: ${stopLoss}, Distance: ${slDistancePoints.toFixed(2)} points`);
+      console.log(`📊 [SL/TP] V3 Original SL: ${stopLoss.toFixed(2)}, Distance: ${originalSlDistance.toFixed(2)} points`);
 
-      // Cap SL if too wide
-      if (slDistancePoints > MAX_SL_POINTS) {
-        console.warn(`⚠️  [SL/TP] SL too wide (${slDistancePoints.toFixed(2)} > ${MAX_SL_POINTS}), capping to ${MAX_SL_POINTS} points`);
-        const cappedSL = isBuy
-          ? executionPrice - MAX_SL_POINTS
-          : executionPrice + MAX_SL_POINTS;
-        stopLoss = cappedSL;
-        console.log(`   New SL: ${cappedSL.toFixed(2)}`);
+      let finalSlDistance = originalSlDistance;
+
+      if (USE_V3_SL) {
+        // V3 Mode: Trust the ATR-based SL from signal generator
+        // Only apply absolute safety limits
+
+        if (originalSlDistance > MAX_SL_POINTS) {
+          // Extreme case: Cap at absolute maximum (safety)
+          console.warn(`⚠️  [SL/TP] V3 SL exceeds safety max (${originalSlDistance.toFixed(2)} > ${MAX_SL_POINTS}), capping`);
+          finalSlDistance = MAX_SL_POINTS;
+        } else if (originalSlDistance < MIN_SL_POINTS) {
+          // Too tight: Expand to minimum
+          console.warn(`⚠️  [SL/TP] V3 SL too tight (${originalSlDistance.toFixed(2)} < ${MIN_SL_POINTS}), expanding`);
+          finalSlDistance = MIN_SL_POINTS;
+        } else {
+          // V3 SL is within acceptable range - USE IT
+          console.log(`✅ [SL/TP] V3 SL accepted: ${originalSlDistance.toFixed(2)} points (within ${MIN_SL_POINTS}-${MAX_SL_POINTS} range)`);
+          finalSlDistance = originalSlDistance;
+        }
+      } else {
+        // Legacy mode: Use old capping logic (200 points)
+        const LEGACY_MAX = 200;
+        if (originalSlDistance > LEGACY_MAX) {
+          console.warn(`⚠️  [SL/TP] Legacy cap: ${originalSlDistance.toFixed(2)} → ${LEGACY_MAX} points`);
+          finalSlDistance = LEGACY_MAX;
+        }
       }
-    } else if (!stopLoss && executionPrice) {
-      // No SL provided - set default
-      console.warn(`⚠️  [SL/TP] No stop loss provided, setting default ${DEFAULT_SL_POINTS} points`);
-      const defaultSL = isBuy
-        ? executionPrice - DEFAULT_SL_POINTS
-        : executionPrice + DEFAULT_SL_POINTS;
-      stopLoss = defaultSL;
-      console.log(`   Default SL: ${defaultSL.toFixed(2)}`);
-    }
 
-    // Calculate TP based on SL distance and R:R ratio (instead of using unrealistic LLM TP)
-    if (stopLoss && executionPrice) {
-      const actualSlDistance = Math.abs(executionPrice - stopLoss);
-      const tpDistance = actualSlDistance * RR_RATIO;
+      // Apply final SL
+      stopLoss = isBuy
+        ? executionPrice - finalSlDistance
+        : executionPrice + finalSlDistance;
 
-      const newTakeProfit = isBuy
+      // Calculate TP based on final SL distance
+      const tpDistance = finalSlDistance * RR_RATIO;
+      takeProfit = isBuy
         ? executionPrice + tpDistance
         : executionPrice - tpDistance;
 
-      console.log(`📊 [SL/TP] Calculating TP: SL distance=${actualSlDistance.toFixed(2)}, R:R=${RR_RATIO}, TP distance=${tpDistance.toFixed(2)}`);
+      console.log(`✅ [SL/TP] Final: Entry=${executionPrice.toFixed(2)}, SL=${stopLoss!.toFixed(2)}, TP=${takeProfit!.toFixed(2)}`);
+      console.log(`   SL Distance: ${finalSlDistance.toFixed(2)} pts | TP Distance: ${tpDistance.toFixed(2)} pts | R:R: 1:${RR_RATIO}`);
 
-      if (takeProfit) {
-        const oldTpDistance = Math.abs(takeProfit - executionPrice);
-        console.log(`   Original TP: ${takeProfit.toFixed(2)} (${oldTpDistance.toFixed(2)} pts)`);
-      }
+    } else if (!stopLoss && executionPrice) {
+      // No SL provided - set default
+      console.warn(`⚠️  [SL/TP] No stop loss provided, setting default ${DEFAULT_SL_POINTS} points`);
+      stopLoss = isBuy
+        ? executionPrice - DEFAULT_SL_POINTS
+        : executionPrice + DEFAULT_SL_POINTS;
 
-      takeProfit = newTakeProfit;
-      console.log(`   New TP: ${newTakeProfit.toFixed(2)} (${tpDistance.toFixed(2)} pts) [R:R = 1:${RR_RATIO}]`);
+      const tpDistance = DEFAULT_SL_POINTS * RR_RATIO;
+      takeProfit = isBuy
+        ? executionPrice + tpDistance
+        : executionPrice - tpDistance;
+
+      console.log(`   Default SL: ${stopLoss!.toFixed(2)}, Default TP: ${takeProfit!.toFixed(2)}`);
     }
 
     console.log(`✅ [SL/TP] Final values: Entry=${executionPrice.toFixed(2)}, SL=${stopLoss?.toFixed(2) || 'NONE'}, TP=${takeProfit?.toFixed(2) || 'NONE'}`);
@@ -996,6 +1016,342 @@ export class ValidatedSignalExecutor {
     } catch (error) {
       console.error(`❌ Direct execution failed for ${agent.name}:`, error);
       throw error; // Re-throw so caller knows it failed
+    }
+  }
+
+  // ============================================================================
+  // V6 PRO SNIPER - Direct Setup Execution
+  // ============================================================================
+
+  /**
+   * Convert percentage-based SL/TP to absolute prices
+   * Detection: Values < 100 are likely percentages, > 1000 are absolute prices
+   *
+   * @param value - The SL or TP value from setup
+   * @param executionPrice - Current execution price
+   * @param direction - Trade direction (BUY or SELL)
+   * @param isStopLoss - True for SL, false for TP
+   * @returns Object with converted value and flag indicating if conversion occurred
+   */
+  private convertToAbsolutePrice(
+    value: number,
+    executionPrice: number,
+    direction: 'BUY' | 'SELL',
+    isStopLoss: boolean
+  ): { converted: number; wasPercentage: boolean } {
+    // Heuristic: If value < 100, it's likely a percentage
+    // BTC prices are always > 1000, so this is a safe threshold
+    const isLikelyPercentage = value < 100;
+
+    if (!isLikelyPercentage) {
+      return { converted: value, wasPercentage: false };
+    }
+
+    const percentValue = value; // e.g., 0.185 means 0.185%
+    let converted: number;
+
+    if (direction === 'BUY') {
+      converted = isStopLoss
+        ? executionPrice * (1 - percentValue / 100)  // BUY SL below entry
+        : executionPrice * (1 + percentValue / 100); // BUY TP above entry
+    } else {
+      converted = isStopLoss
+        ? executionPrice * (1 + percentValue / 100)  // SELL SL above entry
+        : executionPrice * (1 - percentValue / 100); // SELL TP below entry
+    }
+
+    return { converted, wasPercentage: true };
+  }
+
+  /**
+   * Execute a V6 trade setup directly (called from zoneMonitorService)
+   * This method bypasses the signal queue and LLM validation - the setup is already confirmed.
+   *
+   * @param setup - The V6 trade setup to execute
+   * @param executionPrice - The confirmed entry price
+   * @returns Promise with execution result
+   */
+  async executeV6Setup(setup: {
+    id: string;
+    symbol: string;
+    direction: 'BUY' | 'SELL';
+    grade: 'A' | 'B' | 'C';
+    entryZone: { low: number; high: number; midpoint: number };
+    stopLoss: number;
+    takeProfit1: number;
+    takeProfit2?: number;
+    riskRewardRatio: number;
+    marketContext: string;
+  }, executionPrice: number): Promise<{
+    success: boolean;
+    ticket?: number;
+    error?: string;
+  }> {
+    console.log('');
+    console.log('==================================================');
+    console.log(`[V6-EXECUTE] Executing setup ${setup.id.slice(0, 8)}`);
+    console.log('==================================================');
+    console.log(`  Direction: ${setup.direction}`);
+    console.log(`  Grade: ${setup.grade}`);
+    console.log(`  Entry: $${executionPrice.toFixed(2)}`);
+    console.log(`  SL: $${setup.stopLoss.toFixed(2)}`);
+    console.log(`  TP: $${setup.takeProfit1.toFixed(2)}`);
+    console.log(`  R:R: ${setup.riskRewardRatio.toFixed(2)}`);
+    console.log('');
+
+    try {
+      // Get the V6 agent (MT4 agent for V6 execution)
+      // NOTE: Agent category is 'SCALPING', which auto-includes 'FIBONACCI_SCALPING' in allowedSignalCategories
+      console.log(`[V6-EXECUTE-DEBUG] Step 1: Looking for MT4 SCALPING agent...`);
+      const agent = await ScalpingAgent.findOne({
+        broker: 'MT4',
+        isActive: true,
+        category: 'SCALPING'
+      });
+
+      if (!agent) {
+        console.error('[V6-EXECUTE-DEBUG] Step 1 FAILED: No active MT4 SCALPING agent found');
+        console.error('[V6-EXECUTE] No active MT4 SCALPING agent found');
+        return { success: false, error: 'No active MT4 agent found' };
+      }
+
+      console.log(`[V6-EXECUTE-DEBUG] Step 1 PASSED: Agent found`);
+      console.log(`[V6-EXECUTE] Using agent: ${agent.name} (${agent._id})`);
+
+      // ============================================================
+      // RISK CHECKS (same as executeMT4Signal)
+      // ============================================================
+      console.log(`[V6-EXECUTE-DEBUG] Step 2: Checking risk limits...`);
+
+      // CRITICAL CHECK 1: Position limits
+      const positionCheck = await riskManager.canOpenPosition(setup.direction, agent.userId.toString());
+      if (!positionCheck.allowed) {
+        console.error(`[V6-EXECUTE-DEBUG] Step 2 FAILED: Position limit - ${positionCheck.reason}`);
+        console.warn(`[V6-EXECUTE] Position limit reached: ${positionCheck.reason}`);
+        return { success: false, error: positionCheck.reason };
+      }
+
+      // CRITICAL CHECK 2: Trade cooldown
+      const cooldownCheck = await riskManager.checkAndStartCooldown();
+      if (!cooldownCheck.allowed) {
+        console.error(`[V6-EXECUTE-DEBUG] Step 2 FAILED: Cooldown - ${cooldownCheck.reason}`);
+        console.warn(`[V6-EXECUTE] Cooldown active: ${cooldownCheck.reason}`);
+        return { success: false, error: cooldownCheck.reason };
+      }
+
+      // CRITICAL CHECK 3: Daily limits
+      const dailyCheck = await riskManager.checkDailyLimits();
+      if (!dailyCheck.allowed) {
+        console.error(`[V6-EXECUTE-DEBUG] Step 2 FAILED: Daily limit - ${dailyCheck.reason}`);
+        console.warn(`[V6-EXECUTE] Daily limit reached: ${dailyCheck.reason}`);
+        return { success: false, error: dailyCheck.reason };
+      }
+
+      console.log(`[V6-EXECUTE-DEBUG] Step 2 PASSED: All risk checks passed`);
+
+      // ============================================================
+      // POSITION SIZING BY GRADE
+      // ============================================================
+      console.log(`[V6-EXECUTE-DEBUG] Step 3: Calculating position size...`);
+
+      const BASE_POSITION_USD = parseFloat(process.env.V6_BASE_POSITION_USD || '800');
+      const GRADE_MULTIPLIERS = {
+        A: 1.0,   // 100% of base
+        B: 0.75,  // 75% of base
+        C: 0.5,   // 50% of base
+      };
+
+      const positionSizeUSD = BASE_POSITION_USD * GRADE_MULTIPLIERS[setup.grade];
+      console.log(`[V6-EXECUTE-DEBUG] Step 3 PASSED: Position $${positionSizeUSD}`);
+      console.log(`[V6-EXECUTE] Position size: $${positionSizeUSD} (Grade ${setup.grade}: ${GRADE_MULTIPLIERS[setup.grade] * 100}%)`);
+
+      // ============================================================
+      // SL/TP VALIDATION AND CONVERSION
+      // ============================================================
+      console.log(`[V6-EXECUTE-DEBUG] Step 4: Validating and converting SL/TP...`);
+
+      // Detect and convert percentage-based SL/TP to absolute prices
+      const slResult = this.convertToAbsolutePrice(setup.stopLoss, executionPrice, setup.direction, true);
+      const tpResult = this.convertToAbsolutePrice(setup.takeProfit1, executionPrice, setup.direction, false);
+
+      let stopLoss = slResult.converted;
+      let takeProfit = tpResult.converted;
+
+      // Log conversion if it occurred
+      if (slResult.wasPercentage) {
+        console.log(`[V6-EXECUTE] SL converted: ${setup.stopLoss}% -> $${stopLoss.toFixed(2)}`);
+      }
+      if (tpResult.wasPercentage) {
+        console.log(`[V6-EXECUTE] TP converted: ${setup.takeProfit1}% -> $${takeProfit.toFixed(2)}`);
+      }
+
+      // Sanity check: Values should be within reasonable BTC range
+      if (stopLoss < 50000 || stopLoss > 200000) {
+        console.error(`[V6-EXECUTE-DEBUG] Step 4 FAILED: SL out of range: $${stopLoss.toFixed(2)}`);
+        console.error(`[V6-EXECUTE] SL out of range: $${stopLoss.toFixed(2)}`);
+        return { success: false, error: `SL out of range: ${stopLoss}` };
+      }
+      if (takeProfit < 50000 || takeProfit > 200000) {
+        console.error(`[V6-EXECUTE-DEBUG] Step 4 FAILED: TP out of range: $${takeProfit.toFixed(2)}`);
+        console.error(`[V6-EXECUTE] TP out of range: $${takeProfit.toFixed(2)}`);
+        return { success: false, error: `TP out of range: ${takeProfit}` };
+      }
+
+      // Ensure SL is on the correct side
+      const isBuy = setup.direction === 'BUY';
+      if (isBuy && stopLoss >= executionPrice) {
+        console.error(`[V6-EXECUTE-DEBUG] Step 4 FAILED: Invalid BUY SL ${stopLoss.toFixed(2)} >= entry ${executionPrice.toFixed(2)}`);
+        console.error(`[V6-EXECUTE] Invalid BUY SL: ${stopLoss.toFixed(2)} >= entry ${executionPrice.toFixed(2)}`);
+        return { success: false, error: 'Invalid stop loss for BUY' };
+      }
+      if (!isBuy && stopLoss <= executionPrice) {
+        console.error(`[V6-EXECUTE-DEBUG] Step 4 FAILED: Invalid SELL SL ${stopLoss.toFixed(2)} <= entry ${executionPrice.toFixed(2)}`);
+        console.error(`[V6-EXECUTE] Invalid SELL SL: ${stopLoss.toFixed(2)} <= entry ${executionPrice.toFixed(2)}`);
+        return { success: false, error: 'Invalid stop loss for SELL' };
+      }
+      console.log(`[V6-EXECUTE-DEBUG] Step 4 PASSED: SL/TP valid and converted`);
+
+      // Calculate actual R:R
+      const slDistance = Math.abs(executionPrice - stopLoss);
+      const tpDistance = Math.abs(takeProfit - executionPrice);
+      const actualRR = tpDistance / slDistance;
+
+      console.log(`[V6-EXECUTE] SL Distance: $${slDistance.toFixed(2)} | TP Distance: $${tpDistance.toFixed(2)} | R:R: ${actualRR.toFixed(2)}`);
+
+      // ============================================================
+      // GET MT4 SYMBOL
+      // ============================================================
+
+      const mt4Symbol = await symbolMappingService.convertSymbol(setup.symbol, 'MT4') || setup.symbol;
+      console.log(`[V6-EXECUTE] Symbol mapping: ${setup.symbol} -> ${mt4Symbol}`);
+
+      // ============================================================
+      // CALCULATE LOT SIZE
+      // ============================================================
+      console.log(`[V6-EXECUTE-DEBUG] Step 5: Calculating lot size...`);
+
+      let lotSize: number;
+      try {
+        lotSize = await mt4Service.calculateLotSize(
+          agent.userId.toString(),
+          setup.symbol,
+          positionSizeUSD,
+          stopLoss,
+          executionPrice
+        );
+        console.log(`[V6-EXECUTE-DEBUG] Step 5 PASSED: Lot size ${lotSize}`);
+        console.log(`[V6-EXECUTE] Lot size: ${lotSize} lots`);
+      } catch (error: any) {
+        console.error(`[V6-EXECUTE-DEBUG] Step 5 FAILED: ${error.message}`);
+        console.error(`[V6-EXECUTE] Lot size calculation failed:`, error.message);
+        return { success: false, error: `Lot size calculation failed: ${error.message}` };
+      }
+
+      if (lotSize < 0.01) {
+        console.error(`[V6-EXECUTE-DEBUG] Step 5 FAILED: Lot size too small ${lotSize}`);
+        console.error(`[V6-EXECUTE] Lot size too small: ${lotSize} (minimum 0.01)`);
+        return { success: false, error: `Lot size too small: ${lotSize}` };
+      }
+
+      // ============================================================
+      // EXECUTE MT4 ORDER
+      // ============================================================
+      console.log(`[V6-EXECUTE-DEBUG] Step 6: Placing MT4 order...`);
+      console.log(`[V6-EXECUTE-DEBUG] Order params:`, JSON.stringify({
+        userId: agent.userId.toString().slice(0, 8) + '...',
+        symbol: setup.symbol,
+        mt4Symbol,
+        direction: setup.direction,
+        lotSize,
+        stopLoss,
+        takeProfit
+      }, null, 2));
+
+      console.log(`[V6-EXECUTE] Placing MT4 order...`);
+      console.log(`  Symbol: ${setup.symbol} (${mt4Symbol})`);
+      console.log(`  Type: ${setup.direction}`);
+      console.log(`  Lots: ${lotSize}`);
+      console.log(`  SL: ${stopLoss}`);
+      console.log(`  TP: ${takeProfit}`);
+
+      const orderResult = await mt4Service.createMarketOrder(
+        agent.userId.toString(),
+        setup.symbol,
+        setup.direction.toLowerCase() as 'buy' | 'sell',
+        lotSize,
+        stopLoss,
+        takeProfit
+      );
+
+      console.log(`[V6-EXECUTE-DEBUG] Step 6 MT4 Response:`, JSON.stringify(orderResult, null, 2));
+
+      if (!orderResult || !orderResult.ticket) {
+        console.error(`[V6-EXECUTE-DEBUG] Step 6 FAILED: No ticket returned`);
+        console.error(`[V6-EXECUTE] MT4 order failed - no ticket returned`);
+        return { success: false, error: 'MT4 order failed - no ticket' };
+      }
+
+      const ticket = orderResult.ticket;
+      console.log(`[V6-EXECUTE-DEBUG] Step 6 PASSED: Order placed, ticket ${ticket}`);
+      console.log(`[V6-EXECUTE] MT4 order placed successfully! Ticket: ${ticket}`);
+
+      // ============================================================
+      // LOG EXECUTION
+      // ============================================================
+
+      // Create signal log entry for V6 execution
+      await AgentSignalLogModel.create({
+        signalId: `v6-${setup.id}`,
+        agentId: agent._id,
+        userId: agent.userId,
+        symbol: setup.symbol,
+        category: 'V6_SNIPER',
+        recommendation: setup.direction,
+        positionSize: positionSizeUSD,
+        isValid: true,
+        status: 'EXECUTED',
+        executed: true,
+        executedAt: new Date(),
+        executionPrice: executionPrice,
+        mt4Ticket: ticket,
+        metadata: {
+          setupId: setup.id,
+          grade: setup.grade,
+          riskReward: actualRR,
+          stopLoss: stopLoss,
+          takeProfit: takeProfit,
+          marketContext: setup.marketContext,
+        }
+      });
+
+      // CRITICAL: Track position in MT4 Trade Manager for time-based exit monitoring
+      // This enables the 15min/30min exit rules in mt4TradeManager.checkTimeBasedExit()
+      await mt4TradeManager.trackPosition({
+        userId: agent.userId.toString(),
+        agentId: agent._id?.toString() || '',
+        ticket: ticket,
+        symbol: mt4Symbol,
+        side: setup.direction.toLowerCase() as 'buy' | 'sell',
+        lotSize: lotSize,
+        entryPrice: orderResult.openPrice,
+        stopLoss: stopLoss,
+        takeProfit: takeProfit
+      });
+      console.log(`[V6-EXECUTE] Position tracked for monitoring (30min max hold)`);
+
+      console.log('');
+      console.log(`[V6-EXECUTE] Execution complete!`);
+      console.log(`  Ticket: ${ticket}`);
+      console.log(`  Entry: $${executionPrice.toFixed(2)}`);
+      console.log(`  Size: ${lotSize} lots ($${positionSizeUSD})`);
+      console.log('==================================================');
+      console.log('');
+
+      return { success: true, ticket };
+
+    } catch (error: any) {
+      console.error(`[V6-EXECUTE] Execution error:`, error.message);
+      return { success: false, error: error.message };
     }
   }
 }

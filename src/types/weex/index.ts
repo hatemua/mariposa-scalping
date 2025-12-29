@@ -3,3 +3,4 @@
  */
 
 export * from './weex.types';
+export * from './aiLog.types';

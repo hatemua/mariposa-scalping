@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import MT4Position from '../models/MT4Position';
-import { Trade } from '../models';
+import { Trade, ScalpingAgent } from '../models';
 import { mt4Service } from './mt4Service';
 import { scalpingPatternService } from './scalpingPatternService';
 import { marketDropDetector, DropAlert } from './marketDropDetector';
@@ -1418,6 +1418,79 @@ export class MT4TradeManager extends EventEmitter {
   }
 
   /**
+   * Direct MT4 time-based exit check
+   * Catches positions that exist in MT4 but not in database
+   * This runs FIRST in syncPositionsWithMT4() to ensure no position exceeds 30 minutes
+   */
+  private async checkMT4PositionsForTimeExit(): Promise<void> {
+    try {
+      // Get the MT4 SCALPING agent userId
+      const agent = await ScalpingAgent.findOne({
+        broker: 'MT4',
+        isActive: true,
+        category: 'SCALPING'
+      });
+
+      if (!agent) {
+        console.log('[V6-TIME-EXIT] No MT4 SCALPING agent found - skipping direct check');
+        return;
+      }
+
+      const userId = agent.userId.toString();
+
+      console.log('[V6-TIME-EXIT] Checking MT4 positions directly for time-based exit...');
+
+      // Get ALL open positions from MT4 directly
+      const mt4Positions = await mt4Service.getOpenPositions(userId);
+
+      if (!mt4Positions || mt4Positions.length === 0) {
+        console.log('[V6-TIME-EXIT] No open positions in MT4');
+        return;
+      }
+
+      console.log(`[V6-TIME-EXIT] Found ${mt4Positions.length} open position(s) in MT4`);
+
+      const now = Date.now();
+      const MAX_DURATION_MS = RISK_CONFIG.TIME_EXIT_MAX_MINUTES * 60 * 1000; // 30 min
+
+      for (const position of mt4Positions) {
+        const openTime = new Date(position.openTime).getTime();
+        const ageMs = now - openTime;
+        const ageMinutes = Math.floor(ageMs / 60000);
+
+        console.log(`[V6-TIME-EXIT] Position #${position.ticket} | ${position.type.toUpperCase()} | Age: ${ageMinutes}m | P&L: ${position.profit?.toFixed(2) || '?'}`);
+
+        // Check if exceeds 30 minute limit
+        if (ageMs > MAX_DURATION_MS) {
+          console.log(`[V6-TIME-EXIT] ⏰ TIME EXIT TRIGGERED!`);
+          console.log(`[V6-TIME-EXIT]   Position #${position.ticket} is ${ageMinutes}m old (max: ${RISK_CONFIG.TIME_EXIT_MAX_MINUTES}m)`);
+          console.log(`[V6-TIME-EXIT]   Closing at market price...`);
+
+          try {
+            const closeResult = await mt4Service.closePosition(userId, position.ticket);
+            console.log(`[V6-TIME-EXIT] ✅ Position #${position.ticket} CLOSED`);
+            console.log(`[V6-TIME-EXIT]   Final P&L: ${closeResult.profit?.toFixed(2) || 'unknown'}`);
+
+            // Record the trade result for cooldown
+            await riskManager.recordTradeResult(closeResult.profit || 0, false);
+          } catch (closeError: any) {
+            if (closeError.mt4ErrorCode === 4108 || closeError.code === 'ERR_4108') {
+              console.log(`[V6-TIME-EXIT] Position #${position.ticket} already closed`);
+            } else {
+              console.error(`[V6-TIME-EXIT] ❌ Failed to close position #${position.ticket}:`, closeError.message);
+            }
+          }
+        } else {
+          const remainingMinutes = RISK_CONFIG.TIME_EXIT_MAX_MINUTES - ageMinutes;
+          console.log(`[V6-TIME-EXIT]   Time remaining: ${remainingMinutes}m`);
+        }
+      }
+    } catch (error: any) {
+      console.error('[V6-TIME-EXIT] Error checking MT4 positions:', error.message);
+    }
+  }
+
+  /**
    * Synchronize database positions with actual MT4 positions
    * This ensures that if positions were closed in MT4 while the service was down,
    * the database gets updated accordingly
@@ -1425,6 +1498,11 @@ export class MT4TradeManager extends EventEmitter {
   async syncPositionsWithMT4(): Promise<void> {
     try {
       console.log('🔄 Syncing database positions with MT4...');
+
+      // ========== CRITICAL: Direct MT4 Time-Based Exit Check ==========
+      // This runs FIRST to catch positions that exist in MT4 but not in database
+      // Prevents positions from exceeding 30 minutes even if not tracked in DB
+      await this.checkMT4PositionsForTimeExit();
 
       // Get all "open" positions from database grouped by userId
       const dbOpenPositions = await MT4Position.find({ status: 'open' }).populate('userId');

@@ -82,7 +82,12 @@ export class PositionMonitorService {
         return;
       }
 
-      // Process each position
+      // =====================================================
+      // GHOST POSITION CLEANUP - Check MT4 BEFORE analyzing
+      // =====================================================
+      await this.cleanupGhostPositions();
+
+      // Process each remaining position
       const monitorPromises = Array.from(this.monitoredPositions.values()).map(
         position => this.monitorPosition(position)
       );
@@ -90,6 +95,60 @@ export class PositionMonitorService {
       await Promise.all(monitorPromises);
     } catch (error: any) {
       console.error('❌ Error monitoring positions:', error.message);
+    }
+  }
+
+  /**
+   * Remove ghost positions that no longer exist in MT4
+   * Called BEFORE LLM analysis to avoid wasted API calls
+   */
+  private async cleanupGhostPositions(): Promise<void> {
+    if (this.monitoredPositions.size === 0) return;
+
+    // Group positions by userId for efficient MT4 queries
+    const positionsByUser = new Map<string, MonitoredPosition[]>();
+    for (const position of this.monitoredPositions.values()) {
+      const userId = position.userId;
+      if (!positionsByUser.has(userId)) {
+        positionsByUser.set(userId, []);
+      }
+      positionsByUser.get(userId)!.push(position);
+    }
+
+    // Check each user's positions against MT4
+    for (const [userId, positions] of positionsByUser) {
+      try {
+        const mt4OpenPositions = await mt4Service.getOpenPositions(userId);
+        const mt4Tickets = new Set(mt4OpenPositions.map((p: any) => p.ticket));
+
+        console.log(`[DEBUG] MT4 user ${userId} has ${mt4Tickets.size} actual positions: [${Array.from(mt4Tickets).join(', ')}]`);
+
+        for (const position of positions) {
+          if (position.mt4Ticket && !mt4Tickets.has(position.mt4Ticket)) {
+            console.log(`🗑️ [GHOST CLEANUP] Position ${position.tradeId} (ticket ${position.mt4Ticket}) not in MT4 - removing`);
+            console.log(`   Entry was: ${position.symbol} @ $${position.entryPrice.toFixed(2)}`);
+            console.log(`   Likely closed by TP/SL hit on broker side`);
+
+            // Try to get final P&L from MT4Position record for circuit breaker
+            const mt4Position = await MT4Position.findOne({ ticket: position.mt4Ticket });
+            if (mt4Position && mt4Position.profit !== undefined) {
+              btcMultiPatternScalpingService.recordTradeResult(mt4Position.profit);
+              console.log(`   Recorded trade result: $${mt4Position.profit.toFixed(2)} for circuit breaker`);
+            }
+
+            this.removePosition(position.tradeId);
+
+            // Update MT4Position record
+            await MT4Position.updateOne(
+              { ticket: position.mt4Ticket },
+              { $set: { status: 'closed', closedAt: new Date(), closeReason: 'mt4-already-closed' } }
+            );
+          }
+        }
+      } catch (error: any) {
+        console.error(`⚠️ [GHOST CLEANUP] Failed to check MT4 for user ${userId}:`, error.message);
+        // Continue with other users - don't block monitoring
+      }
     }
   }
 
@@ -331,6 +390,9 @@ export class PositionMonitorService {
           trade.performanceNotes = `LLM early exit: ${exitSignal.reason} (${exitSignal.confidence.toFixed(0)}% confidence)`;
           trade.pnl = closeResult.profit || 0;
           await trade.save();
+
+          // Record trade result for circuit breaker
+          btcMultiPatternScalpingService.recordTradeResult(closeResult.profit || 0);
 
           // Remove from monitoring
           this.removePosition(position.tradeId);

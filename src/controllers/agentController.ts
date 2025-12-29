@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { ScalpingAgent, Trade } from '../models';
 import { agendaService } from '../services/agendaService';
 import { okxService } from '../services/okxService';
+import { weexService } from '../services/weexService';
 import { technicalAnalysisService } from '../services/technicalAnalysisService';
 import { AuthRequest } from '../middleware/auth';
 import { ApiResponse, AgentConfig } from '../types';
@@ -401,14 +402,33 @@ export const startAgent = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    try {
-      await okxService.getBalance(userId);
-    } catch (error) {
-      res.status(400).json({
-        success: false,
-        error: 'Invalid OKX API credentials. Please update your API keys.'
-      } as ApiResponse);
-      return;
+    // Validate broker credentials based on agent type
+    if (agent.broker === 'OKX') {
+      try {
+        await okxService.getBalance(userId);
+      } catch (error) {
+        res.status(400).json({
+          success: false,
+          error: 'Invalid OKX API credentials. Please update your API keys.'
+        } as ApiResponse);
+        return;
+      }
+    } else if (agent.broker === 'WEEX') {
+      try {
+        await weexService.getBalance();
+      } catch (error) {
+        res.status(400).json({
+          success: false,
+          error: 'Invalid WEEX API credentials. Please check WEEX configuration.'
+        } as ApiResponse);
+        return;
+      }
+    } else if (agent.broker === 'MT4') {
+      // MT4 uses different connection method - skip API key validation
+      console.log('MT4 agent - credentials validated through MT4 connection');
+    } else if (agent.broker === 'BINANCE') {
+      // Future: Add Binance validation when needed
+      console.log('BINANCE agent - skipping API credentials validation');
     }
 
     if (agent.isActive) {

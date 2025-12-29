@@ -89,6 +89,23 @@ export class BinanceService extends EventEmitter {
     }
   }
 
+  /**
+   * Get LIVE ticker price - bypasses cache for real-time accuracy
+   * Used for exhaustion checks where stale candle close is insufficient
+   */
+  async getTickerPrice(symbol: string = 'BTCUSDT'): Promise<number> {
+    const binanceSymbol = SymbolConverter.toBinanceFormat(symbol);
+    try {
+      const response = await axios.get(`${this.baseURL}/ticker/price`, {
+        params: { symbol: binanceSymbol }
+      });
+      return parseFloat(response.data.price);
+    } catch (error) {
+      console.error(`Error fetching ticker price for ${symbol}:`, error);
+      throw error;
+    }
+  }
+
   async getKlineData(symbol: string, interval: string, limit = 500) {
     const binanceSymbol = SymbolConverter.toBinanceFormat(symbol);
 

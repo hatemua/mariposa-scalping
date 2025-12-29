@@ -27,7 +27,7 @@ export const RISK_CONFIG = {
 
   // Daily Limits
   MAX_DAILY_LOSS_USD: 100,
-  MAX_DAILY_TRADES: 40,
+  MAX_DAILY_TRADES: 50,
   MAX_CONSECUTIVE_LOSSES: 3,
 
   // Position Sizing
@@ -176,6 +176,24 @@ class RiskManager {
       const totalCount = mt4Positions.length;
 
       console.log(`📊 Position check (LIVE MT4): BUY=${buyCount}/${RISK_CONFIG.MAX_BUY_POSITIONS}, SELL=${sellCount}/${RISK_CONFIG.MAX_SELL_POSITIONS}, Total=${totalCount}/${RISK_CONFIG.MAX_TOTAL_POSITIONS}`);
+
+      // ========== ANTI-HEDGE CHECK ==========
+      // Block opening opposite direction when position exists
+      if (direction === 'BUY' && sellCount > 0) {
+        console.log(`🚫 [RISK] Anti-hedge: Blocking BUY - ${sellCount} SELL position(s) exist`);
+        return {
+          allowed: false,
+          reason: `Cannot open BUY: ${sellCount} SELL position(s) already exist (anti-hedge)`,
+        };
+      }
+
+      if (direction === 'SELL' && buyCount > 0) {
+        console.log(`🚫 [RISK] Anti-hedge: Blocking SELL - ${buyCount} BUY position(s) exist`);
+        return {
+          allowed: false,
+          reason: `Cannot open SELL: ${buyCount} BUY position(s) already exist (anti-hedge)`,
+        };
+      }
 
       // Check same direction limit
       if (direction === 'BUY' && buyCount >= RISK_CONFIG.MAX_BUY_POSITIONS) {
