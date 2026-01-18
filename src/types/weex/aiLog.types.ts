@@ -68,7 +68,7 @@ export interface OrderExecutionLogData {
 export interface OrderCloseLogData {
   orderId: string;
   closeReason: 'TAKE_PROFIT' | 'STOP_LOSS' | 'TRAILING_STOP' | 'BREAKEVEN_STOP' |
-               'TIME_EXIT' | 'MANUAL' | 'ERROR' | 'API_CLOSE';
+               'TIME_EXIT' | 'MANUAL' | 'ERROR' | 'API_CLOSE' | 'PROFIT_PULLBACK';
   entryPrice: number;
   exitPrice: number;
   pnlUSD: number;
@@ -117,11 +117,11 @@ export interface ExhaustionCheckLogData {
 // ============================================================================
 
 export const AI_MODELS = {
-  FIBONACCI: 'Meta-Llama-3.1-8B-Instruct-Turbo (Fibonacci)',
-  TREND_MOMENTUM: 'Qwen/Qwen2.5-7B-Instruct-Turbo (Trend/Momentum)',
-  VOLUME_PRICE: 'Meta-Llama-3.1-8B-Instruct-Turbo (Volume/Price)',
-  SUPPORT_RESISTANCE: 'Qwen/Qwen2.5-7B-Instruct-Turbo (S/R)',
-  V6_ARCHITECT: 'Meta-Llama-3.1-70B-Instruct-Turbo (V6 Setup Architect)',
+  FIBONACCI: 'Llama-3.3-70B-Instruct-Turbo (Fibonacci)',
+  TREND_MOMENTUM: 'Llama-3.3-70B-Instruct-Turbo (Trend/Momentum)',
+  VOLUME_PRICE: 'Llama-3.3-70B-Instruct-Turbo (Volume/Price)',
+  SUPPORT_RESISTANCE: 'Llama-3.3-70B-Instruct-Turbo (S/R)',
+  V6_ARCHITECT: 'Llama-3.3-70B-Instruct-Turbo (V6 Setup Architect)',
   HTF_ANALYSIS: 'Internal HTF Structure Analysis',
   EXHAUSTION_CHECK: 'Internal Exhaustion Check',
   EXIT_ANALYSIS: 'Multi-Model Exit Consensus',

@@ -2559,24 +2559,26 @@ export class BTCMultiPatternScalpingService {
     }
 
     // CONFLICT: 4H bearish but 1H bullish (pullback/bounce)
+    // FIXED: Allow SELL pullbacks following the 4H trend with reduced size
     if (trend4H === 'BEARISH' && trend1H === 'BULLISH') {
       return {
-        allowedDirection: 'WAIT',
-        maxSizeMultiplier: 0,
-        confidence: 'LOW',
-        reason: '4H BEARISH but 1H bouncing - WAIT for alignment',
+        allowedDirection: 'SELL',  // Follow 4H trend direction
+        maxSizeMultiplier: 0.5,    // Reduced size for conflict
+        confidence: 'MEDIUM',
+        reason: '4H BEARISH, 1H bouncing - SELL pullback with 50% size',
         trend4H,
         trend1H
       };
     }
 
     // CONFLICT: 4H bullish but 1H bearish (pullback)
+    // FIXED: Allow BUY pullbacks following the 4H trend with reduced size
     if (trend4H === 'BULLISH' && trend1H === 'BEARISH') {
       return {
-        allowedDirection: 'WAIT',
-        maxSizeMultiplier: 0,
-        confidence: 'LOW',
-        reason: '4H BULLISH but 1H pulling back - WAIT for alignment',
+        allowedDirection: 'BUY',   // Follow 4H trend direction
+        maxSizeMultiplier: 0.5,    // Reduced size for conflict
+        confidence: 'MEDIUM',
+        reason: '4H BULLISH, 1H pulling back - BUY dip with 50% size',
         trend4H,
         trend1H
       };
@@ -2658,17 +2660,21 @@ export class BTCMultiPatternScalpingService {
     const highestHigh4H = Math.max(...last4Hours.map(c => c.high));
     const lowestLow4H = Math.min(...last4Hours.map(c => c.low));
 
-    // Fetch LIVE ticker price instead of stale candle close
+    // Fetch LIVE ticker price - MUST be fresh, no stale fallback
     let currentPrice: number;
     let priceSource: string;
     try {
       currentPrice = await binanceService.getTickerPrice(this.SYMBOL);
       priceSource = 'TICKER';
     } catch (error) {
-      // Fallback to last candle close if ticker fails
-      currentPrice = last4Hours[last4Hours.length - 1].close;
-      priceSource = '1H_CANDLE_FALLBACK';
-      console.warn('⚠️ [EXHAUSTION] Ticker fetch failed, using candle close fallback');
+      // FIXED: Don't fall back to stale data - skip exhaustion check entirely
+      console.warn('⚠️ [EXHAUSTION] Ticker fetch failed - SKIPPING exhaustion check (no stale fallback)');
+      return {
+        isExhausted: false,
+        reason: 'Ticker unavailable - skipping exhaustion check',
+        movePercent: 0,
+        recommendation: 'ENTER'
+      };
     }
 
     const totalRange4H = highestHigh4H - lowestLow4H;

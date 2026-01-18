@@ -123,11 +123,11 @@ export class LLMPatternDetectionService {
   private baseURL = 'https://api.together.xyz';
   private httpClient: AxiosInstance;
 
-  // 4 Specialist models - using efficient 7B-11B models
-  private readonly FIBONACCI_MODEL = 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo';
-  private readonly CHART_PATTERN_MODEL = 'Qwen/Qwen2.5-7B-Instruct-Turbo';
-  private readonly CANDLESTICK_MODEL = 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo';
-  private readonly SR_MODEL = 'Qwen/Qwen2.5-7B-Instruct-Turbo';
+  // 4 Specialist models - using powerful 70B model for better reasoning
+  private readonly FIBONACCI_MODEL = 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
+  private readonly CHART_PATTERN_MODEL = 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
+  private readonly CANDLESTICK_MODEL = 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
+  private readonly SR_MODEL = 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
 
   constructor() {
     this.apiKey = config.TOGETHER_AI_API_KEY;
@@ -1887,7 +1887,7 @@ Respond with ONLY: YES or NO`;
     const trendDirection: 'UP' | 'DOWN' = swingLowData.index < swingHighData.index ? 'UP' : 'DOWN';
 
     const range = swingHigh - swingLow;
-    const zoneWidthPercent = 0.002; // 0.2% zone width
+    const zoneWidthPercent = 0.004; // 0.4% zone width - captures BTC wicks (~$372 at $93k)
 
     // Calculate all Fibonacci levels with zones
     const fibLevelDefs = [
@@ -2026,7 +2026,7 @@ Respond with ONLY: YES or NO`;
     nearestResistance: { price: number; zone: { low: number; high: number; midpoint: number } } | null;
   }> {
     const { klines, indicators, currentPrice, timeframe } = input;
-    const zoneWidthPercent = 0.002;
+    const zoneWidthPercent = 0.004; // 0.4% zone width - captures BTC wicks
 
     // Format recent price action for LLM
     const recentKlines = klines.slice(-30).map((k, i) => ({
@@ -2262,7 +2262,7 @@ Respond ONLY with valid JSON:
     description: string;
   }>> {
     const { klines, currentPrice } = input;
-    const zoneWidthPercent = 0.001; // 0.1% buffer for liquidity zones
+    const zoneWidthPercent = 0.002; // 0.2% buffer for liquidity zones - wider to capture stops
 
     const liquidityZones: Array<{
       type: 'BUY_STOPS' | 'SELL_STOPS';

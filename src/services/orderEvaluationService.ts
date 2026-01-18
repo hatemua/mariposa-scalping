@@ -126,7 +126,7 @@ export class OrderEvaluationService {
         marketTrend: 'NEUTRAL', // TODO: Determine from market data
 
         evaluationNotes: `Trade ${actualOutcome} with ${predictionAccuracy.toFixed(1)}% prediction accuracy`,
-        llmModelUsed: 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',
+        llmModelUsed: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
 
         signalGeneratedAt: trade.createdAt,
         tradeExecutedAt: trade.createdAt,

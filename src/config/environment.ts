@@ -115,18 +115,18 @@ const V6_DEFAULTS = {
   SCALPING: {
     ANALYSIS_INTERVAL_MINUTES: 15,
     ZONE_CHECK_SECONDS: 30,
-    MAX_ENTRY_DISTANCE_PCT: 0.20,
-    MIN_RISK_REWARD: 1.3,
-    STOP_LOSS_PCT: 0.15,
-    MAX_STOP_LOSS_PCT: 0.25,
-    TAKE_PROFIT_1_PCT: 0.20,
-    TAKE_PROFIT_2_PCT: 0.35,
+    MAX_ENTRY_DISTANCE_PCT: 0.30,  // SCALPING: Entries must be NEAR current price ($279 at $93k) for immediate execution
+    MIN_RISK_REWARD: 1.2,          // LOWERED: Allow more setups to pass - was 1.3
+    STOP_LOSS_PCT: 0.35,           // WIDENED: Avoid wick stop-outs ($326 at $93k) - was 0.30
+    MAX_STOP_LOSS_PCT: 0.50,       // WIDENED: More room for volatility - was 0.40
+    TAKE_PROFIT_1_PCT: 0.80,       // DOUBLED: $20 profit covers $6 fees = $14 NET - was 0.40
+    TAKE_PROFIT_2_PCT: 1.20,       // DOUBLED: $30 profit covers $6 fees = $24 NET - was 0.60
     MAX_TRADES_PER_DAY: 50,
-    SETUP_EXPIRY_HOURS: 2,
+    SETUP_EXPIRY_HOURS: 0.5,  // SCALPING: Setups expire in 30 min - no waiting for distant levels
     REQUIRE_PATTERN_CONFIRM: false,
-    MIN_ZONE_WIDTH_PCT: 0.08,
-    MAX_ZONE_WIDTH_PCT: 0.20,
-    DUPLICATE_THRESHOLD_PCT: 0.15,
+    MIN_ZONE_WIDTH_PCT: 0.05,      // TIGHTER: More precise entries - was 0.08
+    MAX_ZONE_WIDTH_PCT: 0.30,      // WIDER: Handle volatility - was 0.20
+    DUPLICATE_THRESHOLD_PCT: 0.20, // WIDER: Reduce duplicate rejections - was 0.15
   },
   SWING: {
     ANALYSIS_INTERVAL_MINUTES: 30,
@@ -188,17 +188,84 @@ export const V6_ENV_CONFIG = {
 } as const;
 
 // ============================================================================
-// WEEX V6 CONFIGURATION
+// WEEX V6 MULTI-COIN TRADING PAIR CONFIGURATION
+// ============================================================================
+
+export interface TradingPairConfig {
+  weexSymbol: string;          // e.g., 'cmt_btcusdt'
+  binanceSymbol: string;       // e.g., 'BTCUSDT'
+  positionSize: number;        // Size in base currency (0.05 BTC, 1.5 ETH, etc.)
+  minTpPercent: number;        // Minimum TP distance %
+  minSlPercent: number;        // Minimum SL distance %
+  tickSize: number;            // Price tick size for rounding
+}
+
+export const TRADING_PAIRS: TradingPairConfig[] = [
+  {
+    weexSymbol: 'cmt_btcusdt',
+    binanceSymbol: 'BTCUSDT',
+    positionSize: 0.05,      // 0.05 BTC (~$5,000 at $100k)
+    minTpPercent: 0.35,      // SMALL TP: 0.35% for frequent wins at 20x leverage
+    minSlPercent: 0.25,      // TIGHT SL: 0.25% min SL
+    tickSize: 0.1,           // BTC price tick
+  },
+  {
+    weexSymbol: 'cmt_ethusdt',
+    binanceSymbol: 'ETHUSDT',
+    positionSize: 1.5,       // 1.5 ETH (~$5,000 at $3,300)
+    minTpPercent: 0.40,      // SMALL TP: 0.40% for frequent wins
+    minSlPercent: 0.30,      // TIGHT SL: 0.30% min SL
+    tickSize: 0.01,          // ETH price tick
+  },
+  {
+    weexSymbol: 'cmt_solusdt',
+    binanceSymbol: 'SOLUSDT',
+    positionSize: 25,        // 25 SOL (~$5,000 at $200)
+    minTpPercent: 0.45,      // SMALL TP: 0.45% for frequent wins
+    minSlPercent: 0.35,      // TIGHT SL: 0.35% min SL
+    tickSize: 0.01,          // SOL price tick
+  },
+  {
+    weexSymbol: 'cmt_dogeusdt',
+    binanceSymbol: 'DOGEUSDT',
+    positionSize: 15000,     // 15000 DOGE (~$5,000 at $0.33)
+    minTpPercent: 0.50,      // SMALL TP: 0.50% for frequent wins
+    minSlPercent: 0.40,      // TIGHT SL: 0.40% min SL
+    tickSize: 0.00001,       // DOGE price tick
+  },
+];
+
+// Position limits for multi-coin trading
+export const MAX_POSITIONS_PER_COIN = 1;
+export const MAX_TOTAL_POSITIONS = 3;
+
+/**
+ * Get trading pair config by symbol
+ */
+export function getTradingPairConfig(binanceSymbol: string): TradingPairConfig | undefined {
+  return TRADING_PAIRS.find(p => p.binanceSymbol === binanceSymbol);
+}
+
+/**
+ * Get trading pair config by WEEX symbol
+ */
+export function getTradingPairByWeexSymbol(weexSymbol: string): TradingPairConfig | undefined {
+  return TRADING_PAIRS.find(p => p.weexSymbol === weexSymbol);
+}
+
+// ============================================================================
+// WEEX V6 CONFIGURATION (DEFAULT - BTC, backwards compatible)
 // ============================================================================
 
 export const WEEX_V6_CONFIG: WeexV6Config = {
-  // Trading pair
+  // Trading pair (default for single-coin mode / backwards compatibility)
   SYMBOL: process.env.WEEX_SYMBOL || 'cmt_btcusdt',
   BINANCE_SYMBOL: process.env.WEEX_BINANCE_SYMBOL || 'BTCUSDT',
 
-  // Position sizing
+  // Position sizing - REDUCED SIZE for smaller risk
   LEVERAGE: parseInt(process.env.WEEX_LEVERAGE || '5', 10),
-  BASE_POSITION_SIZE_USD: parseFloat(process.env.WEEX_POSITION_SIZE_USD || '500'),
+  BASE_POSITION_SIZE_USD: parseFloat(process.env.WEEX_POSITION_SIZE_USD || '2500'),
+  MIN_POSITION_SIZE_BTC: parseFloat(process.env.WEEX_MIN_POSITION_SIZE_BTC || '0.05'),  // REDUCED from 0.09
 
   // Grade multipliers (matching V6 setup config)
   GRADE_A_MULTIPLIER: parseFloat(process.env.WEEX_GRADE_A_MULT || '1.0'),
@@ -209,13 +276,24 @@ export const WEEX_V6_CONFIG: WeexV6Config = {
   POSITION_MONITOR_INTERVAL_MS: parseInt(process.env.WEEX_MONITOR_INTERVAL_MS || '15000', 10),
   MAX_POSITION_DURATION_MINUTES: parseInt(process.env.WEEX_MAX_POSITION_MINUTES || '60', 10),
 
-  // Exit management
-  BREAKEVEN_TRIGGER_PCT: parseFloat(process.env.WEEX_BREAKEVEN_PCT || '0.5'),
-  TRAILING_TRIGGER_PCT: parseFloat(process.env.WEEX_TRAILING_PCT || '0.75'),
-  TRAILING_DISTANCE_PCT: parseFloat(process.env.WEEX_TRAIL_DISTANCE_PCT || '0.25'),
+  // Exit management - SIMPLIFIED (breakeven/trailing REMOVED to reduce fees)
+  // These config values kept for backwards compatibility but NOT used
+  BREAKEVEN_TRIGGER_PCT: parseFloat(process.env.WEEX_BREAKEVEN_PCT || '0.50'),
+  TRAILING_TRIGGER_PCT: parseFloat(process.env.WEEX_TRAILING_PCT || '0.70'),
+  TRAILING_DISTANCE_PCT: parseFloat(process.env.WEEX_TRAIL_DISTANCE_PCT || '0.30'),
 
-  // Risk management
-  MAX_CONCURRENT_POSITIONS: parseInt(process.env.WEEX_MAX_POSITIONS || '2', 10),
+  // Profit pullback protection - DISABLED to reduce fees
+  PROFIT_PULLBACK_PCT: parseFloat(process.env.WEEX_PROFIT_PULLBACK_PCT || '0.50'),
+  MIN_PEAK_PROFIT_USD: parseFloat(process.env.WEEX_MIN_PEAK_PROFIT_USD || '5'),
+
+  // Risk management - Updated for multi-coin
+  MAX_CONCURRENT_POSITIONS: parseInt(process.env.WEEX_MAX_POSITIONS || '3', 10),  // Increased for multi-coin
   MAX_DAILY_LOSS_USD: parseFloat(process.env.WEEX_MAX_DAILY_LOSS_USD || '200'),
   COOLDOWN_AFTER_LOSS_MINUTES: parseInt(process.env.WEEX_COOLDOWN_MINUTES || '30', 10),
+
+  // Profit prediction filter
+  PROFIT_PREDICTION: {
+    MIN_PROFIT_THRESHOLD_USD: parseFloat(process.env.WEEX_MIN_PROFIT_USD || '30'),
+    LEVERAGE: parseInt(process.env.WEEX_PROFIT_LEVERAGE || '20', 10),  // User's actual leverage on WEEX
+  },
 };

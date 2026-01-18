@@ -288,3 +288,124 @@ export const V6_ANALYSIS_CONFIG = {
   CANDLES_FOR_ANALYSIS: 100,
   TIMEFRAMES_FOR_LEVELS: ['15m', '1h', '4h'] as const,
 } as const;
+
+// ============================================================================
+// MTF (MULTI-TIMEFRAME) ANALYSIS TYPES
+// ============================================================================
+
+export interface TimeframeTrend {
+  timeframe: 'H4' | 'H1' | 'M15' | 'M5';
+  trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  strength: number;  // 0-100
+  ema9: number;
+  ema21: number;
+  emaAlignment: boolean;  // EMA9 > EMA21 = bullish alignment
+  priceVsEma21: 'ABOVE' | 'BELOW' | 'AT';
+}
+
+export interface MTFAnalysisResult {
+  h4: TimeframeTrend;
+  h1: TimeframeTrend;
+  m15: TimeframeTrend;
+  m5: TimeframeTrend;
+  confluenceScore: number;  // 0-100 (weighted by timeframe)
+  alignmentCount: number;   // How many timeframes agree with dominant
+  dominantTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  tradingBias: 'BUY' | 'SELL' | 'NEUTRAL';
+  strength: 'STRONG' | 'MODERATE' | 'WEAK';
+  confidenceBoost: number;  // -20 to +20 to add to setup confidence
+}
+
+export const MTF_WEIGHTS = {
+  H4: 40,   // 40% weight - dominant trend
+  H1: 30,   // 30% weight - intermediate
+  M15: 20,  // 20% weight - entry timing
+  M5: 10,   // 10% weight - micro structure
+} as const;
+
+// ============================================================================
+// MOMENTUM ANALYSIS TYPES
+// ============================================================================
+
+export interface RSIAnalysis {
+  value: number;
+  zone: 'OVERSOLD' | 'NEUTRAL' | 'OVERBOUGHT';
+  divergence: 'BULLISH' | 'BEARISH' | 'NONE';
+}
+
+export interface MACDAnalysis {
+  value: number;
+  signal: number;
+  histogram: number;
+  trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  crossover: 'BULLISH_CROSS' | 'BEARISH_CROSS' | 'NONE';
+}
+
+export interface VolumeAnalysis {
+  current: number;
+  average: number;
+  ratio: number;  // current / average
+  trend: 'HIGH' | 'NORMAL' | 'LOW';
+  spike: boolean;  // > 1.5x average
+}
+
+export interface ExhaustionWarning {
+  isExhausted: boolean;
+  direction: 'BUY' | 'SELL' | null;
+  reason: string;
+}
+
+export interface MomentumAnalysisResult {
+  rsi: RSIAnalysis;
+  macd: MACDAnalysis;
+  volume: VolumeAnalysis;
+  overallMomentum: 'STRONG_BULLISH' | 'BULLISH' | 'NEUTRAL' | 'BEARISH' | 'STRONG_BEARISH';
+  exhaustionWarning: ExhaustionWarning;
+  entryQuality: {
+    forBuy: 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR';
+    forSell: 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR';
+  };
+  confidenceModifier: number;  // -15 to +15
+}
+
+// ============================================================================
+// SESSION FILTER TYPES
+// ============================================================================
+
+export type MarketSession = 'ASIA' | 'LONDON' | 'NEW_YORK' | 'OVERLAP' | 'QUIET';
+
+/**
+ * Trading strategy per session:
+ * - AGGRESSIVE: Full position, all grades, tighter SL (OVERLAP killzones)
+ * - NORMAL: Standard position, most grades (LONDON, NEW_YORK)
+ * - CONSERVATIVE: Reduced position, Grade A only, wider SL (ASIA, QUIET)
+ */
+export type TradingStrategy = 'AGGRESSIVE' | 'NORMAL' | 'CONSERVATIVE';
+
+export interface SessionInfo {
+  session: MarketSession;
+  quality: 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR';
+  volatility: 'HIGH' | 'MEDIUM' | 'LOW';
+  isKillzone: boolean;
+  utcHour: number;
+  minutesToNextSession: number;
+}
+
+export interface SessionFilterResult {
+  sessionInfo: SessionInfo;
+  shouldTrade: boolean;
+  reason: string;
+  positionMultiplier: number;   // 0.5-1.25
+  slMultiplier: number;         // 1.0-1.3
+  confidenceModifier: number;   // -10 to +10
+  strategy: TradingStrategy;    // Session-based trading strategy
+}
+
+// Session boundaries (UTC hours)
+export const SESSION_TIMES = {
+  ASIA: { start: 0, end: 8, quality: 'FAIR' as const },
+  LONDON: { start: 7, end: 16, quality: 'GOOD' as const },
+  OVERLAP: { start: 13, end: 16, quality: 'EXCELLENT' as const },
+  NEW_YORK: { start: 13, end: 22, quality: 'GOOD' as const },
+  QUIET: { start: 22, end: 24, quality: 'POOR' as const },
+} as const;

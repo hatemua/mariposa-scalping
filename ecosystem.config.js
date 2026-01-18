@@ -1,10 +1,10 @@
 /**
- * PM2 Ecosystem Configuration - V6 + WEEX
+ * PM2 Ecosystem Configuration - V6 + WEEX Multi-Coin
  *
  * This configuration runs the following processes:
  * 1. Main Server - Shared services (Binance, MT4, position monitoring, WebSockets, API)
  * 2. V6 Sniper Worker - Intelligent setup-based trading on MT4 (LLM analysis + math confirmation)
- * 3. WEEX V6 Worker - Intelligent setup-based trading on WEEX exchange
+ * 3. WEEX Multi Worker - Multi-coin trading on WEEX exchange (BTC, ETH, SOL, DOGE)
  *
  * V3 Fibonacci worker has been DISABLED - V6 is the sole signal source.
  */
@@ -51,18 +51,17 @@ module.exports = {
       restart_delay: 5000
     },
     {
-      name: 'weex-v6-worker',
-      script: './dist/weex-v6-worker.js',
+      name: 'weex-multi-worker',
+      script: './dist/weex-multi-worker.js',
       instances: 1,
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
-        PROCESS_TYPE: 'WEEX_V6_WORKER',
-        WEEX_V6_ENABLED: 'true'
+        PROCESS_TYPE: 'WEEX_MULTI_WORKER'
       },
       max_memory_restart: '1G',
-      error_file: './logs/weex-v6-error.log',
-      out_file: './logs/weex-v6-out.log',
+      error_file: './logs/weex-multi-error.log',
+      out_file: './logs/weex-multi-out.log',
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       merge_logs: true,
       autorestart: true,

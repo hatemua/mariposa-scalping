@@ -1,16 +1,17 @@
 /**
- * WEEX API Calls - Standalone Script
+ * WEEX API Calls - Standalone Script (Multi-Coin Support)
  *
  * All working WEEX Contract/Futures API calls in one file.
+ * Supports: BTC, ETH, SOL, DOGE
  *
  * Usage:
- *   npx ts-node scripts/weex-api-calls.ts                  # Show help
- *   npx ts-node scripts/weex-api-calls.ts ticker           # Get BTC price
- *   npx ts-node scripts/weex-api-calls.ts balance          # Get account balance
- *   npx ts-node scripts/weex-api-calls.ts history          # Get order history
- *   npx ts-node scripts/weex-api-calls.ts detail <orderId> # Get order detail
- *   npx ts-node scripts/weex-api-calls.ts open-long 0.001  # Open long position
- *   npx ts-node scripts/weex-api-calls.ts close-long 0.001 # Close long (type=3)
+ *   npx ts-node scripts/weex-api-calls.ts                       # Show help
+ *   npx ts-node scripts/weex-api-calls.ts ticker [coin]         # Get price (default: btc)
+ *   npx ts-node scripts/weex-api-calls.ts balance               # Get account balance
+ *   npx ts-node scripts/weex-api-calls.ts positions             # List all open positions
+ *   npx ts-node scripts/weex-api-calls.ts history               # Get order history
+ *   npx ts-node scripts/weex-api-calls.ts close-long btc 0.001  # Close BTC long
+ *   npx ts-node scripts/weex-api-calls.ts close-all             # Close ALL positions
  */
 
 import * as dotenv from 'dotenv';
@@ -23,7 +24,35 @@ import * as crypto from 'crypto';
 // CONFIGURATION
 // =============================================================================
 const API_BASE_URL = 'https://api-contract.weex.com';
-const SYMBOL = 'cmt_btcusdt';
+
+// Multi-coin symbols
+const SYMBOLS: Record<string, string> = {
+  btc: 'cmt_btcusdt',
+  eth: 'cmt_ethusdt',
+  sol: 'cmt_solusdt',
+  doge: 'cmt_dogeusdt',
+};
+
+const DEFAULT_SYMBOL = SYMBOLS.btc;
+
+// Helper to resolve coin name to symbol
+function resolveSymbol(coin?: string): string {
+  if (!coin) return DEFAULT_SYMBOL;
+  const lower = coin.toLowerCase();
+  if (SYMBOLS[lower]) return SYMBOLS[lower];
+  // If already a full symbol, return as-is
+  if (lower.startsWith('cmt_')) return lower;
+  console.error(`Unknown coin: ${coin}. Available: ${Object.keys(SYMBOLS).join(', ')}`);
+  process.exit(1);
+}
+
+// Helper to get coin name from symbol
+function getCoinFromSymbol(symbol: string): string {
+  for (const [coin, sym] of Object.entries(SYMBOLS)) {
+    if (sym.toLowerCase() === symbol.toLowerCase()) return coin.toUpperCase();
+  }
+  return symbol;
+}
 
 // =============================================================================
 // TYPES
@@ -66,6 +95,48 @@ interface OrderDetail {
   order_type: string;
   totalProfits: string;
   createTime: string;
+}
+
+interface Position {
+  symbol: string;
+  // New API field names
+  id?: number | string;
+  side?: string;              // "LONG" or "SHORT"
+  size?: string;              // Position quantity
+  unrealizePnl?: string;      // Unrealized P&L
+  liquidatePrice?: string;    // Liquidation price
+  // Legacy field names
+  hold_side?: string;         // "1"=Long, "2"=Short
+  hold_available?: string;    // Quantity
+  hold_avg_price?: string;    // Entry price
+  unrealized_pnl?: string;
+  margin?: string;
+  leverage?: string;
+}
+
+// Helper to normalize position field names
+function normalizePosition(p: Position): {
+  symbol: string;
+  side: 'LONG' | 'SHORT';
+  quantity: number;
+  avgPrice: number;
+  unrealizedPnl: number;
+} {
+  // Handle both new format (side/size) and legacy format (hold_side/hold_available)
+  let side: 'LONG' | 'SHORT';
+  if (p.side) {
+    side = p.side.toUpperCase() === 'LONG' ? 'LONG' : 'SHORT';
+  } else if (p.hold_side) {
+    side = p.hold_side === '1' ? 'LONG' : 'SHORT';
+  } else {
+    side = 'LONG'; // Default
+  }
+
+  const quantity = parseFloat(p.size || p.hold_available || '0');
+  const avgPrice = parseFloat(p.hold_avg_price || '0');
+  const unrealizedPnl = parseFloat(p.unrealizePnl || p.unrealized_pnl || '0');
+
+  return { symbol: p.symbol, side, quantity, avgPrice, unrealizedPnl };
 }
 
 // =============================================================================
@@ -122,7 +193,7 @@ class WeexAPI {
   // ---------------------------------------------------------------------------
   // GET /capi/v2/market/tickers
   // No auth required
-  async getTickerPrice(symbol: string = SYMBOL): Promise<number> {
+  async getTickerPrice(symbol: string = DEFAULT_SYMBOL): Promise<number> {
     const path = '/capi/v2/market/tickers';
 
     console.log(`\n[API] GET ${path}`);
@@ -218,36 +289,126 @@ class WeexAPI {
   // ---------------------------------------------------------------------------
   // 3a. OPEN LONG (type=1)
   // ---------------------------------------------------------------------------
-  async openLong(quantity: string, symbol: string = SYMBOL): Promise<OrderResponse> {
+  async openLong(quantity: string, symbol: string = DEFAULT_SYMBOL): Promise<OrderResponse> {
     return this.placeOrder(symbol, '1', quantity, true);
   }
 
   // ---------------------------------------------------------------------------
   // 3b. OPEN SHORT (type=2)
   // ---------------------------------------------------------------------------
-  async openShort(quantity: string, symbol: string = SYMBOL): Promise<OrderResponse> {
+  async openShort(quantity: string, symbol: string = DEFAULT_SYMBOL): Promise<OrderResponse> {
     return this.placeOrder(symbol, '2', quantity, true);
   }
 
   // ---------------------------------------------------------------------------
   // 3c. CLOSE LONG (type=3) - Sell to close long position
   // ---------------------------------------------------------------------------
-  async closeLong(quantity: string, symbol: string = SYMBOL): Promise<OrderResponse> {
+  async closeLong(quantity: string, symbol: string = DEFAULT_SYMBOL): Promise<OrderResponse> {
     return this.placeOrder(symbol, '3', quantity, true);
   }
 
   // ---------------------------------------------------------------------------
   // 3d. CLOSE SHORT (type=4) - Buy to close short position
   // ---------------------------------------------------------------------------
-  async closeShort(quantity: string, symbol: string = SYMBOL): Promise<OrderResponse> {
+  async closeShort(quantity: string, symbol: string = DEFAULT_SYMBOL): Promise<OrderResponse> {
     return this.placeOrder(symbol, '4', quantity, true);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 3e. GET OPEN POSITIONS
+  // ---------------------------------------------------------------------------
+  // GET /capi/v2/account/position/allPosition
+  async getOpenPositions(filterSymbol?: string): Promise<Position[]> {
+    const path = '/capi/v2/account/position/allPosition';
+    const headers = this.getHeaders('GET', path);
+
+    console.log(`\n[API] GET ${path}`);
+
+    const response = await this.client.get<Position[]>(path, { headers });
+
+    let positions = response.data;
+
+    if (!Array.isArray(positions)) {
+      console.log('[RESULT] No positions found or invalid response');
+      return [];
+    }
+
+    // Filter positions with actual holdings
+    positions = positions.filter(p => {
+      const qty = parseFloat(p.size || p.hold_available || '0');
+      return qty > 0;
+    });
+
+    // Filter by symbol if requested
+    if (filterSymbol) {
+      positions = positions.filter(p => p.symbol.toLowerCase() === filterSymbol.toLowerCase());
+    }
+
+    if (positions.length === 0) {
+      console.log('[RESULT] No open positions');
+      return [];
+    }
+
+    console.log(`[RESULT] Found ${positions.length} open position(s):`);
+    positions.forEach((p, i) => {
+      const norm = normalizePosition(p);
+      const coin = getCoinFromSymbol(p.symbol);
+      const pnlStr = norm.unrealizedPnl >= 0 ? `+$${norm.unrealizedPnl.toFixed(2)}` : `-$${Math.abs(norm.unrealizedPnl).toFixed(2)}`;
+      const pnlColor = norm.unrealizedPnl >= 0 ? '\x1b[32m' : '\x1b[31m';
+      console.log(`  [${i + 1}] ${coin.padEnd(5)} | ${norm.side.padEnd(5)} | Size: ${norm.quantity.toString().padEnd(10)} | Entry: $${norm.avgPrice.toFixed(2)} | PnL: ${pnlColor}${pnlStr}\x1b[0m | Lev: ${p.leverage || 'N/A'}x`);
+    });
+
+    return positions;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 3f. CLOSE ALL POSITIONS
+  // ---------------------------------------------------------------------------
+  async closeAllPositions(): Promise<{ closed: number; errors: number }> {
+    console.log('\n[CLOSE-ALL] Fetching all open positions...');
+
+    const positions = await this.getOpenPositions();
+
+    if (positions.length === 0) {
+      console.log('[CLOSE-ALL] No positions to close');
+      return { closed: 0, errors: 0 };
+    }
+
+    console.log(`\n[CLOSE-ALL] Closing ${positions.length} position(s)...`);
+
+    let closed = 0;
+    let errors = 0;
+
+    for (const pos of positions) {
+      const norm = normalizePosition(pos);
+      const coin = getCoinFromSymbol(pos.symbol);
+
+      try {
+        console.log(`\n  Closing ${coin} ${norm.side} (${norm.quantity})...`);
+
+        if (norm.side === 'LONG') {
+          await this.closeLong(norm.quantity.toString(), pos.symbol);
+        } else {
+          await this.closeShort(norm.quantity.toString(), pos.symbol);
+        }
+
+        console.log(`  [OK] ${coin} ${norm.side} closed`);
+        closed++;
+      } catch (error: any) {
+        console.error(`  [ERROR] Failed to close ${coin} ${norm.side}: ${error.message}`);
+        errors++;
+      }
+    }
+
+    console.log(`\n[CLOSE-ALL] Complete: ${closed} closed, ${errors} errors`);
+    return { closed, errors };
   }
 
   // ---------------------------------------------------------------------------
   // 4. GET ORDER DETAIL
   // ---------------------------------------------------------------------------
   // GET /capi/v2/order/detail?symbol=xxx&orderId=xxx
-  async getOrderDetail(orderId: string, symbol: string = SYMBOL): Promise<OrderDetail> {
+  async getOrderDetail(orderId: string, symbol: string = DEFAULT_SYMBOL): Promise<OrderDetail> {
     const params = new URLSearchParams({ symbol, orderId });
     const path = `/capi/v2/order/detail?${params.toString()}`;
     const headers = this.getHeaders('GET', path);
@@ -353,29 +514,39 @@ async function main() {
 
   if (!command || command === 'help' || command === '--help' || command === '-h') {
     console.log(`
-WEEX API Calls - Standalone Script
-===================================
+WEEX API Calls - Multi-Coin Support
+====================================
+Supported coins: btc, eth, sol, doge
 
-Commands:
-  ticker              Get BTC/USDT price
-  balance             Get account balances
-  history [limit]     Get order history (default: 20)
-  detail <orderId>    Get order details (requires symbol)
-  detail-simple <id>  Get order details (orderId only)
+MARKET DATA:
+  ticker [coin]           Get price (default: btc)
+  ticker all              Get all coin prices
 
-  open-long <qty>     Open long position (type=1)
-  open-short <qty>    Open short position (type=2)
-  close-long <qty>    Close long position (type=3)
-  close-short <qty>   Close short position (type=4)
+ACCOUNT:
+  balance                 Get account balances
+  positions               List all open positions
+  history [limit]         Get order history (default: 20)
 
-Examples:
-  npx ts-node scripts/weex-api-calls.ts ticker
-  npx ts-node scripts/weex-api-calls.ts balance
-  npx ts-node scripts/weex-api-calls.ts history 50
-  npx ts-node scripts/weex-api-calls.ts detail 123456789
-  npx ts-node scripts/weex-api-calls.ts detail-simple 123456789
-  npx ts-node scripts/weex-api-calls.ts open-long 0.001
-  npx ts-node scripts/weex-api-calls.ts close-long 0.001
+ORDERS:
+  detail <orderId>        Get order details (requires symbol)
+  detail-simple <id>      Get order details (orderId only)
+
+TRADING (specify coin: btc, eth, sol, doge):
+  open-long <coin> <qty>   Open long position
+  open-short <coin> <qty>  Open short position
+  close-long <coin> <qty>  Close long position
+  close-short <coin> <qty> Close short position
+
+CLOSE ALL:
+  close-all               Close ALL open positions (all coins)
+
+EXAMPLES:
+  npx ts-node scripts/weex-api-calls.ts ticker              # BTC price
+  npx ts-node scripts/weex-api-calls.ts ticker eth          # ETH price
+  npx ts-node scripts/weex-api-calls.ts ticker all          # All prices
+  npx ts-node scripts/weex-api-calls.ts positions           # List positions
+  npx ts-node scripts/weex-api-calls.ts close-long btc 0.05 # Close BTC long
+  npx ts-node scripts/weex-api-calls.ts close-all           # Close everything
 `);
     return;
   }
@@ -385,20 +556,39 @@ Examples:
   try {
     switch (command) {
       case 'ticker':
-      case 'price':
-        await api.getTickerPrice();
+      case 'price': {
+        const coinArg = args[1]?.toLowerCase();
+        if (coinArg === 'all') {
+          // Get all coin prices
+          console.log('\n=== All Coin Prices ===');
+          for (const coin of Object.keys(SYMBOLS)) {
+            await api.getTickerPrice(SYMBOLS[coin]);
+          }
+        } else {
+          const symbol = resolveSymbol(coinArg);
+          await api.getTickerPrice(symbol);
+        }
         break;
+      }
 
       case 'balance':
       case 'bal':
         await api.getBalance();
         break;
 
+      case 'positions':
+      case 'pos': {
+        const posSymbol = args[1] ? resolveSymbol(args[1]) : undefined;
+        await api.getOpenPositions(posSymbol);
+        break;
+      }
+
       case 'history':
-      case 'orders':
+      case 'orders': {
         const limit = parseInt(args[1] || '20', 10);
         await api.getOrderHistory(limit);
         break;
+      }
 
       case 'detail':
       case 'order':
@@ -419,37 +609,86 @@ Examples:
         break;
 
       case 'open-long':
-      case 'long':
-        if (!args[1]) {
-          console.error('Usage: open-long <quantity>');
+      case 'long': {
+        // Format: open-long <coin> <qty> OR open-long <qty> (defaults to btc)
+        let coin: string, qty: string;
+        if (args[2]) {
+          coin = args[1];
+          qty = args[2];
+        } else {
+          coin = 'btc';
+          qty = args[1];
+        }
+        if (!qty) {
+          console.error('Usage: open-long <coin> <quantity>');
+          console.error('       open-long <quantity>  (defaults to btc)');
           process.exit(1);
         }
-        await api.openLong(args[1]);
+        const openLongSymbol = resolveSymbol(coin);
+        await api.openLong(qty, openLongSymbol);
         break;
+      }
 
       case 'open-short':
-      case 'short':
-        if (!args[1]) {
-          console.error('Usage: open-short <quantity>');
+      case 'short': {
+        let coin: string, qty: string;
+        if (args[2]) {
+          coin = args[1];
+          qty = args[2];
+        } else {
+          coin = 'btc';
+          qty = args[1];
+        }
+        if (!qty) {
+          console.error('Usage: open-short <coin> <quantity>');
+          console.error('       open-short <quantity>  (defaults to btc)');
           process.exit(1);
         }
-        await api.openShort(args[1]);
+        const openShortSymbol = resolveSymbol(coin);
+        await api.openShort(qty, openShortSymbol);
         break;
+      }
 
-      case 'close-long':
-        if (!args[1]) {
-          console.error('Usage: close-long <quantity>');
+      case 'close-long': {
+        let coin: string, qty: string;
+        if (args[2]) {
+          coin = args[1];
+          qty = args[2];
+        } else {
+          coin = 'btc';
+          qty = args[1];
+        }
+        if (!qty) {
+          console.error('Usage: close-long <coin> <quantity>');
+          console.error('       close-long <quantity>  (defaults to btc)');
           process.exit(1);
         }
-        await api.closeLong(args[1]);
+        const closeLongSymbol = resolveSymbol(coin);
+        await api.closeLong(qty, closeLongSymbol);
         break;
+      }
 
-      case 'close-short':
-        if (!args[1]) {
-          console.error('Usage: close-short <quantity>');
+      case 'close-short': {
+        let coin: string, qty: string;
+        if (args[2]) {
+          coin = args[1];
+          qty = args[2];
+        } else {
+          coin = 'btc';
+          qty = args[1];
+        }
+        if (!qty) {
+          console.error('Usage: close-short <coin> <quantity>');
+          console.error('       close-short <quantity>  (defaults to btc)');
           process.exit(1);
         }
-        await api.closeShort(args[1]);
+        const closeShortSymbol = resolveSymbol(coin);
+        await api.closeShort(qty, closeShortSymbol);
+        break;
+      }
+
+      case 'close-all':
+        await api.closeAllPositions();
         break;
 
       default:

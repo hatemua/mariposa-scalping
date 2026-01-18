@@ -18,6 +18,9 @@ import { llmPatternDetectionService } from '../llmPatternDetectionService';
 import { setupArchitectExpert } from './setupArchitectExpert';
 import { setupQueueService } from './setupQueueService';
 import { weexAiLogService } from '../weex/weexAiLogService';
+import { mtfExpertService } from './mtfExpertService';
+import { momentumExpertService } from './momentumExpertService';
+import { sessionFilterService } from './sessionFilterService';
 import {
   TradeSetup,
   V6_SETUP_CONFIG,
@@ -31,6 +34,9 @@ import {
   LiquidityZoneOutput,
   LevelWithZone,
   V6_ANALYSIS_CONFIG,
+  MTFAnalysisResult,
+  MomentumAnalysisResult,
+  SessionFilterResult,
 } from '../../types/v6';
 
 // ============================================================================
@@ -185,13 +191,18 @@ class StrategicAnalysisService {
       console.log(`[V6-ANALYSIS] Market Bias: ${result.marketBias.direction} (${result.marketBias.strength}%)`);
       console.log(`[V6-ANALYSIS] Preferred: ${result.marketBias.preferredDirection}, Avoid: ${result.marketBias.avoidDirection}`);
 
-      // Step 3: Run V6 expert analysis in parallel
+      // Step 3: Run V6 expert analysis in parallel (including new MTF and Momentum experts)
       console.log('[V6-ANALYSIS] Running expert analysis...');
-      const [fibResult, srResult, liqResult] = await Promise.all([
+      const [fibResult, srResult, liqResult, mtfResult, momentumResult] = await Promise.all([
         this.getFibonacciLevels(marketData),
         this.getSupportResistanceLevels(marketData),
         this.getLiquidityZones(marketData),
+        mtfExpertService.analyze(),
+        momentumExpertService.analyze(),
       ]);
+
+      // Session analysis is synchronous (no API calls)
+      const sessionResult = sessionFilterService.analyze();
 
       result.fibonacciLevels = fibResult.levels;
       result.orderBlocks = srResult.orderBlocks;
@@ -203,6 +214,9 @@ class StrategicAnalysisService {
       console.log(`[V6-ANALYSIS] Order blocks: ${result.orderBlocks.length}`);
       console.log(`[V6-ANALYSIS] Liquidity zones: ${result.liquidityZones.length}`);
       console.log(`[V6-ANALYSIS] S/R levels: ${result.supportResistanceLevels.length}`);
+      console.log(`[V6-ANALYSIS] MTF Confluence: ${mtfResult.confluenceScore}% | Bias: ${mtfResult.tradingBias}`);
+      console.log(`[V6-ANALYSIS] Momentum: ${momentumResult.overallMomentum} | Exhaustion: ${momentumResult.exhaustionWarning.isExhausted ? 'YES' : 'No'}`);
+      console.log(`[V6-ANALYSIS] Session: ${sessionResult.sessionInfo.session} (${sessionResult.sessionInfo.quality})`);
 
       // DEBUG: Log detailed expert outputs with defensive checks
       console.log('[V6-DEBUG] ============ EXPERT OUTPUTS ============');
@@ -304,6 +318,43 @@ class StrategicAnalysisService {
           grade: s.grade,
           ageMinutes: Math.round((Date.now() - s.createdAt.getTime()) / 60000),
         })),
+        // V6 PRO: Enhanced analysis context from new expert services
+        mtfAnalysis: {
+          h4Trend: mtfResult.h4.trend,
+          h1Trend: mtfResult.h1.trend,
+          m15Trend: mtfResult.m15.trend,
+          m5Trend: mtfResult.m5.trend,
+          confluenceScore: mtfResult.confluenceScore,
+          alignmentCount: mtfResult.alignmentCount,
+          dominantTrend: mtfResult.dominantTrend,
+          tradingBias: mtfResult.tradingBias,
+          strength: mtfResult.strength,
+          confidenceBoost: mtfResult.confidenceBoost,
+        },
+        momentumAnalysis: {
+          rsi: momentumResult.rsi.value,
+          rsiZone: momentumResult.rsi.zone,
+          rsiDivergence: momentumResult.rsi.divergence,
+          macdTrend: momentumResult.macd.trend,
+          macdCrossover: momentumResult.macd.crossover,
+          volumeRatio: momentumResult.volume.ratio,
+          volumeTrend: momentumResult.volume.trend,
+          overallMomentum: momentumResult.overallMomentum,
+          exhaustionWarning: momentumResult.exhaustionWarning,
+          entryQuality: momentumResult.entryQuality,
+          confidenceModifier: momentumResult.confidenceModifier,
+        },
+        sessionAnalysis: {
+          session: sessionResult.sessionInfo.session,
+          quality: sessionResult.sessionInfo.quality,
+          volatility: sessionResult.sessionInfo.volatility,
+          isKillzone: sessionResult.sessionInfo.isKillzone,
+          shouldTrade: sessionResult.shouldTrade,
+          reason: sessionResult.reason,
+          positionMultiplier: sessionResult.positionMultiplier,
+          slMultiplier: sessionResult.slMultiplier,
+          confidenceModifier: sessionResult.confidenceModifier,
+        },
       };
 
       const architectOutput = await setupArchitectExpert.createSetups(architectInput);
@@ -324,7 +375,7 @@ class StrategicAnalysisService {
         {
           symbol: 'BTCUSDT',
           timeframe: '15m',
-          marketBias: String(result.marketBias),
+          marketBias: `${result.marketBias.direction} (${result.marketBias.strength}%)`,
           fibLevels: (fibResult.levels || []).map((l: any) => l.price),
           srLevels: (srResult.levels || []).map((l: any) => l.price),
         },

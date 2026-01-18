@@ -18,6 +18,72 @@ import {
 } from '../../types/weex';
 import { WEEX_V6_CONFIG } from '../../config/environment';
 import { weexAiLogService } from './weexAiLogService';
+import { sessionFilterService } from '../v6/sessionFilterService';
+
+// ============================================================================
+// PROFIT PREDICTION TYPES & FUNCTION
+// ============================================================================
+
+interface ProfitPrediction {
+  expectedProfitUSD: number;     // Expected profit in USD if TP hit
+  expectedLossUSD: number;       // Expected loss in USD if SL hit
+  riskRewardRatio: number;       // R:R ratio
+  positionSizeUSD: number;       // Position size used
+  tpDistancePct: number;         // TP distance in %
+  slDistancePct: number;         // SL distance in %
+  passesFilter: boolean;         // true if expectedProfitUSD >= threshold
+  reason: string;                // Why passed or blocked
+}
+
+/**
+ * Calculate expected profit/loss for a trade setup
+ *
+ * @param entryPrice - Entry price
+ * @param stopLoss - Stop loss price
+ * @param takeProfit - Take profit price
+ * @param positionSizeUSD - Position size in USD
+ * @param leverage - Leverage multiplier (default: 20)
+ * @returns ProfitPrediction with expected P&L
+ */
+function predictProfit(
+  entryPrice: number,
+  stopLoss: number,
+  takeProfit: number,
+  positionSizeUSD: number,
+  leverage: number = WEEX_V6_CONFIG.PROFIT_PREDICTION.LEVERAGE
+): ProfitPrediction {
+  // Calculate distances as percentages
+  const tpDistancePct = Math.abs(takeProfit - entryPrice) / entryPrice * 100;
+  const slDistancePct = Math.abs(stopLoss - entryPrice) / entryPrice * 100;
+
+  // Expected profit if TP hit (using leverage)
+  const expectedProfitUSD = positionSizeUSD * (tpDistancePct / 100) * leverage;
+
+  // Expected loss if SL hit (using leverage)
+  const expectedLossUSD = positionSizeUSD * (slDistancePct / 100) * leverage;
+
+  // Risk:Reward ratio
+  const riskRewardRatio = slDistancePct > 0 ? tpDistancePct / slDistancePct : 0;
+
+  // Check if passes minimum profit threshold
+  const minProfitThreshold = WEEX_V6_CONFIG.PROFIT_PREDICTION.MIN_PROFIT_THRESHOLD_USD;
+  const passesFilter = expectedProfitUSD >= minProfitThreshold;
+
+  const reason = passesFilter
+    ? `Expected profit $${expectedProfitUSD.toFixed(2)} >= $${minProfitThreshold} threshold`
+    : `Expected profit $${expectedProfitUSD.toFixed(2)} < $${minProfitThreshold} threshold - BLOCKED`;
+
+  return {
+    expectedProfitUSD,
+    expectedLossUSD,
+    riskRewardRatio,
+    positionSizeUSD,
+    tpDistancePct,
+    slDistancePct,
+    passesFilter,
+    reason,
+  };
+}
 
 // ============================================================================
 // WEEX V6 EXECUTOR CLASS
@@ -106,6 +172,7 @@ class WeexV6Executor extends EventEmitter {
       console.log(`[WEEX-EXECUTOR]   Direction: ${setup.direction}, HTF Trend: ${setup.htfTrend || 'N/A'}`);
       this.executionStats.failed++;
       this.executionStats.lastError = 'Grade C counter-trend blocked';
+      this.executionLock = false; // Release lock before returning
       return {
         success: false,
         error: 'Grade C counter-trend trade blocked by trend filter',
@@ -132,6 +199,7 @@ class WeexV6Executor extends EventEmitter {
 
         this.executionStats.failed++;
         this.executionStats.lastError = 'Position already exists';
+        this.executionLock = false; // Release lock before returning
         return {
           success: false,
           error: `Position already exists: ${existingSide} ${existingQty}`,
@@ -152,32 +220,75 @@ class WeexV6Executor extends EventEmitter {
 
     // ============================================================================
     // FILTER 3: Validate R:R ratio before execution
+    // FIX: Use entry zone midpoint (not current price) for R:R calculation
     // ============================================================================
-    const slDistance = Math.abs(setup.stopLoss - executionPrice);
-    const tpDistance = Math.abs(setup.takeProfit1 - executionPrice);
+    const entryMidpoint = setup.entryZone.midpoint;
+    const slDistance = Math.abs(setup.stopLoss - entryMidpoint);
+    const tpDistance = Math.abs(setup.takeProfit1 - entryMidpoint);
     const actualRR = slDistance > 0 ? tpDistance / slDistance : 0;
+    // FIX: Round to 2 decimals to avoid floating point precision issues (e.g., 1.4999... < 1.5)
+    const roundedRR = Math.round(actualRR * 100) / 100;
 
-    console.log(`[WEEX-EXECUTOR] R:R Check: SL dist=$${slDistance.toFixed(2)}, TP dist=$${tpDistance.toFixed(2)}, R:R=1:${actualRR.toFixed(2)}`);
+    console.log(`[WEEX-EXECUTOR] R:R Check (entry=$${entryMidpoint.toFixed(2)}): SL dist=$${slDistance.toFixed(2)}, TP dist=$${tpDistance.toFixed(2)}, R:R=1:${roundedRR.toFixed(2)}`);
 
-    if (actualRR < 1.0) {
-      console.error(`[WEEX-EXECUTOR] BLOCKED: R:R 1:${actualRR.toFixed(2)} is below 1:1 minimum`);
-      console.error(`[WEEX-EXECUTOR]   Entry: $${executionPrice.toFixed(2)}, SL: $${setup.stopLoss.toFixed(2)}, TP: $${setup.takeProfit1.toFixed(2)}`);
+    // Require minimum 1.5 R:R for edge
+    const MIN_RR_RATIO = 1.5;
+    if (roundedRR < MIN_RR_RATIO) {
+      console.error(`[WEEX-EXECUTOR] BLOCKED: R:R 1:${roundedRR.toFixed(2)} is below 1:${MIN_RR_RATIO} minimum`);
+      console.error(`[WEEX-EXECUTOR]   Entry: $${entryMidpoint.toFixed(2)}, SL: $${setup.stopLoss.toFixed(2)}, TP: $${setup.takeProfit1.toFixed(2)}`);
       this.executionLock = false; // Release lock before returning
       this.executionStats.failed++;
-      this.executionStats.lastError = `Invalid R:R ratio: 1:${actualRR.toFixed(2)}`;
+      this.executionStats.lastError = `Invalid R:R ratio: 1:${roundedRR.toFixed(2)}`;
       return {
         success: false,
-        error: `Invalid R:R ratio: 1:${actualRR.toFixed(2)} (minimum 1:1 required)`,
+        error: `Invalid R:R ratio: 1:${roundedRR.toFixed(2)} (minimum 1:${MIN_RR_RATIO} required for edge)`,
         timestamp: new Date(),
       };
     }
+    console.log(`[WEEX-EXECUTOR] R:R Check PASSED: 1:${roundedRR.toFixed(2)} >= 1:${MIN_RR_RATIO}`)
 
     try {
       // Step 1: Calculate position size
       const positionSizeUSD = this.calculatePositionSize(setup);
-      const positionSizeBTC = positionSizeUSD / executionPrice;
+      let positionSizeBTC = positionSizeUSD / executionPrice;
+
+      // Enforce minimum position size
+      if (positionSizeBTC < this.config.MIN_POSITION_SIZE_BTC) {
+        console.log(`[WEEX-EXECUTOR] Position size ${positionSizeBTC.toFixed(6)} BTC below minimum, using ${this.config.MIN_POSITION_SIZE_BTC} BTC`);
+        positionSizeBTC = this.config.MIN_POSITION_SIZE_BTC;
+      }
 
       console.log(`[WEEX-EXECUTOR] Position size: $${positionSizeUSD.toFixed(2)} (${positionSizeBTC.toFixed(6)} BTC)`);
+
+      // ========================================================================
+      // FILTER 4: PROFIT PREDICTION FILTER
+      // Block trades with expected profit < $30 (configurable)
+      // ========================================================================
+      const prediction = predictProfit(
+        executionPrice,
+        setup.stopLoss,
+        setup.takeProfit1,
+        positionSizeUSD
+      );
+
+      console.log(`[V6-PROFIT] === PROFIT PREDICTION ===`);
+      console.log(`[V6-PROFIT]   Position: $${positionSizeUSD.toFixed(2)} x ${this.config.PROFIT_PREDICTION.LEVERAGE}x leverage`);
+      console.log(`[V6-PROFIT]   Entry: $${executionPrice.toFixed(2)} | TP: $${setup.takeProfit1.toFixed(2)} | SL: $${setup.stopLoss.toFixed(2)}`);
+      console.log(`[V6-PROFIT]   TP distance: ${prediction.tpDistancePct.toFixed(3)}% | SL distance: ${prediction.slDistancePct.toFixed(3)}%`);
+      console.log(`[V6-PROFIT]   Expected Profit: $${prediction.expectedProfitUSD.toFixed(2)} | Expected Loss: $${prediction.expectedLossUSD.toFixed(2)}`);
+      console.log(`[V6-PROFIT]   FILTER: ${prediction.passesFilter ? 'PASSED' : 'BLOCKED'} (min: $${this.config.PROFIT_PREDICTION.MIN_PROFIT_THRESHOLD_USD})`);
+
+      if (!prediction.passesFilter) {
+        console.log(`[WEEX-EXECUTOR] BLOCKED: ${prediction.reason}`);
+        this.executionStats.failed++;
+        this.executionStats.lastError = prediction.reason;
+        this.executionLock = false;
+        return {
+          success: false,
+          error: prediction.reason,
+          timestamp: new Date(),
+        };
+      }
 
       // Step 2: Verify we have enough balance
       const hasBalance = await this.verifyBalance(positionSizeUSD);
@@ -287,14 +398,26 @@ class WeexV6Executor extends EventEmitter {
   }
 
   /**
-   * Calculate position size based on setup grade and config
+   * Calculate position size based on setup grade and session
+   *
+   * SOFT FILTER POSITION SIZING:
+   * Final Size = Base × Grade Multiplier × Session Multiplier
+   *
+   * Examples:
+   * - OVERLAP Grade A: $800 × 1.0 × 1.25 = $1000 (aggressive)
+   * - ASIA Grade A:    $800 × 1.0 × 0.6 = $480 (conservative)
+   * - LONDON Grade B:  $800 × 0.75 × 1.0 = $600 (normal)
    */
   calculatePositionSize(setup: TradeSetup): number {
-    const multiplier = getPositionSizeMultiplier(setup.grade);
-    const baseSize = this.config.BASE_POSITION_SIZE_USD;
-    const size = baseSize * multiplier;
+    const gradeMultiplier = getPositionSizeMultiplier(setup.grade);
+    const sessionResult = sessionFilterService.analyze();
+    const sessionMultiplier = sessionResult.positionMultiplier;
 
-    console.log(`[WEEX-EXECUTOR] Position sizing: Grade ${setup.grade} = ${multiplier}x = $${size}`);
+    const baseSize = this.config.BASE_POSITION_SIZE_USD;
+    const size = baseSize * gradeMultiplier * sessionMultiplier;
+
+    console.log(`[WEEX-EXECUTOR] Position sizing: Grade ${setup.grade} (${gradeMultiplier}x) × ${sessionResult.sessionInfo.session} session (${sessionMultiplier}x) = $${size.toFixed(2)}`);
+    console.log(`[WEEX-EXECUTOR]   Strategy: ${sessionResult.strategy} | Base: $${baseSize}`);
 
     return size;
   }
@@ -334,8 +457,13 @@ class WeexV6Executor extends EventEmitter {
   }
 
   /**
-   * Place order on WEEX with retry logic
+   * Place order on WEEX - NO RETRIES
    * Uses preset TP/SL on entry order (single API call)
+   *
+   * IMPORTANT: Retry logic REMOVED to prevent:
+   * - High fees ($4 per API call x 3 retries = $12)
+   * - Order cancellations (duplicate orders at same price)
+   * If order fails, it may have been partially created - don't retry
    */
   async placeOrder(
     direction: 'BUY' | 'SELL',
@@ -344,112 +472,60 @@ class WeexV6Executor extends EventEmitter {
     takeProfit: number,
     stopLoss: number
   ): Promise<WeexOrderResult> {
-    const maxRetries = 3;
-    let lastError: Error | null = null;
-
     // Round TP/SL to match WEEX stepSize requirement (0.1)
     const roundedTP = this.roundToStepSize(takeProfit, 0.1);
     const roundedSL = this.roundToStepSize(stopLoss, 0.1);
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        console.log(`[WEEX-EXECUTOR] Placing ${direction} order (attempt ${attempt}/${maxRetries})`);
-        console.log(`[WEEX-EXECUTOR] Size: ${sizeBTC.toFixed(6)} BTC on ${symbol}`);
-        console.log(`[WEEX-EXECUTOR] TP: $${roundedTP} | SL: $${roundedSL} (preset on entry)`);
+    try {
+      console.log(`[WEEX-EXECUTOR] Placing ${direction} order (single attempt - no retries)`);
+      console.log(`[WEEX-EXECUTOR] Size: ${sizeBTC.toFixed(6)} BTC on ${symbol}`);
+      console.log(`[WEEX-EXECUTOR] TP: $${roundedTP} | SL: $${roundedSL} (preset on entry)`);
 
-        // Single API call with preset TP/SL
-        const result = await weexService.placeOrder({
-          symbol,
-          side: direction === 'BUY' ? 'buy' : 'sell',
-          orderType: 'market',
-          quantity: sizeBTC.toFixed(4),
-          positionAction: 'open',
-          takeProfitPrice: roundedTP,
-          stopLossPrice: roundedSL,
-        });
+      // Single API call with preset TP/SL
+      const result = await weexService.placeOrder({
+        symbol,
+        side: direction === 'BUY' ? 'buy' : 'sell',
+        orderType: 'market',
+        quantity: sizeBTC.toFixed(4),
+        positionAction: 'open',
+        takeProfitPrice: roundedTP,
+        stopLossPrice: roundedSL,
+      });
 
-        if (!result || !result.data || !result.data.orderId) {
-          throw new Error('Invalid order response - no orderId');
-        }
-
-        console.log(`[WEEX-EXECUTOR] Order placed with preset TP/SL: ${result.data.orderId}`);
-
-        // Extract TP/SL order IDs from response
-        let tpOrderId = result.data.tpOrderId;
-        let slOrderId = result.data.slOrderId;
-
-        // FALLBACK: If WEEX API didn't return TP/SL order IDs, place them separately
-        if (!tpOrderId || !slOrderId) {
-          console.log('[WEEX-EXECUTOR] No preset TP/SL order IDs in response, placing separately...');
-
-          const holdSide = direction === 'BUY' ? '1' : '2';  // 1=long, 2=short
-
-          // Place TP order if not returned
-          if (!tpOrderId) {
-            try {
-              const tpResult = await weexService.placeTpSlOrder({
-                symbol,
-                planType: 'profit_plan',
-                triggerPrice: roundedTP.toString(),
-                holdSide: holdSide as '1' | '2',
-              });
-              if (tpResult.success && tpResult.orderId) {
-                tpOrderId = tpResult.orderId;
-                console.log(`[WEEX-EXECUTOR] TP order placed separately: ${tpOrderId}`);
-              } else {
-                console.warn(`[WEEX-EXECUTOR] Failed to place TP order: ${tpResult.error}`);
-              }
-            } catch (err: any) {
-              console.error(`[WEEX-EXECUTOR] Error placing TP order: ${err.message}`);
-            }
-          }
-
-          // Place SL order if not returned
-          if (!slOrderId) {
-            try {
-              const slResult = await weexService.placeTpSlOrder({
-                symbol,
-                planType: 'loss_plan',
-                triggerPrice: roundedSL.toString(),
-                holdSide: holdSide as '1' | '2',
-              });
-              if (slResult.success && slResult.orderId) {
-                slOrderId = slResult.orderId;
-                console.log(`[WEEX-EXECUTOR] SL order placed separately: ${slOrderId}`);
-              } else {
-                console.warn(`[WEEX-EXECUTOR] Failed to place SL order: ${slResult.error}`);
-              }
-            } catch (err: any) {
-              console.error(`[WEEX-EXECUTOR] Error placing SL order: ${err.message}`);
-            }
-          }
-        }
-
-        // Success - return with TP/SL order IDs (if available)
+      if (!result || !result.data || !result.data.orderId) {
+        console.error('[WEEX-EXECUTOR] Invalid order response - no orderId');
         return {
-          success: true,
-          orderId: result.data.orderId,
-          clientOrderId: result.data.clientOrderId,
-          tpOrderId: tpOrderId ? Number(tpOrderId) : undefined,
-          slOrderId: slOrderId ? Number(slOrderId) : undefined,
+          success: false,
+          error: 'Invalid order response - no orderId (order may have been created)',
         };
-
-      } catch (error: any) {
-        lastError = error;
-        console.error(`[WEEX-EXECUTOR] Order attempt ${attempt} failed: ${error.message}`);
-
-        if (attempt < maxRetries) {
-          const delay = 1000 * attempt;
-          console.log(`[WEEX-EXECUTOR] Retrying in ${delay}ms...`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
       }
-    }
 
-    return {
-      success: false,
-      error: lastError?.message || 'Order failed after retries',
-    };
+      console.log(`[WEEX-EXECUTOR] Order placed with preset TP/SL: ${result.data.orderId}`);
+
+      // Extract TP/SL order IDs from response (preset TP/SL is already placed with entry order)
+      const tpOrderId = result.data.tpOrderId;
+      const slOrderId = result.data.slOrderId;
+
+      // Note: Preset TP/SL orders are created by WEEX even if order IDs aren't returned
+      // Do NOT place them separately - this causes Error 400 (duplicate orders)
+
+      // Success - return with TP/SL order IDs (if available)
+      return {
+        success: true,
+        orderId: result.data.orderId,
+        clientOrderId: result.data.clientOrderId,
+        tpOrderId: tpOrderId ? Number(tpOrderId) : undefined,
+        slOrderId: slOrderId ? Number(slOrderId) : undefined,
+      };
+
+    } catch (error: any) {
+      console.error(`[WEEX-EXECUTOR] Order failed: ${error.message}`);
+      console.error(`[WEEX-EXECUTOR] NOT retrying - order may have been created`);
+      return {
+        success: false,
+        error: error.message || 'Order failed (not retrying to avoid duplicates)',
+      };
+    }
   }
 
   /**

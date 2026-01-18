@@ -198,11 +198,11 @@ export const V6_SETUP_CONFIG = {
   // SCALPING: Entry must be near current price
   MAX_ENTRY_DISTANCE_PCT: V6_ENV_CONFIG.MAX_ENTRY_DISTANCE_PCT,
 
-  // Zone thresholds - TIGHTER for scalping
-  ZONE_FAR_THRESHOLD: V6_ENV_CONFIG.MODE === 'SCALPING' ? 0.3 : 0.5,
-  ZONE_APPROACHING_PERCENT: V6_ENV_CONFIG.MODE === 'SCALPING' ? 0.15 : 0.2,
-  ZONE_APPROACHING_THRESHOLD: V6_ENV_CONFIG.MODE === 'SCALPING' ? 0.0015 : 0.002,
-  ZONE_IN_ZONE_BUFFER: V6_ENV_CONFIG.MODE === 'SCALPING' ? 0.03 : 0.05,
+  // Zone thresholds - WIDENED for better detection
+  ZONE_FAR_THRESHOLD: V6_ENV_CONFIG.MODE === 'SCALPING' ? 0.5 : 0.5,           // WIDENED from 0.3 - more forgiving
+  ZONE_APPROACHING_PERCENT: V6_ENV_CONFIG.MODE === 'SCALPING' ? 0.25 : 0.2,    // WIDENED from 0.15 - catch approach earlier
+  ZONE_APPROACHING_THRESHOLD: V6_ENV_CONFIG.MODE === 'SCALPING' ? 0.0025 : 0.002, // WIDENED from 0.0015
+  ZONE_IN_ZONE_BUFFER: V6_ENV_CONFIG.MODE === 'SCALPING' ? 0.05 : 0.05,        // WIDENED from 0.03 - more buffer
 
   // Position sizing by grade (multipliers)
   POSITION_SIZE_GRADE_A: 1.0,            // 100% of base
@@ -236,7 +236,7 @@ export const V6_SETUP_CONFIG = {
   REDIS_DAILY_COUNTER_KEY: 'v6:daily_trades',
 
   // LLM settings
-  SETUP_ARCHITECT_MODEL: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
+  SETUP_ARCHITECT_MODEL: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
   SETUP_ARCHITECT_TEMPERATURE: 0.2,
   SETUP_ARCHITECT_MAX_TOKENS: 2000,
 } as const;

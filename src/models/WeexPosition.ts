@@ -2,7 +2,8 @@
  * WEEX Position Database Model
  *
  * Stores WEEX trading positions with orderId for tracking and restart recovery.
- * Persists position state including TP/SL, breakeven, and trailing stop status.
+ * SIMPLIFIED: Breakeven/trailing stop features removed to reduce API fees.
+ * Exit strategy: Open with preset TP/SL → wait for exchange to close → done.
  */
 
 import mongoose, { Schema, Document } from 'mongoose';
@@ -23,6 +24,7 @@ export type WeexCloseReason =
   | 'MANUAL'
   | 'API_CLOSE'
   | 'EXTERNAL_CLOSE'
+  | 'PROFIT_PULLBACK'
   | 'ERROR';
 
 export interface IWeexPosition extends Document {
@@ -55,9 +57,9 @@ export interface IWeexPosition extends Document {
   closeReason?: WeexCloseReason;
   realizedPnl?: number;
 
-  // Exit management state
-  breakevenActivated: boolean;
-  trailingActivated: boolean;
+  // Exit management state (DEPRECATED - kept for backwards compatibility)
+  breakevenActivated?: boolean;
+  trailingActivated?: boolean;
 
   // Timestamps
   openedAt: Date;
@@ -177,6 +179,7 @@ const WeexPositionSchema = new Schema<IWeexPosition>({
       'MANUAL',
       'API_CLOSE',
       'EXTERNAL_CLOSE',
+      'PROFIT_PULLBACK',
       'ERROR'
     ]
   },

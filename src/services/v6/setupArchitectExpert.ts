@@ -239,6 +239,14 @@ class SetupArchitectExpert {
     const minZoneWidth = input.currentPrice * (SETUP_ARCHITECT_CONFIG.MIN_ZONE_WIDTH_PERCENT / 100);
     const maxZoneWidth = input.currentPrice * (SETUP_ARCHITECT_CONFIG.MAX_ZONE_WIDTH_PERCENT / 100);
 
+    // Calculate minimum SL/TP distance in dollars for LLM reference
+    const minSlPercent = 0.35;
+    const minTpPercent = 0.40;
+    const minSlUsd = Math.round(input.currentPrice * minSlPercent / 100);  // 0.35% minimum
+    const minTpUsd = Math.round(input.currentPrice * minTpPercent / 100);  // 0.40% minimum (for fees)
+    const recommendedSlAtr = Math.round(input.atr * 1.5);     // 1.5x ATR recommended
+    const atr15xPercent = ((input.atr * 1.5) / input.currentPrice * 100).toFixed(2);
+
     // Mode-specific header
     const modeHeader = V6_ENV_CONFIG.MODE === 'SCALPING'
       ? `You are an EXPERT SCALPING ANALYST for BTC/USDT. Your job is to create IMMEDIATE execution setups for quick profits.
@@ -256,11 +264,19 @@ SCALPING RULES - READ CAREFULLY
    - Target: ${SETUP_ARCHITECT_CONFIG.TAKE_PROFIT_1_PCT}% to ${SETUP_ARCHITECT_CONFIG.TAKE_PROFIT_2_PCT}% profit ($${typicalTP1.toFixed(0)} to $${typicalTP2.toFixed(0)})
    - NOT swing trading - we want trades that close in MINUTES
 
-3. TIGHT STOPS
-   - Stop Loss: ${SETUP_ARCHITECT_CONFIG.STOP_LOSS_PCT}% to ${SETUP_ARCHITECT_CONFIG.MAX_STOP_LOSS_PCT}% ($${typicalStop.toFixed(0)} to $${(input.currentPrice * SETUP_ARCHITECT_CONFIG.MAX_STOP_LOSS_PCT / 100).toFixed(0)})
+3. STOP LOSS (CRITICAL - see rules below)
+   - MINIMUM: ${minSlPercent}% from entry ($${minSlUsd}+) - tighter SLs will be REJECTED
+   - Recommended: 1.5x ATR ($${recommendedSlAtr}, ~${atr15xPercent}%)
+   - Place SL BEYOND structure + $20-50 buffer
    - Risk:Reward minimum ${SETUP_ARCHITECT_CONFIG.MIN_RR_RATIO}:1 (prefer 1.5:1+)
 
-4. ENTRY ZONE WIDTH
+4. TAKE PROFIT (FEE-AWARE - CRITICAL)
+   - MINIMUM: ${minTpPercent}% from entry ($${minTpUsd}+) - closer TPs will be REJECTED
+   - Exchange fees: ~0.08% round trip (0.04% maker + 0.04% taker)
+   - At ${minTpPercent}% TP, net profit = ${minTpPercent}% - 0.08% = ${(minTpPercent - 0.08).toFixed(2)}% ✓
+   - TPs below ${minTpPercent}% would result in fees eating most of the profit!
+
+5. ENTRY ZONE WIDTH
    - Zone should be ${SETUP_ARCHITECT_CONFIG.MIN_ZONE_WIDTH_PERCENT}% to ${SETUP_ARCHITECT_CONFIG.MAX_ZONE_WIDTH_PERCENT}% wide ($${minZoneWidth.toFixed(0)} to $${maxZoneWidth.toFixed(0)})
    - Example: ${(input.currentPrice - 100).toFixed(0)} to ${(input.currentPrice - 50).toFixed(0)} for a BUY`
       : `You are the SETUP ARCHITECT for a BTC swing trading system. Your job is to create 2-5 high-quality trade setups.`;
@@ -308,8 +324,8 @@ Create 2-3 SCALPING setups. REQUIREMENTS:
 DO:
 - Entry within ${lowerBound.toFixed(2)} - ${upperBound.toFixed(2)} (${maxEntryDistancePct}% of price)
 - At least 1 BUY and 1 SELL setup for flexibility
-- Stop loss: ${SETUP_ARCHITECT_CONFIG.STOP_LOSS_PCT}% - ${SETUP_ARCHITECT_CONFIG.MAX_STOP_LOSS_PCT}%
-- Take profit: ${SETUP_ARCHITECT_CONFIG.TAKE_PROFIT_1_PCT}% - ${SETUP_ARCHITECT_CONFIG.TAKE_PROFIT_2_PCT}%
+- Stop loss: MINIMUM ${minSlPercent}% ($${minSlUsd}) - SLs below this will be AUTO-REJECTED
+- Take profit: MINIMUM ${minTpPercent}% ($${minTpUsd}) - TPs below this will be AUTO-REJECTED (fees ~0.08%)
 - Risk:Reward >= ${SETUP_ARCHITECT_CONFIG.MIN_RR_RATIO}
 - Zone width: ${SETUP_ARCHITECT_CONFIG.MIN_ZONE_WIDTH_PERCENT}% - ${SETUP_ARCHITECT_CONFIG.MAX_ZONE_WIDTH_PERCENT}%
 
@@ -357,8 +373,8 @@ RULES:
 10. ALWAYS include BOTH directions
 
 VALIDATION RULES (setups violating these will be AUTOMATICALLY REJECTED):
-- BUY entry zone midpoint must be AT or BELOW current price (max 0.5% above allowed)
-- SELL entry zone midpoint must be AT or ABOVE current price (max 0.5% below allowed)
+- BUY entry zone midpoint must be AT or BELOW current price (max 0.05% above allowed)
+- SELL entry zone midpoint must be AT or ABOVE current price (max 0.05% below allowed)
 - Entry zones must be ${SETUP_ARCHITECT_CONFIG.MIN_ZONE_WIDTH_PERCENT}%-${SETUP_ARCHITECT_CONFIG.MAX_ZONE_WIDTH_PERCENT}% wide
 - R:R ratio must be >= ${SETUP_ARCHITECT_CONFIG.MIN_RR_RATIO}
 
@@ -367,7 +383,57 @@ GRADING SYSTEM:
 - Grade B: 2+ confluences AND (with-trend OR R:R >= 1.75) AND confidence >= 65
 - Grade C: 1 confluence with strong level AND R:R >= 1.5`;
 
+    // CRITICAL: Stop Loss and Take Profit rules section with examples
+    const slRulesSection = `
+═══════════════════════════════════════════════════════════════════
+                    CRITICAL STOP LOSS RULES
+═══════════════════════════════════════════════════════════════════
+
+MANDATORY MINIMUM STOP LOSS DISTANCE:
+- Minimum: ${minSlPercent}% from entry (approximately $${minSlUsd} at current price)
+- Recommended: 1.5x ATR = $${recommendedSlAtr} (~${atr15xPercent}%)
+- NEVER place SL tighter than $${minSlUsd} from entry price
+
+STOP LOSS CALCULATION METHOD:
+1. Calculate 1.5x ATR: $${input.atr.toFixed(0)} x 1.5 = $${recommendedSlAtr}
+2. Verify it's >= ${minSlPercent}% of entry price
+3. Place SL BEYOND the nearest structure (support for BUY, resistance for SELL)
+4. Add buffer of $20-50 beyond the structure level
+
+═══════════════════════════════════════════════════════════════════
+                TAKE PROFIT REQUIREMENTS (FEE-AWARE)
+═══════════════════════════════════════════════════════════════════
+
+Exchange fees: ~0.08% round trip (0.04% open + 0.04% close)
+MINIMUM TP distance: ${minTpPercent}% from entry ($${minTpUsd})
+At current price, this ensures net profit after fees.
+
+FEE MATH EXAMPLE:
+  Position: $2,500 at ${minTpPercent}% TP
+  Gross profit: $${(2500 * minTpPercent / 100).toFixed(2)}
+  Fees: $2.00 (0.08%)
+  Net profit: $${((2500 * minTpPercent / 100) - 2).toFixed(2)} ✓
+
+EXAMPLE FOR BUY SETUP:
+- Entry: $${input.currentPrice.toFixed(0)}
+- Nearest support: $${(input.currentPrice - 200).toFixed(0)}
+- WRONG SL: $${(input.currentPrice - 200).toFixed(0)} (only 0.22% - TOO TIGHT!)
+- CORRECT SL: $${(input.currentPrice - minSlUsd - 30).toFixed(0)} (${minSlPercent}%+ - with buffer below support)
+
+EXAMPLE FOR SELL SETUP:
+- Entry: $${input.currentPrice.toFixed(0)}
+- Nearest resistance: $${(input.currentPrice + 200).toFixed(0)}
+- WRONG SL: $${(input.currentPrice + 200).toFixed(0)} (only 0.22% - TOO TIGHT!)
+- CORRECT SL: $${(input.currentPrice + minSlUsd + 30).toFixed(0)} (${minSlPercent}%+ - with buffer above resistance)
+
+IF YOU CANNOT PLACE SL AT ${minSlPercent}%+ OR TP AT ${minTpPercent}%+ WITH VALID STRUCTURE:
+-> DO NOT CREATE THE SETUP
+-> Return empty setups array
+`;
+
     return `${modeHeader}
+
+${slRulesSection}
 
 ═══════════════════════════════════════════════════════════════
 CURRENT MARKET DATA
@@ -397,6 +463,42 @@ ${liquidityStr}
 
 SUPPORT/RESISTANCE:
 ${finalSRLevels}
+
+═══════════════════════════════════════════════════════════════
+V6 PRO: ENHANCED MARKET CONTEXT
+═══════════════════════════════════════════════════════════════
+
+MULTI-TIMEFRAME (MTF) CONFLUENCE:
+${(input as any).mtfAnalysis ? `- H4: ${(input as any).mtfAnalysis.h4Trend} | H1: ${(input as any).mtfAnalysis.h1Trend} | M15: ${(input as any).mtfAnalysis.m15Trend} | M5: ${(input as any).mtfAnalysis.m5Trend}
+- Confluence Score: ${(input as any).mtfAnalysis.confluenceScore}% (${(input as any).mtfAnalysis.alignmentCount}/4 timeframes aligned)
+- Dominant Trend: ${(input as any).mtfAnalysis.dominantTrend}
+- Trading Bias: ${(input as any).mtfAnalysis.tradingBias}
+- Strength: ${(input as any).mtfAnalysis.strength}
+${(input as any).mtfAnalysis.confluenceScore >= 70 ? `*** MTF FILTER: Strongly prefer ${(input as any).mtfAnalysis.tradingBias} setups ***` : ''}
+${(input as any).mtfAnalysis.confluenceScore >= 85 ? `*** HIGH CONFLUENCE: Only ${(input as any).mtfAnalysis.tradingBias} setups recommended ***` : ''}` : '- MTF analysis not available'}
+
+MOMENTUM ANALYSIS:
+${(input as any).momentumAnalysis ? `- RSI: ${(input as any).momentumAnalysis.rsi.toFixed(1)} (${(input as any).momentumAnalysis.rsiZone})${(input as any).momentumAnalysis.rsiDivergence !== 'NONE' ? ` - ${(input as any).momentumAnalysis.rsiDivergence} divergence detected` : ''}
+- MACD: ${(input as any).momentumAnalysis.macdTrend}${(input as any).momentumAnalysis.macdCrossover !== 'NONE' ? ` - ${(input as any).momentumAnalysis.macdCrossover}` : ''}
+- Volume: ${(input as any).momentumAnalysis.volumeRatio.toFixed(2)}x average (${(input as any).momentumAnalysis.volumeTrend})
+- Overall Momentum: ${(input as any).momentumAnalysis.overallMomentum}
+- Entry Quality: BUY=${(input as any).momentumAnalysis.entryQuality.forBuy}, SELL=${(input as any).momentumAnalysis.entryQuality.forSell}
+${(input as any).momentumAnalysis.exhaustionWarning.isExhausted ? `*** EXHAUSTION WARNING: ${(input as any).momentumAnalysis.exhaustionWarning.reason} - AVOID ${(input as any).momentumAnalysis.exhaustionWarning.direction} ***` : ''}` : '- Momentum analysis not available'}
+
+SESSION CONTEXT:
+${(input as any).sessionAnalysis ? `- Current Session: ${(input as any).sessionAnalysis.session} (${(input as any).sessionAnalysis.quality})
+- Volatility Expected: ${(input as any).sessionAnalysis.volatility}
+- Is Killzone: ${(input as any).sessionAnalysis.isKillzone ? 'YES - optimal trading' : 'No'}
+- Should Trade: ${(input as any).sessionAnalysis.shouldTrade ? 'YES' : 'CAUTION - ' + (input as any).sessionAnalysis.reason}
+- Position Size: ${(input as any).sessionAnalysis.positionMultiplier}x
+${(input as any).sessionAnalysis.quality === 'EXCELLENT' ? '*** KILLZONE: Higher confidence for all setups ***' : ''}
+${(input as any).sessionAnalysis.quality === 'POOR' ? '*** LOW LIQUIDITY: Only Grade A setups recommended ***' : ''}` : '- Session analysis not available'}
+
+COMBINED CONFIDENCE ADJUSTMENTS:
+- MTF Boost: ${(input as any).mtfAnalysis?.confidenceBoost || 0} points
+- Momentum Modifier: ${(input as any).momentumAnalysis?.confidenceModifier || 0} points
+- Session Modifier: ${(input as any).sessionAnalysis?.confidenceModifier || 0} points
+- Apply these to base confidence when grading setups
 
 ${input.existingSetups && input.existingSetups.length > 0 ? `EXISTING SETUPS (avoid duplicates within ${V6_ENV_CONFIG.DUPLICATE_THRESHOLD_PCT}%):
 ${input.existingSetups.map(s => `  - ${s.direction} @ $${s.entryPrice.toFixed(0)}`).join('\n')}
@@ -439,6 +541,21 @@ CRITICAL: All prices (stopLoss, takeProfit1, takeProfit2, entryZone) MUST be ABS
 - For a BUY at $${input.currentPrice.toFixed(0)}: stopLoss should be ~$${(input.currentPrice * 0.998).toFixed(0)}, takeProfit1 should be ~$${(input.currentPrice * 1.002).toFixed(0)}
 - For a SELL at $${input.currentPrice.toFixed(0)}: stopLoss should be ~$${(input.currentPrice * 1.002).toFixed(0)}, takeProfit1 should be ~$${(input.currentPrice * 0.998).toFixed(0)}
 - NEVER return just the dollar distance (e.g., 133 or 178). Always return full price (e.g., ${(input.currentPrice - 133).toFixed(0)} or ${(input.currentPrice + 178).toFixed(0)})
+
+═══════════════════════════════════════════════════════════════
+VALIDATION CHECKLIST - Verify before outputting each setup:
+═══════════════════════════════════════════════════════════════
+☐ SL distance >= ${minSlPercent}% from entry ($${minSlUsd}+)
+☐ TP distance >= ${minTpPercent}% from entry ($${minTpUsd}+)
+☐ R:R ratio >= ${SETUP_ARCHITECT_CONFIG.MIN_RR_RATIO} (TP_dist / SL_dist)
+☐ Entry zone within ${maxEntryDistancePct}% of current price ($${(input.currentPrice - maxEntryDistance).toFixed(0)} - $${(input.currentPrice + maxEntryDistance).toFixed(0)})
+☐ Zone width between ${SETUP_ARCHITECT_CONFIG.MIN_ZONE_WIDTH_PERCENT}% and ${SETUP_ARCHITECT_CONFIG.MAX_ZONE_WIDTH_PERCENT}%
+☐ At least 1 valid technical reason
+☐ SL placed BEYOND structure, not AT structure
+
+IF ANY CHECK FAILS → DO NOT OUTPUT THAT SETUP
+
+If no valid setups exist with proper SL/TP distances, return: {"setups": []}
 
 RESPOND WITH VALID JSON ONLY. NO EXPLANATIONS OUTSIDE JSON.`;
   }
@@ -512,7 +629,9 @@ RESPOND WITH VALID JSON ONLY. NO EXPLANATIONS OUTSIDE JSON.`;
       return {
         setups: parsed.setups,
         marketSummary: parsed.marketSummary || '',
-        warnings: parsed.warnings || [],
+        warnings: Array.isArray(parsed.warnings)
+          ? parsed.warnings
+          : (parsed.warnings ? [String(parsed.warnings)] : []),
       };
     } catch (error: any) {
       console.error('[V6-ARCHITECT] Failed to parse response:', error.message);
@@ -624,6 +743,29 @@ RESPOND WITH VALID JSON ONLY. NO EXPLANATIONS OUTSIDE JSON.`;
     // Validate SL/TP are within reasonable range (5% of price)
     const slDistance = Math.abs(setup.stopLoss - currentPrice) / currentPrice;
     const tpDistance = Math.abs(setup.takeProfit1 - currentPrice) / currentPrice;
+
+    // CRITICAL: Minimum SL distance to avoid getting stopped out by wicks/noise
+    // 0.35% minimum for scalping mode - widened to avoid wick stops
+    const MIN_SL_DISTANCE = 0.0035; // 0.35%
+
+    // CRITICAL: Minimum TP distance to ensure profit after fees
+    // WEEX fees: ~0.08% round trip (0.04% maker + 0.04% taker)
+    // At 0.40% TP, gross = 0.40%, net = 0.40% - 0.08% = 0.32% profit
+    const MIN_TP_DISTANCE = 0.0040; // 0.40%
+
+    if (slDistance < MIN_SL_DISTANCE) {
+      console.log(`[V6-ARCHITECT-DEBUG]   REJECTED: SL too CLOSE to price: ${(slDistance * 100).toFixed(2)}% < ${(MIN_SL_DISTANCE * 100).toFixed(2)}% minimum`);
+      console.log(`[V6-ARCHITECT-DEBUG]   SL must be at least ${(MIN_SL_DISTANCE * 100).toFixed(2)}% from entry to avoid wick stops`);
+      return false;
+    }
+
+    // NEW: Minimum TP distance to ensure profit after fees
+    if (tpDistance < MIN_TP_DISTANCE) {
+      console.log(`[V6-ARCHITECT-DEBUG]   REJECTED: TP too CLOSE to price: ${(tpDistance * 100).toFixed(2)}% < ${(MIN_TP_DISTANCE * 100).toFixed(2)}% minimum`);
+      console.log(`[V6-ARCHITECT-DEBUG]   TP must be at least ${(MIN_TP_DISTANCE * 100).toFixed(2)}% from entry (fees ~0.08% would eat profit)`);
+      return false;
+    }
+
     if (slDistance > 0.05) {
       console.log(`[V6-ARCHITECT-DEBUG]   REJECTED: SL too far from price: ${(slDistance * 100).toFixed(2)}% > 5%`);
       return false;
@@ -639,25 +781,59 @@ RESPOND WITH VALID JSON ONLY. NO EXPLANATIONS OUTSIDE JSON.`;
     }
 
     // ========================================================================
-    // CRITICAL: Validate direction vs price position
+    // CRITICAL: Validate direction vs price position (SYMMETRIC BOUNDS)
     // BUY = support level = entry should be BELOW or AT current price
     // SELL = resistance level = entry should be ABOVE or AT current price
+    // BOTH directions need upper AND lower bounds to prevent entries too far away
     // ========================================================================
     const entryMidpoint = (setup.entryZone.high + setup.entryZone.low) / 2;
-    // Tighter tolerance for scalping mode to catch inverted setups
-    const priceBuffer = V6_ENV_CONFIG.MODE === 'SCALPING' ? 0.002 : 0.005; // 0.2% for scalping, 0.5% for swing
+    // Tight tolerance to prevent inverted setups (0.05% = ~$46 at $93k)
+    const priceBuffer = V6_ENV_CONFIG.MODE === 'SCALPING' ? 0.0005 : 0.002; // 0.05% for scalping, 0.2% for swing
+    // Max distance for entry (from config)
+    const maxEntryDistancePct = SETUP_ARCHITECT_CONFIG.MAX_ENTRY_DISTANCE_PCT / 100;
 
-    if (setup.direction === 'BUY' && entryMidpoint > currentPrice * (1 + priceBuffer)) {
-      const distanceAbove = ((entryMidpoint - currentPrice) / currentPrice) * 100;
-      console.log(`[V6-ARCHITECT-DEBUG]   REJECTED: BUY entry $${entryMidpoint.toFixed(0)} is ${distanceAbove.toFixed(2)}% ABOVE current price $${currentPrice.toFixed(0)} (max allowed: ${(priceBuffer * 100).toFixed(1)}%)`);
-      console.log(`[V6-ARCHITECT-DEBUG]   BUY setups must be at support (below price), not resistance (above price)`);
-      return false;
+    // BUY validation: Entry must be within range of current price (SYMMETRIC)
+    if (setup.direction === 'BUY') {
+      const upperBound = currentPrice * (1 + priceBuffer);
+      const lowerBound = currentPrice * (1 - maxEntryDistancePct);
+
+      // Check upper bound - BUY should not be above current price
+      if (entryMidpoint > upperBound) {
+        const distanceAbove = ((entryMidpoint - currentPrice) / currentPrice) * 100;
+        console.log(`[V6-ARCHITECT-DEBUG]   REJECTED: BUY entry $${entryMidpoint.toFixed(0)} is ${distanceAbove.toFixed(2)}% ABOVE current price $${currentPrice.toFixed(0)} (max allowed: ${(priceBuffer * 100).toFixed(1)}%)`);
+        console.log(`[V6-ARCHITECT-DEBUG]   BUY setups must be at support (below price), not resistance (above price)`);
+        return false;
+      }
+
+      // Check lower bound - BUY should not be too far below current price
+      if (entryMidpoint < lowerBound) {
+        const distanceBelow = ((currentPrice - entryMidpoint) / currentPrice) * 100;
+        console.log(`[V6-ARCHITECT-DEBUG]   REJECTED: BUY entry $${entryMidpoint.toFixed(0)} is ${distanceBelow.toFixed(2)}% BELOW current price $${currentPrice.toFixed(0)} (too far below, max: ${(maxEntryDistancePct * 100).toFixed(1)}%)`);
+        console.log(`[V6-ARCHITECT-DEBUG]   BUY entry zone is too far away - price may never reach it`);
+        return false;
+      }
     }
-    if (setup.direction === 'SELL' && entryMidpoint < currentPrice * (1 - priceBuffer)) {
-      const distanceBelow = ((currentPrice - entryMidpoint) / currentPrice) * 100;
-      console.log(`[V6-ARCHITECT-DEBUG]   REJECTED: SELL entry $${entryMidpoint.toFixed(0)} is ${distanceBelow.toFixed(2)}% BELOW current price $${currentPrice.toFixed(0)} (max allowed: ${(priceBuffer * 100).toFixed(1)}%)`);
-      console.log(`[V6-ARCHITECT-DEBUG]   SELL setups must be at resistance (above price), not support (below price)`);
-      return false;
+
+    // SELL validation: Entry must be within range of current price (SYMMETRIC)
+    if (setup.direction === 'SELL') {
+      const lowerBound = currentPrice * (1 - priceBuffer);
+      const upperBound = currentPrice * (1 + maxEntryDistancePct);
+
+      // Check lower bound - SELL should not be below current price
+      if (entryMidpoint < lowerBound) {
+        const distanceBelow = ((currentPrice - entryMidpoint) / currentPrice) * 100;
+        console.log(`[V6-ARCHITECT-DEBUG]   REJECTED: SELL entry $${entryMidpoint.toFixed(0)} is ${distanceBelow.toFixed(2)}% BELOW current price $${currentPrice.toFixed(0)} (max allowed: ${(priceBuffer * 100).toFixed(1)}%)`);
+        console.log(`[V6-ARCHITECT-DEBUG]   SELL setups must be at resistance (above price), not support (below price)`);
+        return false;
+      }
+
+      // Check upper bound - SELL should not be too far above current price
+      if (entryMidpoint > upperBound) {
+        const distanceAbove = ((entryMidpoint - currentPrice) / currentPrice) * 100;
+        console.log(`[V6-ARCHITECT-DEBUG]   REJECTED: SELL entry $${entryMidpoint.toFixed(0)} is ${distanceAbove.toFixed(2)}% ABOVE current price $${currentPrice.toFixed(0)} (too far above, max: ${(maxEntryDistancePct * 100).toFixed(1)}%)`);
+        console.log(`[V6-ARCHITECT-DEBUG]   SELL entry zone is too far away - price may never reach it`);
+        return false;
+      }
     }
 
     // ========================================================================
@@ -683,12 +859,16 @@ RESPOND WITH VALID JSON ONLY. NO EXPLANATIONS OUTSIDE JSON.`;
     const zoneWidthPercent = zoneWidth / midpoint;
 
     if (zoneWidthPercent < SETUP_ARCHITECT_CONFIG.MIN_ZONE_WIDTH_PERCENT / 100) {
-      // Auto-expand zone to minimum width instead of rejecting
+      // Auto-expand zone to minimum width - SYMMETRIC expansion to preserve midpoint
       const minWidth = midpoint * (SETUP_ARCHITECT_CONFIG.MIN_ZONE_WIDTH_PERCENT / 100);
-      const expansion = (minWidth - zoneWidth) / 2;
-      setup.entryZone.low -= expansion;
-      setup.entryZone.high += expansion;
-      console.log(`[V6-ARCHITECT-DEBUG]   AUTO-EXPANDED: Zone widened from ${(zoneWidthPercent * 100).toFixed(3)}% to ${SETUP_ARCHITECT_CONFIG.MIN_ZONE_WIDTH_PERCENT}% ($${minWidth.toFixed(0)} wide)`);
+      const expansion = minWidth - zoneWidth;
+      const halfExpansion = expansion / 2;
+
+      // FIXED: Expand SYMMETRICALLY to preserve midpoint at intended level
+      // This ensures entry price stays at the original target, not shifted away
+      setup.entryZone.low -= halfExpansion;
+      setup.entryZone.high += halfExpansion;
+      console.log(`[V6-ARCHITECT-DEBUG]   AUTO-EXPANDED ${setup.direction}: Zone widened SYMMETRICALLY from ${(zoneWidthPercent * 100).toFixed(3)}% to ${SETUP_ARCHITECT_CONFIG.MIN_ZONE_WIDTH_PERCENT}% (midpoint preserved at $${midpoint.toFixed(0)})`);
     }
     if (zoneWidthPercent > SETUP_ARCHITECT_CONFIG.MAX_ZONE_WIDTH_PERCENT / 100) {
       console.log(`[V6-ARCHITECT-DEBUG]   REJECTED: Zone too wide: ${(zoneWidthPercent * 100).toFixed(3)}% > ${SETUP_ARCHITECT_CONFIG.MAX_ZONE_WIDTH_PERCENT}%`);
@@ -1019,15 +1199,27 @@ RESPOND WITH VALID JSON ONLY. NO EXPLANATIONS OUTSIDE JSON.`;
     if (buyLevels.length > 0) {
       const bestBuyLevel = buyLevels[0]; // Nearest support
       const entryMidpoint = bestBuyLevel.price;
-      const stopLoss = entryMidpoint - atr * 1.2; // Tighter SL for better R:R
-      const takeProfit1 = entryMidpoint + atr * 1.8;
+      const stopLoss = entryMidpoint - atr * 2.0; // FIXED: Wider SL (2.0x ATR) to avoid wick stops
+      const takeProfit1 = entryMidpoint + atr * 2.5; // Adjusted TP for better R:R with wider SL
       const takeProfit2 = entryMidpoint + atr * 3;
       const rr = (takeProfit1 - entryMidpoint) / (entryMidpoint - stopLoss);
+
+      // Ensure minimum R:R 1.5 by adjusting TP if needed
+      let adjustedTP1 = takeProfit1;
+      let adjustedTP2 = takeProfit2;
+      let adjustedRR = rr;
+      if (rr < 1.5) {
+        const slDistance = entryMidpoint - stopLoss;
+        adjustedTP1 = entryMidpoint + slDistance * 1.5;
+        adjustedTP2 = entryMidpoint + slDistance * 2.5;
+        adjustedRR = 1.5;
+        console.log(`[V6-FALLBACK] Adjusted BUY TP1 from $${takeProfit1.toFixed(0)} to $${adjustedTP1.toFixed(0)} for R:R 1.5`);
+      }
 
       const isNearPrice = bestBuyLevel.distance < nearPriceBuffer;
 
       // Lower R:R threshold to 1.4
-      if (rr >= 1.4) {
+      if (adjustedRR >= 1.4) {
         const setup: TradeSetup = {
           id: uuidv4(),
           symbol: 'BTCUSDT',
@@ -1041,9 +1233,9 @@ RESPOND WITH VALID JSON ONLY. NO EXPLANATIONS OUTSIDE JSON.`;
             midpoint: entryMidpoint,
           },
           stopLoss,
-          takeProfit1,
-          takeProfit2,
-          riskRewardRatio: parseFloat(rr.toFixed(2)),
+          takeProfit1: adjustedTP1,
+          takeProfit2: adjustedTP2,
+          riskRewardRatio: parseFloat(adjustedRR.toFixed(2)),
           grade: isNearPrice ? 'B' : (bestBuyLevel.strength === 'STRONG' ? 'B' : 'C'),
           confidence: isNearPrice ? 70 : 60,
           reasons: [{
@@ -1067,9 +1259,9 @@ RESPOND WITH VALID JSON ONLY. NO EXPLANATIONS OUTSIDE JSON.`;
           analysisTimestamp: input.timestamp,
         };
         fallbackSetups.push(setup);
-        console.log(`[V6-FALLBACK] Created BUY @ $${entryMidpoint.toFixed(0)} (R:R ${rr.toFixed(2)}, ${isNearPrice ? 'NEAR-PRICE' : 'standard'})`);
+        console.log(`[V6-FALLBACK] Created BUY @ $${entryMidpoint.toFixed(0)} (R:R ${adjustedRR.toFixed(2)}, ${isNearPrice ? 'NEAR-PRICE' : 'standard'})`);
       } else {
-        console.log(`[V6-FALLBACK] BUY rejected: R:R ${rr.toFixed(2)} < 1.4`);
+        console.log(`[V6-FALLBACK] BUY rejected: R:R ${adjustedRR.toFixed(2)} < 1.4`);
       }
     } else {
       console.log('[V6-FALLBACK] No support levels found for BUY setup');
@@ -1081,23 +1273,35 @@ RESPOND WITH VALID JSON ONLY. NO EXPLANATIONS OUTSIDE JSON.`;
     if (sellLevels.length > 0) {
       const bestSellLevel = sellLevels[0]; // Nearest resistance
       const entryMidpoint = bestSellLevel.price;
-      const stopLoss = entryMidpoint + atr * 1.2;
-      const takeProfit1 = entryMidpoint - atr * 1.8;
+      const stopLoss = entryMidpoint + atr * 2.0; // FIXED: Wider SL (2.0x ATR) to avoid wick stops
+      const takeProfit1 = entryMidpoint - atr * 2.5; // Adjusted TP for better R:R with wider SL
       const takeProfit2 = entryMidpoint - atr * 3;
       const rr = (entryMidpoint - takeProfit1) / (stopLoss - entryMidpoint);
+
+      // Ensure minimum R:R 1.5 by adjusting TP if needed
+      let adjustedTP1 = takeProfit1;
+      let adjustedTP2 = takeProfit2;
+      let adjustedRR = rr;
+      if (rr < 1.5) {
+        const slDistance = stopLoss - entryMidpoint;
+        adjustedTP1 = entryMidpoint - slDistance * 1.5;
+        adjustedTP2 = entryMidpoint - slDistance * 2.5;
+        adjustedRR = 1.5;
+        console.log(`[V6-FALLBACK] Adjusted SELL TP1 from $${takeProfit1.toFixed(0)} to $${adjustedTP1.toFixed(0)} for R:R 1.5`);
+      }
 
       // DEBUG: Log SELL setup TP/SL calculation
       console.log(`[V6-ARCHITECT-DEBUG] SELL Setup calculated:`);
       console.log(`   ATR: $${atr.toFixed(2)}`);
       console.log(`   Entry midpoint: $${entryMidpoint.toFixed(2)}`);
-      console.log(`   SL: $${stopLoss.toFixed(2)} = ${entryMidpoint.toFixed(2)} + ${(atr * 1.2).toFixed(2)} (1.2x ATR)`);
-      console.log(`   TP1: $${takeProfit1.toFixed(2)} = ${entryMidpoint.toFixed(2)} - ${(atr * 1.8).toFixed(2)} (1.8x ATR)`);
-      console.log(`   Risk: $${(stopLoss - entryMidpoint).toFixed(2)} | Reward: $${(entryMidpoint - takeProfit1).toFixed(2)}`);
-      console.log(`   R:R: 1:${rr.toFixed(2)}`);
+      console.log(`   SL: $${stopLoss.toFixed(2)} = ${entryMidpoint.toFixed(2)} + ${(atr * 2.0).toFixed(2)} (2.0x ATR)`);
+      console.log(`   TP1: $${adjustedTP1.toFixed(2)} (adjusted from ${takeProfit1.toFixed(2)})`);
+      console.log(`   Risk: $${(stopLoss - entryMidpoint).toFixed(2)} | Reward: $${(entryMidpoint - adjustedTP1).toFixed(2)}`);
+      console.log(`   R:R: 1:${adjustedRR.toFixed(2)}`);
 
       const isNearPrice = bestSellLevel.distance < nearPriceBuffer;
 
-      if (rr >= 1.4) {
+      if (adjustedRR >= 1.4) {
         const setup: TradeSetup = {
           id: uuidv4(),
           symbol: 'BTCUSDT',
@@ -1111,9 +1315,9 @@ RESPOND WITH VALID JSON ONLY. NO EXPLANATIONS OUTSIDE JSON.`;
             midpoint: entryMidpoint,
           },
           stopLoss,
-          takeProfit1,
-          takeProfit2,
-          riskRewardRatio: parseFloat(rr.toFixed(2)),
+          takeProfit1: adjustedTP1,
+          takeProfit2: adjustedTP2,
+          riskRewardRatio: parseFloat(adjustedRR.toFixed(2)),
           grade: isNearPrice ? 'B' : (bestSellLevel.strength === 'STRONG' ? 'B' : 'C'),
           confidence: isNearPrice ? 70 : 60,
           reasons: [{
@@ -1137,9 +1341,9 @@ RESPOND WITH VALID JSON ONLY. NO EXPLANATIONS OUTSIDE JSON.`;
           analysisTimestamp: input.timestamp,
         };
         fallbackSetups.push(setup);
-        console.log(`[V6-FALLBACK] Created SELL @ $${entryMidpoint.toFixed(0)} (R:R ${rr.toFixed(2)}, ${isNearPrice ? 'NEAR-PRICE' : 'standard'})`);
+        console.log(`[V6-FALLBACK] Created SELL @ $${entryMidpoint.toFixed(0)} (R:R ${adjustedRR.toFixed(2)}, ${isNearPrice ? 'NEAR-PRICE' : 'standard'})`);
       } else {
-        console.log(`[V6-FALLBACK] SELL rejected: R:R ${rr.toFixed(2)} < 1.4`);
+        console.log(`[V6-FALLBACK] SELL rejected: R:R ${adjustedRR.toFixed(2)} < 1.4`);
       }
     } else {
       console.log('[V6-FALLBACK] No resistance levels found for SELL setup');

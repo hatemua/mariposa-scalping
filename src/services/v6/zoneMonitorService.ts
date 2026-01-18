@@ -15,6 +15,9 @@ import { normalizeKlines, NormalizedKline, getCurrentPrice } from './utils/norma
 type Kline = NormalizedKline;
 import { setupQueueService } from './setupQueueService';
 import { candleConfirmationService } from './candleConfirmationService';
+import { mtfExpertService } from './mtfExpertService';
+import { momentumExpertService } from './momentumExpertService';
+import { sessionFilterService } from './sessionFilterService';
 import {
   TradeSetup,
   ZoneDistanceResult,
@@ -266,10 +269,10 @@ class ZoneMonitorService {
     let priceDirection: 'ABOVE' | 'BELOW' | 'INSIDE';
 
     if (currentPrice > high) {
-      distanceToNearestEdge = ((currentPrice - high) / high) * 100;
+      distanceToNearestEdge = ((currentPrice - high) / currentPrice) * 100;  // Use currentPrice as base for consistent %
       priceDirection = 'ABOVE';
     } else if (currentPrice < low) {
-      distanceToNearestEdge = ((low - currentPrice) / low) * 100;
+      distanceToNearestEdge = ((low - currentPrice) / currentPrice) * 100;   // Use currentPrice as base for consistent %
       priceDirection = 'BELOW';
     } else {
       distanceToNearestEdge = 0;
@@ -331,6 +334,17 @@ class ZoneMonitorService {
     // Track that this setup reached the zone (for safe MISSED detection)
     if (!setup.wasEverInZone) {
       await setupQueueService.markWasInZone(setup.id);
+    }
+
+    // ========================================================================
+    // V6 PRO: PRE-EXECUTION VALIDATION (MTF, Momentum, Session)
+    // Fast checks using cached data to block bad trades
+    // ========================================================================
+    const validationResult = await this.validateBeforeExecution(setup);
+    if (!validationResult.valid) {
+      console.log(`[V6-ZONE] BLOCKED by pre-execution validation: ${validationResult.reason}`);
+      // Don't remove setup, just skip this execution opportunity
+      return;
     }
 
     // ========================================================================
@@ -516,6 +530,144 @@ class ZoneMonitorService {
         await setupQueueService.updateSetupStatus(setup.id, 'IN_ZONE');
       }
     }
+  }
+
+  // ============================================================================
+  // V6 PRO: PRE-EXECUTION VALIDATION
+  // ============================================================================
+
+  /**
+   * Validate setup before execution using MTF, Momentum, and Session data
+   * Uses cached data for speed - no API calls
+   */
+  private async validateBeforeExecution(setup: TradeSetup): Promise<{
+    valid: boolean;
+    reason?: string;
+  }> {
+    const grade = setup.grade;
+    const direction = setup.direction;
+
+    console.log(`[V6-ZONE] Pre-execution validation for ${setup.id.slice(0, 8)} | ${direction} Grade ${grade}`);
+
+    // ========================================================================
+    // CHECK 1: SESSION FILTER (Grade B/C only)
+    // ========================================================================
+    if (grade !== 'A') {
+      const sessionCheck = sessionFilterService.shouldGradeTrade(grade as 'A' | 'B' | 'C');
+      if (!sessionCheck.allowed) {
+        return {
+          valid: false,
+          reason: `Session: ${sessionCheck.reason}`,
+        };
+      }
+    }
+
+    // ========================================================================
+    // CHECK 2: MTF CONFLUENCE CONFLICT
+    // Block if MTF has strong confluence (>80%) against trade direction
+    // ========================================================================
+    const mtfResult = mtfExpertService.getCachedResult();
+    if (mtfResult) {
+      const mtfBias = mtfResult.tradingBias;
+      const confluenceScore = mtfResult.confluenceScore;
+
+      // Strong confluence against direction = BLOCK
+      if (confluenceScore >= 80) {
+        if ((direction === 'BUY' && mtfBias === 'SELL') ||
+            (direction === 'SELL' && mtfBias === 'BUY')) {
+          return {
+            valid: false,
+            reason: `MTF Conflict: ${confluenceScore}% ${mtfBias} confluence vs ${direction} trade`,
+          };
+        }
+      }
+
+      // Moderate confluence (60-79%) against direction = WARN but allow Grade A
+      if (confluenceScore >= 60 && confluenceScore < 80) {
+        if ((direction === 'BUY' && mtfBias === 'SELL') ||
+            (direction === 'SELL' && mtfBias === 'BUY')) {
+          if (grade !== 'A') {
+            return {
+              valid: false,
+              reason: `MTF Conflict: ${confluenceScore}% ${mtfBias} confluence (Grade ${grade} blocked)`,
+            };
+          }
+          console.log(`[V6-ZONE] MTF WARNING: ${confluenceScore}% ${mtfBias} confluence, but Grade A allowed`);
+        }
+      }
+
+      console.log(`[V6-ZONE] MTF Check PASSED: ${confluenceScore}% ${mtfBias} | Trade: ${direction}`);
+    }
+
+    // ========================================================================
+    // CHECK 3: MOMENTUM EXHAUSTION
+    // Block if momentum shows exhaustion in trade direction
+    // ========================================================================
+    const momentumResult = momentumExpertService.getCachedResult();
+    if (momentumResult && momentumResult.exhaustionWarning.isExhausted) {
+      const exhaustionDir = momentumResult.exhaustionWarning.direction;
+
+      // If exhaustion direction matches trade direction, block
+      if (exhaustionDir === direction) {
+        // Grade A gets a warning but proceeds, Grade B/C blocked
+        if (grade !== 'A') {
+          return {
+            valid: false,
+            reason: `Momentum Exhaustion: ${momentumResult.exhaustionWarning.reason}`,
+          };
+        }
+        console.log(`[V6-ZONE] Momentum WARNING: Exhaustion detected for ${direction}, but Grade A allowed`);
+      }
+    }
+
+    // ========================================================================
+    // CHECK 4: RSI EXTREME ZONES (CORRECTED LOGIC)
+    // In extreme RSI zones:
+    // - Counter-trend trades are risky (catching falling knife / shorting breakout)
+    // - With-trend trades can be momentum plays (allow with warning)
+    // ========================================================================
+    if (momentumResult) {
+      const rsiZone = momentumResult.rsi.zone;
+      const rsiValue = momentumResult.rsi.value;
+
+      // BUY in EXTREME OVERSOLD (RSI < 20): Risky for Grade C (falling knife)
+      // Price is crashing - Grade C BUY is trying to catch falling knife
+      if (direction === 'BUY' && rsiZone === 'OVERSOLD' && rsiValue < 20) {
+        if (grade === 'C') {
+          return {
+            valid: false,
+            reason: `RSI Extreme: ${rsiValue.toFixed(1)} oversold - Grade C BUY too risky (falling knife)`,
+          };
+        }
+        console.log(`[V6-ZONE] RSI WARNING: ${rsiValue.toFixed(1)} extreme oversold for BUY (Grade ${grade} allowed)`);
+      }
+
+      // SELL in EXTREME OVERBOUGHT (RSI > 80): Risky for Grade C (shorting breakout)
+      // Price is breaking out - Grade C SELL is trying to short into momentum
+      if (direction === 'SELL' && rsiZone === 'OVERBOUGHT' && rsiValue > 80) {
+        if (grade === 'C') {
+          return {
+            valid: false,
+            reason: `RSI Extreme: ${rsiValue.toFixed(1)} overbought - Grade C SELL too risky (shorting breakout)`,
+          };
+        }
+        console.log(`[V6-ZONE] RSI WARNING: ${rsiValue.toFixed(1)} extreme overbought for SELL (Grade ${grade} allowed)`);
+      }
+
+      // NOTE: BUY in overbought (with momentum) and SELL in oversold (with momentum) are now ALLOWED
+      // These are with-trend momentum plays, not counter-trend
+      if (direction === 'BUY' && rsiZone === 'OVERBOUGHT') {
+        console.log(`[V6-ZONE] RSI INFO: ${rsiValue.toFixed(1)} overbought - BUY with momentum allowed`);
+      }
+      if (direction === 'SELL' && rsiZone === 'OVERSOLD') {
+        console.log(`[V6-ZONE] RSI INFO: ${rsiValue.toFixed(1)} oversold - SELL with momentum allowed`);
+      }
+
+      console.log(`[V6-ZONE] Momentum Check PASSED: RSI ${rsiValue.toFixed(1)} (${rsiZone})`);
+    }
+
+    console.log(`[V6-ZONE] All validations PASSED for ${setup.id.slice(0, 8)}`);
+    return { valid: true };
   }
 
   // ============================================================================

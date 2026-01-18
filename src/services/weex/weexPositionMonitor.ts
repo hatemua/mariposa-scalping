@@ -22,9 +22,10 @@ import {
   WeexPositionStatus,
   createWeexPositionId,
 } from '../../types/weex';
-import { WEEX_V6_CONFIG } from '../../config/environment';
+import { WEEX_V6_CONFIG, getTradingPairByWeexSymbol } from '../../config/environment';
 import { weexAiLogService } from './weexAiLogService';
 import { WeexPosition, IWeexPosition, WeexCloseReason as DbCloseReason } from '../../models/WeexPosition';
+// Note: multiCoinOrchestrator is imported lazily in markClosed to avoid circular dependency
 
 // ============================================================================
 // WEEX POSITION MONITOR CLASS
@@ -36,10 +37,13 @@ class WeexPositionMonitor extends EventEmitter {
   private monitorInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
 
+  // Track recently closed symbols to prevent re-discovery race condition
+  private recentlyClosedSymbols: Set<string> = new Set();
+
   // Statistics
   private stats = {
     totalClosed: 0,
-    totalPnlUSD: 0,
+    totalPnlUSD: 0,  // Cumulative session PnL (for internal tracking)
     lastCheckTime: null as Date | null,
     errors: [] as string[],
   };
@@ -58,10 +62,9 @@ class WeexPositionMonitor extends EventEmitter {
       return;
     }
 
-    console.log('[WEEX-MONITOR] Starting position monitor...');
+    console.log('[WEEX-MONITOR] Starting position monitor (SIMPLIFIED - no breakeven/trailing)...');
     console.log(`[WEEX-MONITOR] Check interval: ${this.config.POSITION_MONITOR_INTERVAL_MS}ms`);
-    console.log(`[WEEX-MONITOR] Breakeven trigger: ${this.config.BREAKEVEN_TRIGGER_PCT * 100}% of TP`);
-    console.log(`[WEEX-MONITOR] Trailing trigger: ${this.config.TRAILING_TRIGGER_PCT * 100}% of TP`);
+    console.log(`[WEEX-MONITOR] Exit strategy: TP/SL preset on exchange - 2 fees only`);
 
     this.isRunning = true;
 
@@ -117,8 +120,6 @@ class WeexPositionMonitor extends EventEmitter {
       lowestPnl: 0,
       openTime: new Date(),
       lastUpdateTime: new Date(),
-      breakevenActivated: false,
-      trailingActivated: false,
       currentStopLoss: setup.stopLoss,
       status: 'OPEN',
     };
@@ -161,8 +162,6 @@ class WeexPositionMonitor extends EventEmitter {
         positionSizeUSD: position.positionSizeUSD,
         leverage: this.config.LEVERAGE,
         status: 'OPEN',
-        breakevenActivated: position.breakevenActivated,
-        trailingActivated: position.trailingActivated,
         openedAt: position.openTime,
         lastUpdateAt: new Date(),
       });
@@ -197,8 +196,6 @@ class WeexPositionMonitor extends EventEmitter {
           realizedPnl,
           closedAt: new Date(),
           lastUpdateAt: new Date(),
-          breakevenActivated: position.breakevenActivated,
-          trailingActivated: position.trailingActivated,
           currentStopLoss: position.currentStopLoss,
         }
       );
@@ -269,6 +266,31 @@ class WeexPositionMonitor extends EventEmitter {
     if (pnlUSD > position.highestPnl) position.highestPnl = pnlUSD;
     if (pnlUSD < position.lowestPnl) position.lowestPnl = pnlUSD;
 
+    // === PROFIT PULLBACK DETECTION - DISABLED ===
+    // DISABLED: Too aggressive - causes premature closes on normal volatility (1-minute closes)
+    // Let TP/SL orders on exchange handle exits instead
+    // Peak/current profit tracking kept for logging purposes only
+    /*
+    const peakProfit = position.highestPnl;
+    const currentProfit = pnlUSD;
+
+    if (peakProfit >= this.config.MIN_PEAK_PROFIT_USD) {
+      const pullbackPct = peakProfit > 0 ? (peakProfit - currentProfit) / peakProfit : 0;
+
+      if (pullbackPct >= this.config.PROFIT_PULLBACK_PCT && currentProfit > 0) {
+        // Profit dropped 50%+ from peak but still positive - CLOSE NOW
+        console.log(`[WEEX-MONITOR] PROFIT PULLBACK DETECTED for ${position.id}`);
+        console.log(`   Peak profit: $${peakProfit.toFixed(2)}`);
+        console.log(`   Current profit: $${currentProfit.toFixed(2)}`);
+        console.log(`   Pullback: ${(pullbackPct * 100).toFixed(0)}%`);
+        console.log(`   ACTION: Closing to lock in remaining profit`);
+
+        await this.closePosition(position, 'PROFIT_PULLBACK');
+        return;
+      }
+    }
+    */
+
     // Calculate distances
     const totalRisk = Math.abs(position.entryPrice - position.stopLoss);
     const totalReward = Math.abs(position.takeProfit - position.entryPrice);
@@ -285,210 +307,34 @@ class WeexPositionMonitor extends EventEmitter {
       ? parseFloat(weexPosition.size || weexPosition.hold_available || '0')
       : 0;
     if (!weexPosition || posQty <= 0) {
-      // Determine if closed by TP or SL based on price
+      // Determine if closed by TP or SL based on price (SIMPLIFIED - no breakeven/trailing)
       const wasTP = position.direction === 'BUY'
         ? currentPrice >= position.takeProfit
         : currentPrice <= position.takeProfit;
-      const reason = wasTP ? 'TAKE_PROFIT' :
-                     (position.breakevenActivated ? 'BREAKEVEN_STOP' :
-                      position.trailingActivated ? 'TRAILING_STOP' : 'STOP_LOSS');
+      const reason: WeexCloseReason = wasTP ? 'TAKE_PROFIT' : 'STOP_LOSS';
 
       console.log(`[WEEX-MONITOR] Position ${position.id} closed by WEEX (${reason}) at $${currentPrice.toFixed(2)}`);
       await this.markClosed(position, currentPrice, reason, position.unrealizedPnl);
       return;
     }
 
-    // 2. Pre-emptive SL cancel: If price is very close to SL, cancel SL order and close manually
-    // This prevents the exchange SL from triggering - we close manually at market for better control
-    const distanceToSL = position.direction === 'BUY'
-      ? (currentPrice - position.currentStopLoss) / currentPrice
-      : (position.currentStopLoss - currentPrice) / currentPrice;
+    // Note: Preemptive close logic removed - let WEEX handle actual SL execution
+    // The old 0.15% threshold was closing positions before real SL was hit, causing false losses
 
-    // If within 0.15% of SL and moving towards it, close with IOC market order
-    if (distanceToSL > 0 && distanceToSL < 0.0015) {
-      console.log(`[WEEX-MONITOR] PREEMPTIVE CLOSE: Price $${currentPrice.toFixed(2)} very close to SL $${position.currentStopLoss.toFixed(2)} (${(distanceToSL * 100).toFixed(3)}%)`);
+    // TP/SL handled by WEEX preset orders - ghost detection (step 1) catches when closed
+    // NO dynamic TP adjustment - reduces fees by eliminating modifyOrder API calls
 
-      // Close position at market using IOC order (takes precedence over pending TP/SL)
-      const reason = position.breakevenActivated ? 'BREAKEVEN_STOP' :
-                     position.trailingActivated ? 'TRAILING_STOP' : 'STOP_LOSS';
-      await this.closePosition(position, reason);
-      return;
-    }
-
-    // 3. Dynamic TP adjustment: If TP seems unreachable, reduce TP target
+    // Time-based exit (only manual close needed - WEEX doesn't have time triggers)
     const positionAgeMinutes = (Date.now() - position.openTime.getTime()) / (1000 * 60);
-    if (positionAgeMinutes > 30 && currentProgress > 0 && currentProgress < 0.3 && !position.tpAdjusted) {
-      // Position open > 30 min but only < 30% progress - reduce TP to 50% of original
-      const originalTPDistance = Math.abs(position.takeProfit - position.entryPrice);
-      const reducedTP = position.direction === 'BUY'
-        ? position.entryPrice + (originalTPDistance * 0.5)
-        : position.entryPrice - (originalTPDistance * 0.5);
-
-      console.log(`[WEEX-MONITOR] TP ADJUSTMENT: Position ${position.id} open ${positionAgeMinutes.toFixed(0)}min with only ${(currentProgress * 100).toFixed(0)}% progress`);
-      console.log(`[WEEX-MONITOR]   Original TP: $${position.takeProfit.toFixed(2)}`);
-      console.log(`[WEEX-MONITOR]   Reduced TP: $${reducedTP.toFixed(2)}`);
-
-      // Modify TP on WEEX exchange
-      if (position.tpOrderId) {
-        try {
-          const result = await weexService.modifyTpSlOrder({
-            orderId: position.tpOrderId,
-            triggerPrice: reducedTP.toFixed(2),
-          });
-          if (result.success) {
-            position.takeProfit = reducedTP;
-            position.currentTakeProfit = reducedTP;
-            position.lastTpUpdate = new Date();
-            (position as any).tpAdjusted = true; // Mark as adjusted to prevent repeated adjustments
-            console.log(`[WEEX-MONITOR] TP modified on exchange: $${reducedTP.toFixed(2)}`);
-          } else {
-            console.warn(`[WEEX-MONITOR] Failed to modify TP on exchange: ${result.error}`);
-          }
-        } catch (error: any) {
-          console.error(`[WEEX-MONITOR] Error modifying TP: ${error.message}`);
-        }
-      } else {
-        // No TP order ID, just update local tracking
-        position.takeProfit = reducedTP;
-        position.currentTakeProfit = reducedTP;
-        (position as any).tpAdjusted = true;
-        console.log(`[WEEX-MONITOR] TP updated locally (no order ID): $${reducedTP.toFixed(2)}`);
-      }
-    }
-
-    // 4. TP/SL handled by WEEX preset orders - ghost detection (step 1) catches when closed
-    // DO NOT send separate close orders here - let WEEX handle TP/SL automatically
-
-    // 5. Time-based exit (only manual close needed - WEEX doesn't have time triggers)
     if (positionAgeMinutes >= this.config.MAX_POSITION_DURATION_MINUTES) {
       console.log(`[WEEX-MONITOR] Time exit for ${position.id} (${positionAgeMinutes.toFixed(0)} min)`);
       await this.closePosition(position, 'TIME_EXIT');
       return;
     }
 
-    // 7. Breakeven protection (if not already activated)
-    if (!position.breakevenActivated && currentProgress >= this.config.BREAKEVEN_TRIGGER_PCT) {
-      position.breakevenActivated = true;
-      const newSL = position.entryPrice + (position.direction === 'BUY' ? 1 : -1); // Tiny buffer
-      position.currentStopLoss = newSL;
-
-      console.log(`[WEEX-MONITOR] BREAKEVEN activated for ${position.id}`);
-      console.log(`[WEEX-MONITOR]   Progress: ${(currentProgress * 100).toFixed(1)}% of TP`);
-      console.log(`[WEEX-MONITOR]   New SL: $${position.currentStopLoss.toFixed(2)}`);
-
-      // Modify SL on WEEX exchange
-      if (position.slOrderId) {
-        try {
-          const result = await weexService.modifyTpSlOrder({
-            orderId: position.slOrderId,
-            triggerPrice: newSL.toFixed(2),
-          });
-          if (result.success) {
-            position.lastSlUpdate = new Date();
-            console.log(`[WEEX-MONITOR] SL modified on exchange: $${newSL.toFixed(2)}`);
-          } else {
-            console.warn(`[WEEX-MONITOR] Failed to modify SL on exchange: ${result.error}`);
-          }
-        } catch (error: any) {
-          console.error(`[WEEX-MONITOR] Error modifying SL: ${error.message}`);
-        }
-      } else {
-        console.warn(`[WEEX-MONITOR] No SL order ID - cannot modify on exchange`);
-      }
-
-      this.emit('breakevenActivated', {
-        type: 'BREAKEVEN_HIT',
-        positionId: position.id,
-        setupId: position.setupId,
-        symbol: position.symbol,
-        direction: position.direction,
-        price: currentPrice,
-        timestamp: new Date(),
-      });
-    }
-
-    // 8. Trailing stop (if not already activated)
-    if (!position.trailingActivated && currentProgress >= this.config.TRAILING_TRIGGER_PCT) {
-      position.trailingActivated = true;
-
-      // Trail at configured distance from current price
-      const trailDistance = totalReward * this.config.TRAILING_DISTANCE_PCT;
-      const newSL = position.direction === 'BUY'
-        ? currentPrice - trailDistance
-        : currentPrice + trailDistance;
-      position.currentStopLoss = newSL;
-
-      console.log(`[WEEX-MONITOR] TRAILING activated for ${position.id}`);
-      console.log(`[WEEX-MONITOR]   Progress: ${(currentProgress * 100).toFixed(1)}% of TP`);
-      console.log(`[WEEX-MONITOR]   Trail distance: $${trailDistance.toFixed(2)}`);
-      console.log(`[WEEX-MONITOR]   New SL: $${position.currentStopLoss.toFixed(2)}`);
-
-      // Modify SL on WEEX exchange
-      if (position.slOrderId) {
-        try {
-          const result = await weexService.modifyTpSlOrder({
-            orderId: position.slOrderId,
-            triggerPrice: newSL.toFixed(2),
-          });
-          if (result.success) {
-            position.lastSlUpdate = new Date();
-            console.log(`[WEEX-MONITOR] Trailing SL set on exchange: $${newSL.toFixed(2)}`);
-          } else {
-            console.warn(`[WEEX-MONITOR] Failed to set trailing SL on exchange: ${result.error}`);
-          }
-        } catch (error: any) {
-          console.error(`[WEEX-MONITOR] Error setting trailing SL: ${error.message}`);
-        }
-      }
-
-      this.emit('trailingActivated', {
-        type: 'TRAILING_ACTIVATED',
-        positionId: position.id,
-        setupId: position.setupId,
-        symbol: position.symbol,
-        direction: position.direction,
-        price: currentPrice,
-        timestamp: new Date(),
-      });
-    }
-
-    // 9. Update trailing stop if already activated (follow price up/down)
-    if (position.trailingActivated) {
-      const trailDistance = totalReward * this.config.TRAILING_DISTANCE_PCT;
-      const newTrailStop = position.direction === 'BUY'
-        ? currentPrice - trailDistance
-        : currentPrice + trailDistance;
-
-      // Only move stop in profitable direction
-      const shouldMove = position.direction === 'BUY'
-        ? newTrailStop > position.currentStopLoss
-        : newTrailStop < position.currentStopLoss;
-
-      if (shouldMove) {
-        position.currentStopLoss = newTrailStop;
-        console.log(`[WEEX-MONITOR] Trailing SL moved to $${position.currentStopLoss.toFixed(2)}`);
-
-        // Modify SL on WEEX exchange (throttled - max once per 30 seconds)
-        const timeSinceUpdate = position.lastSlUpdate
-          ? Date.now() - position.lastSlUpdate.getTime()
-          : Infinity;
-
-        if (position.slOrderId && timeSinceUpdate > 30000) {
-          try {
-            const result = await weexService.modifyTpSlOrder({
-              orderId: position.slOrderId,
-              triggerPrice: newTrailStop.toFixed(2),
-            });
-            if (result.success) {
-              position.lastSlUpdate = new Date();
-              console.log(`[WEEX-MONITOR] Trailing SL updated on exchange: $${newTrailStop.toFixed(2)}`);
-            }
-          } catch (error: any) {
-            console.error(`[WEEX-MONITOR] Error updating trailing SL: ${error.message}`);
-          }
-        }
-      }
-    }
+    // SIMPLIFIED EXIT SYSTEM: No breakeven/trailing - just TP/SL on exchange
+    // This reduces fees by eliminating modifyOrder API calls ($4 each)
+    // Exit logic: Open with TP/SL preset → wait for hit → done (only 2 fees: open + close)
 
     // Log periodic status (every 5 checks or on significant change)
     if (Math.random() < 0.2) { // ~20% of checks
@@ -508,23 +354,31 @@ class WeexPositionMonitor extends EventEmitter {
     try {
       console.log(`[WEEX-MONITOR] Closing position ${position.id} (${reason})`);
 
-      const closeResult = await weexService.closeAllPositions(position.symbol);
+      // USE CHEAP API ENDPOINT (saves $8 per close: $4 vs $12)
+      // closePositionsViaAPI uses /closePositions endpoint (1 call)
+      // vs closeAllPositions which uses 3-4 API calls
+      const apiResult = await weexService.closePositionsViaAPI(position.symbol);
+      console.log(`[WEEX-MONITOR] Close API result:`, apiResult);
 
-      if (closeResult.success) {
-        const realizedPnl = closeResult.realizedPnl || position.unrealizedPnl;
+      // closePositionsViaAPI returns raw response, check for success
+      const success = apiResult && (apiResult.code === '00000' || apiResult.code === 0 || !apiResult.code);
+
+      if (success) {
+        // Use position's tracked P&L (API may not return it immediately)
+        const realizedPnl = position.unrealizedPnl;
         await this.markClosed(position, position.currentPrice, reason, realizedPnl);
 
         return {
           success: true,
           positionId: position.id,
-          closePrice: closeResult.fillPrice || position.currentPrice,
+          closePrice: position.currentPrice,
           realizedPnl,
           realizedPnlPercent: position.unrealizedPnlPercent,
           closeReason: reason,
           timestamp: new Date(),
         };
       } else {
-        throw new Error(closeResult.error || 'Close failed');
+        throw new Error(apiResult?.msg || 'Close API failed');
       }
 
     } catch (error: any) {
@@ -558,6 +412,9 @@ class WeexPositionMonitor extends EventEmitter {
 
     const durationMinutes = (Date.now() - position.openTime.getTime()) / (1000 * 60);
 
+    // Determine if this was a win or loss for win rate tracking
+    const tradeResult: 'WIN' | 'LOSS' = realizedPnl > 0 ? 'WIN' : 'LOSS';
+
     console.log('');
     console.log('==================================================');
     console.log(`[WEEX-MONITOR] POSITION CLOSED: ${position.id}`);
@@ -565,9 +422,21 @@ class WeexPositionMonitor extends EventEmitter {
     console.log(`[WEEX-MONITOR]   Entry: $${position.entryPrice.toFixed(2)}`);
     console.log(`[WEEX-MONITOR]   Exit: $${closePrice.toFixed(2)}`);
     console.log(`[WEEX-MONITOR]   P&L: $${realizedPnl.toFixed(2)} (${position.unrealizedPnlPercent.toFixed(2)}%)`);
+    console.log(`[WEEX-MONITOR]   Result: ${tradeResult}`);
     console.log(`[WEEX-MONITOR]   Duration: ${this.getPositionDuration(position)}`);
     console.log('==================================================');
     console.log('');
+
+    // Record trade result in orchestrator for win rate tracking (lazy import to avoid circular dependency)
+    try {
+      // Lazy import to break circular dependency
+      const { multiCoinOrchestrator } = require('./multiCoinOrchestrator');
+      multiCoinOrchestrator.recordTradeResult(position.symbol, tradeResult);
+      // Also mark position closed in orchestrator
+      multiCoinOrchestrator.markPositionClosed(position.symbol);
+    } catch (err: any) {
+      console.error(`[WEEX-MONITOR] Failed to record trade result: ${err.message}`);
+    }
 
     // Log order close to WEEX AI Log API (fire-and-forget)
     weexAiLogService.logOrderClose({
@@ -599,10 +468,18 @@ class WeexPositionMonitor extends EventEmitter {
       timestamp: new Date(),
     });
 
-    // Remove from map after a short delay (for logging)
+    // Track recently closed to prevent re-discovery race condition
+    this.recentlyClosedSymbols.add(position.symbol);
+    console.log(`[WEEX-MONITOR] Added ${position.symbol} to recently closed list`);
+
+    // Remove from map IMMEDIATELY (not delayed) to prevent ghost positions
+    this.positions.delete(position.id);
+
+    // Clear from recently closed after 60 seconds (allows sync to skip re-marking)
     setTimeout(() => {
-      this.positions.delete(position.id);
-    }, 5000);
+      this.recentlyClosedSymbols.delete(position.symbol);
+      console.log(`[WEEX-MONITOR] Removed ${position.symbol} from recently closed list (60s cooldown expired)`);
+    }, 60000);
   }
 
   /**
@@ -657,11 +534,16 @@ class WeexPositionMonitor extends EventEmitter {
    * Get current health status
    */
   getHealth(): WeexMonitorHealth {
+    // Calculate CURRENT unrealized PnL from open positions only (not cumulative history)
+    const openPositions = Array.from(this.positions.values()).filter(p => p.status === 'OPEN');
+    const currentUnrealizedPnl = openPositions.reduce((sum, pos) => sum + (pos.unrealizedPnl || 0), 0);
+
     return {
       isRunning: this.isRunning,
-      openPositions: Array.from(this.positions.values()).filter(p => p.status === 'OPEN').length,
+      openPositions: openPositions.length,
       totalPositionsClosed: this.stats.totalClosed,
-      totalPnlUSD: this.stats.totalPnlUSD,
+      totalPnlUSD: currentUnrealizedPnl,  // CURRENT unrealized PnL, not cumulative
+      sessionPnlUSD: this.stats.totalPnlUSD,  // Keep cumulative as separate field
       lastCheckTime: this.stats.lastCheckTime || undefined,
       checkIntervalMs: this.config.POSITION_MONITOR_INTERVAL_MS,
       errors: [...this.stats.errors],
@@ -680,6 +562,14 @@ class WeexPositionMonitor extends EventEmitter {
    */
   getPosition(id: string): WeexMonitoredPosition | undefined {
     return this.positions.get(id);
+  }
+
+  /**
+   * Check if a symbol was recently closed (within 60 seconds)
+   * Used by multiCoinOrchestrator to prevent re-marking closed positions as open
+   */
+  isRecentlyClosed(symbol: string): boolean {
+    return this.recentlyClosedSymbols.has(symbol);
   }
 
   /**
@@ -740,8 +630,6 @@ class WeexPositionMonitor extends EventEmitter {
           lowestPnl: 0,
           openTime: dbPos.openedAt,
           lastUpdateTime: new Date(),
-          breakevenActivated: dbPos.breakevenActivated,
-          trailingActivated: dbPos.trailingActivated,
           status: 'OPEN',
         };
 

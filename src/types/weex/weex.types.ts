@@ -82,14 +82,8 @@ export interface WeexMonitoredPosition {
   openTime: Date;
   lastUpdateTime: Date;
 
-  // Exit management state
-  breakevenActivated: boolean;
-  trailingActivated: boolean;
-  currentStopLoss: number;       // May differ from original after breakeven/trailing
-  currentTakeProfit?: number;    // May differ from original after TP adjustment
-  lastSlUpdate?: Date;           // Track last SL modification on exchange (throttling)
-  lastTpUpdate?: Date;           // Track last TP modification on exchange (throttling)
-  tpAdjusted?: boolean;          // Flag to prevent repeated TP adjustments
+  // Exit management state (simplified - no breakeven/trailing to reduce fees)
+  currentStopLoss: number;       // Same as original SL (no modifications)
 
   // Status
   status: WeexPositionStatus;
@@ -123,7 +117,8 @@ export type WeexCloseReason =
   | 'TIME_EXIT'
   | 'MANUAL'
   | 'ERROR'
-  | 'API_CLOSE';
+  | 'API_CLOSE'
+  | 'PROFIT_PULLBACK';
 
 // ============================================================================
 // CONFIGURATION TYPES
@@ -140,6 +135,7 @@ export interface WeexV6Config {
   // Position sizing
   LEVERAGE: number;                       // e.g., 5
   BASE_POSITION_SIZE_USD: number;         // e.g., 500
+  MIN_POSITION_SIZE_BTC: number;          // e.g., 0.08 - minimum BTC quantity
 
   // Grade multipliers
   GRADE_A_MULTIPLIER: number;             // 1.0
@@ -151,14 +147,22 @@ export interface WeexV6Config {
   MAX_POSITION_DURATION_MINUTES: number;  // e.g., 60
 
   // Exit management
-  BREAKEVEN_TRIGGER_PCT: number;          // e.g., 0.5 (50% of TP)
-  TRAILING_TRIGGER_PCT: number;           // e.g., 0.75 (75% of TP)
-  TRAILING_DISTANCE_PCT: number;          // e.g., 0.25 (trail 25% of range)
+  BREAKEVEN_TRIGGER_PCT: number;          // e.g., 0.35 (35% of TP)
+  TRAILING_TRIGGER_PCT: number;           // e.g., 0.50 (50% of TP)
+  TRAILING_DISTANCE_PCT: number;          // e.g., 0.30 (trail 30% of range)
+  PROFIT_PULLBACK_PCT: number;            // e.g., 0.50 (close if profit drops 50% from peak)
+  MIN_PEAK_PROFIT_USD: number;            // e.g., 5 (only trigger if peak was >= $5)
 
   // Risk management
   MAX_CONCURRENT_POSITIONS: number;       // e.g., 2
   MAX_DAILY_LOSS_USD: number;             // e.g., 200
   COOLDOWN_AFTER_LOSS_MINUTES: number;    // e.g., 30
+
+  // Profit prediction filter
+  PROFIT_PREDICTION: {
+    MIN_PROFIT_THRESHOLD_USD: number;     // Minimum expected profit to enter trade
+    LEVERAGE: number;                     // User's actual leverage on WEEX
+  };
 }
 
 // ============================================================================
@@ -185,7 +189,8 @@ export interface WeexMonitorHealth {
   isRunning: boolean;
   openPositions: number;
   totalPositionsClosed: number;
-  totalPnlUSD: number;
+  totalPnlUSD: number;           // CURRENT unrealized PnL from open positions
+  sessionPnlUSD?: number;        // Cumulative realized PnL for the session (optional)
   lastCheckTime?: Date;
   checkIntervalMs: number;
   errors: string[];
